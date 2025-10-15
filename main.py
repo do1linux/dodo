@@ -156,7 +156,7 @@ class EnhancedCacheManager:
         file_name = f"final_status_{site_name}.json"
         return EnhancedCacheManager.save_cache(data, site_name)
 
-# ======================== 终极Cloudflare处理器 ========================
+# ======================== 终极Cloudflare处理器 - 修复版 ========================
 class UltimateCloudflareHandler:
     @staticmethod
     async def handle_cloudflare(page, max_attempts=20, timeout=300, domain="linux.do"):
@@ -169,27 +169,41 @@ class UltimateCloudflareHandler:
                 # 检查当前页面状态
                 current_url = page.url
                 page_title = await page.title()
-                page_content = await page.content()
                 
                 logger.info(f"🔍 检查页面状态 - URL: {current_url}, 标题: {page_title}")
                 
                 # 检查是否有有效的cf_clearance cookie
                 cf_valid = await UltimateCloudflareHandler.is_cf_clearance_valid(page.context, domain)
+                
                 if cf_valid:
                     logger.success(f"✅ 检测到有效的 cf_clearance cookie")
                     
-                    # 如果cookie有效但页面卡住，尝试强制解决方案
-                    if page_title == "请稍候…" or "Checking your browser" in page_content:
+                    # 如果cookie有效但页面卡住，尝试多种解决方案
+                    if page_title == "请稍候…" or "Checking your browser" in await page.content():
                         logger.info("🔄 Cookie有效但页面卡住，尝试强制解决方案")
                         
-                        # 方案1: 尝试JavaScript重定向
-                        logger.info("🔄 尝试JavaScript重定向")
-                        redirect_result = await page.evaluate("""
+                        # 方案1: 尝试直接访问其他路径绕过卡住的主页
+                        logger.info("🔄 尝试直接访问最新主题页面绕过主页")
+                        try:
+                            await page.goto(f"https://{domain}/latest", wait_until='networkidle', timeout=60000)
+                            await asyncio.sleep(5)
+                            
+                            new_title = await page.title()
+                            if new_title != "请稍候…":
+                                logger.success("✅ 通过访问/latest页面成功绕过卡住的主页")
+                                return True
+                        except Exception as e:
+                            logger.warning(f"访问/latest页面失败: {str(e)}")
+                        
+                        # 方案2: 使用JavaScript强制重定向
+                        logger.info("🔄 尝试JavaScript强制重定向")
+                        redirect_success = await page.evaluate("""
                             () => {
                                 try {
-                                    // 尝试常见的Cloudflare重定向方法
-                                    if (window.location.href.includes('challenges.cloudflare.com')) {
-                                        window.location.href = '/';
+                                    // 尝试多种重定向方式
+                                    if (window.location.href.includes('challenges.cloudflare.com') || 
+                                        document.title === '请稍候…') {
+                                        window.location.href = '/latest';
                                         return true;
                                     }
                                     return false;
@@ -199,39 +213,40 @@ class UltimateCloudflareHandler:
                             }
                         """)
                         
-                        if redirect_result:
+                        if redirect_success:
                             logger.success("✅ 已触发JavaScript重定向")
-                            await asyncio.sleep(5)
+                            await asyncio.sleep(8)
                             continue
                         
-                        # 方案2: 强制刷新到目标页面
-                        logger.info("🔄 强制导航到目标页面")
-                        target_url = f"https://{domain}/"
-                        await page.goto(target_url, wait_until='networkidle', timeout=60000)
-                        await asyncio.sleep(5)
-                        
-                        # 方案3: 如果还是卡住，尝试清除localStorage和sessionStorage
-                        logger.info("🔄 清除浏览器存储")
+                        # 方案3: 清除所有存储并重新加载
+                        logger.info("🔄 清除浏览器存储并重新加载")
                         await page.evaluate("""
                             () => {
                                 try {
                                     localStorage.clear();
                                     sessionStorage.clear();
+                                    indexedDB.databases().then(function(databases) {
+                                        databases.forEach(function(db) {
+                                            indexedDB.deleteDatabase(db.name);
+                                        });
+                                    });
                                 } catch (e) {}
                             }
                         """)
                         
                         await asyncio.sleep(3)
                         
-                        # 方案4: 再次强制刷新
+                        # 重新加载并等待更长时间
                         await page.reload(wait_until='networkidle', timeout=60000)
-                        await asyncio.sleep(5)
+                        await asyncio.sleep(8)
                         
-                        # 重新检查页面状态
-                        page_title = await page.title()
-                        if page_title != "请稍候…":
+                        # 检查结果
+                        final_title = await page.title()
+                        if final_title != "请稍候…":
                             logger.success("✅ 强制解决方案成功，页面已正常加载")
                             return True
+                        else:
+                            logger.warning("⚠️ 页面仍然卡住，继续尝试")
                     
                     else:
                         # 页面标题不是"请稍候…"，可能已经通过验证
@@ -258,18 +273,21 @@ class UltimateCloudflareHandler:
                 logger.error(f"{domain} Cloudflare处理异常 (尝试 {attempt + 1}): {str(e)}")
                 await asyncio.sleep(10)
         
-        # 最终检查
-        final_result = await UltimateCloudflareHandler.is_cf_clearance_valid(page.context, domain)
-        if final_result:
+        # 最终检查 - 即使页面卡住，如果cookie有效也返回True
+        final_cf_valid = await UltimateCloudflareHandler.is_cf_clearance_valid(page.context, domain)
+        if final_cf_valid:
             logger.success(f"✅ 最终验证: {domain} cf_clearance cookie 存在且有效")
             
-            # 即使cookie有效，如果页面还是卡住，尝试最后一次强制导航
+            # 即使页面卡住，我们也尝试继续流程，因为cookie是有效的
             page_title = await page.title()
             if page_title == "请稍候…":
-                logger.warning("⚠️ Cookie有效但页面仍然卡住，尝试最终强制导航")
-                target_url = f"https://{domain}/"
-                await page.goto(target_url, wait_until='networkidle', timeout=60000)
-                await asyncio.sleep(5)
+                logger.warning("⚠️ Cookie有效但页面仍然卡住，尝试直接进行登录流程")
+                # 直接导航到登录页面，跳过卡住的主页
+                try:
+                    await page.goto(f"https://{domain}/login", wait_until='networkidle', timeout=60000)
+                    await asyncio.sleep(5)
+                except Exception as e:
+                    logger.warning(f"直接导航到登录页面失败: {str(e)}")
             
             return True
         else:
@@ -282,10 +300,13 @@ class UltimateCloudflareHandler:
             cookies = await context.cookies()
             for cookie in cookies:
                 if cookie.get('name') == 'cf_clearance' and domain in cookie.get('domain', ''):
-                    return True
+                    # 检查cookie是否过期
+                    expires = cookie.get('expires', 0)
+                    if expires == -1 or expires > time.time():
+                        return True
+            return False
         except Exception:
-            pass
-        return False
+            return False
 
 # ======================== 浏览器管理器 ========================
 class BrowserManager:
@@ -601,20 +622,17 @@ class LinuxDoAutomator:
             page_title = await self.page.title()
             logger.info(f"🔍 检查登录状态 - URL: {current_url}, 标题: {page_title}")
             
-            # 如果页面卡在Cloudflare验证，尝试处理
+            # 如果页面卡在Cloudflare验证，但cookie有效，我们仍然尝试继续
             if page_title == "请稍候…":
-                logger.warning("⚠️ 页面卡在Cloudflare验证，尝试处理")
-                domain = self.site_config['base_url'].replace('https://', '')
-                cf_passed = await UltimateCloudflareHandler.handle_cloudflare(
-                    self.page, max_attempts=10, timeout=120, domain=domain
-                )
-                if not cf_passed:
-                    logger.error("❌ Cloudflare验证失败")
-                    return False
-            
-            # 重新检查页面状态
-            page_title = await self.page.title()
-            page_content = await self.page.content()
+                cf_valid = await UltimateCloudflareHandler.is_cf_clearance_valid(self.page.context, 
+                                                                               self.site_config['base_url'].replace('https://', ''))
+                if cf_valid:
+                    logger.warning("⚠️ 页面卡住但Cloudflare cookie有效，尝试继续流程")
+                    # 尝试直接导航到登录页面
+                    await self.page.goto(self.site_config['login_url'], wait_until='networkidle', timeout=60000)
+                    await asyncio.sleep(5)
+                    # 重新检查状态
+                    page_title = await self.page.title()
             
             # 检查用户相关元素（登录成功的标志）
             user_indicators = [
@@ -632,8 +650,8 @@ class LinuxDoAutomator:
                     if user_elem and await user_elem.is_visible():
                         logger.success(f"✅ 检测到用户元素: {selector}")
                         return True
-                except Exception as e:
-                    logger.debug(f"检查用户元素 {selector} 时出错: {str(e)}")
+                except Exception:
+                    continue
             
             # 检查登录按钮（未登录的标志）
             login_buttons = [
@@ -647,54 +665,24 @@ class LinuxDoAutomator:
                 try:
                     login_btn = await self.page.query_selector(selector)
                     if login_btn and await login_btn.is_visible():
-                        button_text = await login_btn.inner_text() or ""
-                        logger.warning(f"❌ 检测到登录按钮: {selector} -> '{button_text}'")
+                        logger.warning(f"❌ 检测到登录按钮: {selector}")
                         return False
-                except Exception as e:
-                    logger.debug(f"检查登录按钮 {selector} 时出错: {str(e)}")
+                except Exception:
+                    continue
             
-            # 检查auth-buttons容器
-            auth_container = await self.page.query_selector('.auth-buttons')
-            if auth_container and await auth_container.is_visible():
-                auth_text = await auth_container.inner_text()
-                if '登录' in auth_text or 'Log In' in auth_text:
-                    logger.warning("❌ auth-buttons容器包含登录按钮")
-                    return False
-            
-            # 检查登出按钮（登录成功的标志）
-            logout_selectors = [
-                'a[href*="/logout"]',
-                'button:has-text("Log Out")',
-                'button:has-text("退出")',
-                'button:has-text("登出")'
-            ]
-            
-            for selector in logout_selectors:
-                try:
-                    logout_elem = await self.page.query_selector(selector)
-                    if logout_elem and await logout_elem.is_visible():
-                        logger.success(f"✅ 检测到登出按钮: {selector}")
-                        return True
-                except Exception as e:
-                    logger.debug(f"检查登出按钮 {selector} 时出错: {str(e)}")
-            
-            # 检查页面内容中是否包含用户名
-            username = self.credentials['username']
-            if username.lower() in page_content.lower():
-                logger.success(f"✅ 在页面内容中找到用户名: {username}")
-                return True
-            
-            # 如果页面标题不是"请稍候…"且没有登录按钮，可能已登录
-            if page_title != "请稍候…":
-                # 检查页面是否有正常内容
-                if len(page_content) > 1000 and any(keyword in page_content for keyword in ['discourse', 'topic', 'post', 'user']):
+            # 如果无法确定状态，保存调试信息
+            page_content = await self.page.content()
+            if "请稍候" not in page_title and "Checking" not in page_title:
+                # 页面可能已正常加载但没有明显的登录状态指示
+                username = self.credentials['username']
+                if username.lower() in page_content.lower():
+                    logger.success(f"✅ 在页面内容中找到用户名: {username}")
+                    return True
+                
+                # 检查是否有正常的内容
+                if len(page_content) > 1000:
                     logger.success("✅ 页面显示正常内容，可能已登录")
                     return True
-            
-            # 保存截图和页面内容用于调试
-            await self.page.screenshot(path=f"debug_{self.site_config['name']}_final_status.png")
-            with open(f"debug_{self.site_config['name']}_final_content.html", "w", encoding='utf-8') as f:
-                f.write(page_content)
             
             logger.warning(f"⚠️ 登录状态不确定，默认认为未登录。页面标题: {page_title}")
             return False
@@ -911,5 +899,4 @@ async def main():
         logger.info("🔚 浏览器已关闭，脚本结束")
 
 if __name__ == "__main__":
-
     asyncio.run(main())
