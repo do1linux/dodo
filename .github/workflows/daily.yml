@@ -1,7 +1,7 @@
 name: LinuxDo Multi-Site Automation
 
 on:
-  workflow_dispatch:  # 允许手动触发
+  workflow_dispatch:
     inputs:
       site_selector:
         description: '选择要运行的站点'
@@ -13,7 +13,7 @@ on:
           - linux_do
           - idcflare
   schedule:
-    - cron: '0 * * * *'  # 每小时运行一次
+    - cron: '0 * * * *'
 
 jobs:
   automate:
@@ -22,7 +22,6 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    # ========== 系统依赖安装 ==========
     - name: Install system dependencies
       run: |
         sudo apt-get update
@@ -35,7 +34,6 @@ jobs:
           python3-pil python3-pip \
           libffi8 libx264-164
 
-    # ========== 浏览器环境缓存 ==========
     - name: Cache Playwright browsers
       uses: actions/cache@v4
       id: playwright-cache
@@ -45,7 +43,6 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-playwright-
 
-    # ========== Python环境配置 ==========
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
@@ -59,7 +56,6 @@ jobs:
           python -m playwright install chromium
         fi
 
-    # ========== 执行多站点核心任务 ==========
     - name: Run automation script
       timeout-minutes: 45
       env:
@@ -70,29 +66,8 @@ jobs:
         HEADLESS: 'true'
       run: |
         echo "🚀 开始执行多站点自动化脚本..."
-        echo "触发方式: ${{ github.event_name }}"
-        
-        # 处理手动触发参数
-        if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-          echo "手动触发"
-          # 这里可以添加基于输入参数的逻辑
-          # 但目前我们的脚本会自动运行所有配置的站点
-        fi
-        
-        # 设置超时并运行脚本
         timeout 2700s python main.py || echo "⏰ 脚本执行完成"
-        
-        # 显示执行结果
-        echo "=== 执行结果 ==="
-        for site in linux_do idcflare; do
-          if [ -f "final_status_${site}.json" ]; then
-            echo "🔍 ${site} 状态文件存在"
-          else
-            echo "🔍 ${site} 状态文件不存在"
-          fi
-        done
 
-    # ========== 结果归档 ==========
     - name: Upload results
       uses: actions/upload-artifact@v4
       if: always()
@@ -106,102 +81,3 @@ jobs:
           *.png
           *.log
         retention-days: 7
-
-    # ========== 状态报告 ==========
-    - name: Report status
-      if: always()
-      run: |
-        echo "=== 自动化执行报告 ==="
-        echo "工作流: ${{ github.workflow }}"
-        echo "运行ID: ${{ github.run_id }}"
-        echo "触发方式: ${{ github.event_name }}"
-        echo "执行时间: $(date)"
-        echo ""
-        
-        success_count=0
-        total_sites=2
-        
-        for site in linux_do idcflare; do
-          if [ -f "final_status_${site}.json" ]; then
-            # 使用jq工具解析JSON，如果没有jq则使用Python
-            if command -v jq &> /dev/null; then
-              success=$(jq -r '.data.success // .success // false' "final_status_${site}.json")
-              message=$(jq -r '.data.message // .message // "未知"' "final_status_${site}.json")
-            else
-              success=$(python3 -c "
-import json
-try:
-    with open('final_status_${site}.json', 'r') as f:
-        data = json.load(f)
-    if 'data' in data:
-        actual_data = data['data']
-    else:
-        actual_data = data
-    success_value = actual_data.get('success', False)
-    print('true' if success_value else 'false')
-except Exception:
-    print('false')
-")
-              message=$(python3 -c "
-import json
-try:
-    with open('final_status_${site}.json', 'r') as f:
-        data = json.load(f)
-    if 'data' in data:
-        actual_data = data['data']
-    else:
-        actual_data = data
-    print(actual_data.get('message', '未知'))
-except Exception:
-    print('读取失败')
-")
-            fi
-            
-            if [ "$success" = "true" ]; then
-              status_icon="✅"
-              ((success_count++))
-              status_text="成功"
-            else
-              status_icon="❌"
-              status_text="失败"
-            fi
-            
-            echo "${status_icon} ${site}: ${status_text}"
-            echo "   详情: $message"
-            echo ""
-          else
-            echo "❓ ${site}: 状态文件缺失"
-            echo ""
-          fi
-        done
-        
-        echo "🎯 总体完成度: ${success_count}/${total_sites}"
-        
-        if [ $success_count -eq $total_sites ]; then
-          echo "🎉 所有站点执行成功!"
-          exit 0
-        elif [ $success_count -eq 0 ]; then
-          echo "💥 所有站点执行失败!"
-          exit 1
-        else
-          echo "⚠️ 部分站点执行成功"
-          exit 1
-        fi
-
-    # ========== 失败通知 ==========
-    - name: Notify on failure
-      if: failure()
-      run: |
-        echo "❌ 工作流执行失败!"
-        echo "请检查日志了解详细错误信息。"
-        echo ""
-        echo "可能的原因:"
-        echo "1. 凭据配置错误"
-        echo "2. 网络连接问题" 
-        echo "3. 网站结构变化"
-        echo "4. Cloudflare验证失败"
-        echo ""
-        echo "建议检查:"
-        echo "1. 确认所有secrets已正确配置"
-        echo "2. 查看artifact中的详细日志"
-        echo "3. 检查各站点的final_status文件"
