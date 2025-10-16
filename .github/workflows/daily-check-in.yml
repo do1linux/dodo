@@ -4,14 +4,14 @@ on:
   workflow_dispatch:  # 允许手动触发
     inputs:
       site_selector:
-        description: '选择要运行的站点 (默认全部运行)'
+        description: '选择要运行的站点'
         required: false
         default: 'all'
         type: choice
         options:
-        - all
-        - linux_do
-        - idcflare
+          - all
+          - linux_do
+          - idcflare
   schedule:
     - cron: '0 * * * *'  # 每小时运行一次
 
@@ -71,8 +71,12 @@ jobs:
       run: |
         echo "🚀 开始执行多站点自动化脚本..."
         echo "触发方式: ${{ github.event_name }}"
+        
+        # 处理手动触发参数
         if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-          echo "手动触发 - 选择的站点: ${{ github.event.inputs.site_selector }}"
+          echo "手动触发"
+          # 这里可以添加基于输入参数的逻辑
+          # 但目前我们的脚本会自动运行所有配置的站点
         fi
         
         # 设置超时并运行脚本
@@ -82,9 +86,9 @@ jobs:
         echo "=== 执行结果 ==="
         for site in linux_do idcflare; do
           if [ -f "final_status_${site}.json" ]; then
-            echo "🔍 ${site} 状态: $(python -c "import json; d=json.load(open('final_status_${site}.json')); print(d.get('message', '未知'))")"
+            echo "🔍 ${site} 状态文件存在"
           else
-            echo "🔍 ${site} 状态: 无状态文件"
+            echo "🔍 ${site} 状态文件不存在"
           fi
         done
 
@@ -119,7 +123,7 @@ jobs:
         
         for site in linux_do idcflare; do
           if [ -f "final_status_${site}.json" ]; then
-            # 修复：正确处理嵌套的JSON结构
+            # 正确处理嵌套的JSON结构
             success=$(python -c "
 import json
 try:
@@ -130,10 +134,11 @@ try:
         actual_data = data['data']
     else:
         actual_data = data
-    print(actual_data.get('success', False))
+    success_value = actual_data.get('success', False)
+    print('True' if success_value else 'False')
 except Exception as e:
     print('False')
-" 2>/dev/null || echo "False")
+")
             
             message=$(python -c "
 import json
@@ -147,7 +152,7 @@ try:
     print(actual_data.get('message', '未知'))
 except Exception as e:
     print('读取失败')
-" 2>/dev/null || echo "读取失败")
+")
             
             if [ "$success" = "True" ]; then
               status_icon="✅"
@@ -171,23 +176,13 @@ except Exception as e:
         
         if [ $success_count -eq $total_sites ]; then
           echo "🎉 所有站点执行成功!"
+          exit 0
         elif [ $success_count -eq 0 ]; then
           echo "💥 所有站点执行失败!"
+          exit 1
         else
           echo "⚠️ 部分站点执行成功"
-        fi
-        
-        # 额外检查：从日志中确认实际执行结果
-        echo ""
-        echo "=== 日志确认 ==="
-        if [ -f "automator.log" ]; then
-          if grep -q "🎉 脚本执行完成: 2/2 个站点成功" automator.log; then
-            echo "✅ 日志确认: 脚本报告2/2站点成功"
-          else
-            echo "❓ 日志确认: 未找到成功消息"
-          fi
-        else
-          echo "📁 日志文件不存在"
+          exit 1
         fi
 
     # ========== 失败通知 ==========
