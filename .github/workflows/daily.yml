@@ -123,24 +123,26 @@ jobs:
         
         for site in linux_do idcflare; do
           if [ -f "final_status_${site}.json" ]; then
-            # 正确处理嵌套的JSON结构
-            success=$(python -c "
+            # 使用jq工具解析JSON，如果没有jq则使用Python
+            if command -v jq &> /dev/null; then
+              success=$(jq -r '.data.success // .success // false' "final_status_${site}.json")
+              message=$(jq -r '.data.message // .message // "未知"' "final_status_${site}.json")
+            else
+              success=$(python3 -c "
 import json
 try:
     with open('final_status_${site}.json', 'r') as f:
         data = json.load(f)
-    # 处理缓存管理器的嵌套结构
     if 'data' in data:
         actual_data = data['data']
     else:
         actual_data = data
     success_value = actual_data.get('success', False)
-    print('True' if success_value else 'False')
-except Exception as e:
-    print('False')
+    print('true' if success_value else 'false')
+except Exception:
+    print('false')
 ")
-            
-            message=$(python -c "
+              message=$(python3 -c "
 import json
 try:
     with open('final_status_${site}.json', 'r') as f:
@@ -150,11 +152,12 @@ try:
     else:
         actual_data = data
     print(actual_data.get('message', '未知'))
-except Exception as e:
+except Exception:
     print('读取失败')
 ")
+            fi
             
-            if [ "$success" = "True" ]; then
+            if [ "$success" = "true" ]; then
               status_icon="✅"
               ((success_count++))
               status_text="成功"
