@@ -35,20 +35,31 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-playwright-
 
-    # ========== 应用状态缓存 ==========
-    - name: Cache application state
+    # ========== 多站点应用状态缓存 ==========
+    - name: Cache multi-site application state
       uses: actions/cache@v4
       id: app-state-cache
       with:
         path: |
-          cf_cookies.json
-          browser_state.json
-          session_data.json
-          final_status.json
+          # LinuxDo 站点缓存文件
+          cf_cookies_linux_do.json
+          browser_state_linux_do.json
+          session_data_linux_do.json
+          final_status_linux_do.json
+          
+          # IDCFlare 站点缓存文件
+          cf_cookies_idcflare.json
+          browser_state_idcflare.json
+          session_data_idcflare.json
+          final_status_idcflare.json
+          
+          # 通用文件
           connect_info.txt
-        key: ${{ runner.os }}-app-state-${{ github.sha }}
+          *.png
+          automator.log
+        key: ${{ runner.os }}-multi-site-state-${{ github.sha }}
         restore-keys: |
-          ${{ runner.os }}-app-state-
+          ${{ runner.os }}-multi-site-state-
 
     # ========== Python环境配置 ==========
     - name: Set up Python
@@ -73,75 +84,189 @@ jobs:
           python -m playwright install chromium
         fi
 
-    # ========== 执行核心任务 ==========
-    - name: Run automation script
-      timeout-minutes: 30
+    # ========== 执行多站点核心任务 ==========
+    - name: Run multi-site automation script
+      timeout-minutes: 45
       env:
+        # LinuxDo 站点凭据
         LINUXDO_USERNAME: ${{ secrets.LINUXDO_USERNAME }}
         LINUXDO_PASSWORD: ${{ secrets.LINUXDO_PASSWORD }}
+        
+        # IDCFlare 站点凭据
+        IDCFLARE_USERNAME: ${{ secrets.IDCFLARE_USERNAME }}
+        IDCFLARE_PASSWORD: ${{ secrets.IDCFLARE_PASSWORD }}
+        
+        # 通用配置
         OCR_API_KEY: ${{ secrets.OCR_API_KEY }}
         HEADLESS: 'true'
         GITHUB_ACTIONS: 'true'
       run: |
-        timeout 1800s python main.py || echo "🚀LinuxDo自动化脚本启动🚀"
+        echo "🚀 开始执行多站点自动化脚本..."
+        echo "目标站点: linux_do, idcflare"
+        echo "========================================"
         
-        echo "=== 执行结果 ==="
-        if [ -f "final_status.json" ]; then
-          echo "最终状态:"
-          cat final_status.json
-        fi
+        # 设置超时并运行脚本
+        timeout 2700s python main.py || echo "⏰ 脚本执行超时或完成"
         
-        if [ -f "connect_info.txt" ]; then
-          echo "Connect信息已生成"
-        fi
+        echo "========================================"
+        echo "📊 多站点执行结果汇总:"
+        
+        # 检查各站点最终状态
+        for site in linux_do idcflare; do
+          if [ -f "final_status_${site}.json" ]; then
+            echo "=== ${site} 状态 ==="
+            python -c "
+import json
+try:
+    with open('final_status_${site}.json', 'r') as f:
+        data = json.load(f)
+    print(f'成功: {data.get(\"success\", False)}')
+    print(f'消息: {data.get(\"message\", \"未知\")}')
+    print(f'重试次数: {data.get(\"retry_count\", 0)}')
+    print(f'登录状态: {data.get(\"login_status\", \"未知\")}')
+    print(f'Cloudflare: {data.get(\"cf_passed\", False)}')
+except Exception as e:
+    print(f'读取状态文件失败: {e}')
+"
+          else
+            echo "=== ${site} 状态: 状态文件不存在 ==="
+          fi
+          echo ""
+        done
+        
+        # 检查缓存文件生成情况
+        echo "📁 生成的缓存文件:"
+        ls -la *.json 2>/dev/null || echo "未找到缓存文件"
 
-    # ========== 保存缓存 ==========
-    - name: Save application state cache
+    # ========== 保存多站点缓存 ==========
+    - name: Save multi-site application state cache
       uses: actions/cache/save@v4
       if: always()
       with:
         path: |
-          cf_cookies.json
-          browser_state.json
-          session_data.json
-          final_status.json
+          # LinuxDo 站点缓存文件
+          cf_cookies_linux_do.json
+          browser_state_linux_do.json
+          session_data_linux_do.json
+          final_status_linux_do.json
+          
+          # IDCFlare 站点缓存文件
+          cf_cookies_idcflare.json
+          browser_state_idcflare.json
+          session_data_idcflare.json
+          final_status_idcflare.json
+          
+          # 通用文件
           connect_info.txt
-        key: ${{ runner.os }}-app-state-${{ github.sha }}
+          *.png
+          automator.log
+        key: ${{ runner.os }}-multi-site-state-${{ github.sha }}
 
-    # ========== 结果归档 ==========
-    - name: Upload artifacts
+    # ========== 多站点结果归档 ==========
+    - name: Upload multi-site artifacts
       uses: actions/upload-artifact@v4
       if: always()
       with:
-        name: automation-results
+        name: multi-site-automation-results
         path: |
+          # 各站点状态文件
+          final_status_linux_do.json
+          final_status_idcflare.json
+          
+          # 各站点会话数据
+          session_data_linux_do.json
+          session_data_idcflare.json
+          
+          # 各站点浏览器状态
+          browser_state_linux_do.json
+          browser_state_idcflare.json
+          
+          # 各站点Cloudflare cookies
+          cf_cookies_linux_do.json
+          cf_cookies_idcflare.json
+          
+          # 通用文件
           connect_info.txt
-          cf_cookies.json
-          browser_state.json
-          session_data.json
-          final_status.json
           *.png
           automator.log
         retention-days: 7
 
-    # ========== 状态报告 ==========
-    - name: Report status
+    # ========== 多站点状态报告 ==========
+    - name: Report multi-site status
       if: always()
       run: |
-        echo "=== 运行状态报告 ==="
+        echo "=== 多站点运行状态报告 ==="
         echo "工作流: ${{ github.workflow }}"
         echo "运行ID: ${{ github.run_id }}"
         echo "触发事件: ${{ github.event_name }}"
+        echo "执行时间: $(date)"
+        echo ""
         
-        if [ -f "final_status.json" ]; then
-          echo "脚本执行状态: $(python -c "import json; data=json.load(open('final_status.json')); print(data.get('message', '未知'))")"
-          echo "重试次数: $(python -c "import json; data=json.load(open('final_status.json')); print(data.get('retry_count', 0))")"
-        else
-          echo "脚本执行状态: 未完成或状态文件缺失"
-        fi
+        # 各站点状态汇总
+        echo "📈 各站点执行状态:"
+        echo ""
         
-        if [ -f "connect_info.txt" ]; then
-          echo "Connect信息: 已生成"
+        for site in linux_do idcflare; do
+          if [ -f "final_status_${site}.json" ]; then
+            success=$(python -c "import json; data=json.load(open('final_status_${site}.json')); print(data.get('success', False))" 2>/dev/null || echo "未知")
+            message=$(python -c "import json; data=json.load(open('final_status_${site}.json')); print(data.get('message', '未知'))" 2>/dev/null || echo "未知")
+            retries=$(python -c "import json; data=json.load(open('final_status_${site}.json')); print(data.get('retry_count', 0))" 2>/dev/null || echo "未知")
+            
+            if [ "$success" = "True" ]; then
+              status_icon="✅"
+            elif [ "$success" = "False" ]; then
+              status_icon="❌"
+            else
+              status_icon="❓"
+            fi
+            
+            echo "${status_icon} ${site}:"
+            echo "   状态: $message"
+            echo "   重试: $retries"
+            echo ""
+          else
+            echo "❓ ${site}: 状态文件缺失"
+            echo ""
+          fi
+        done
+        
+        # 总体统计
+        success_count=0
+        total_sites=2
+        
+        for site in linux_do idcflare; do
+          if [ -f "final_status_${site}.json" ]; then
+            if python -c "import json; data=json.load(open('final_status_${site}.json')); exit(0 if data.get('success') else 1)" 2>/dev/null; then
+              ((success_count++))
+            fi
+          fi
+        done
+        
+        echo "🎯 总体完成度: ${success_count}/${total_sites}"
+        
+        if [ $success_count -eq $total_sites ]; then
+          echo "🎉 所有站点执行成功!"
+        elif [ $success_count -eq 0 ]; then
+          echo "💥 所有站点执行失败!"
         else
-          echo "Connect信息: 未生成"
+          echo "⚠️  部分站点执行成功"
         fi
+
+    # ========== 失败通知（可选） ==========
+    - name: Notify on failure
+      if: failure()
+      run: |
+        echo "❌ 工作流执行失败!"
+        echo "请检查日志了解详细错误信息。"
+        echo ""
+        echo "失败的步骤:"
+        echo "- 可能的原因:"
+        echo "  1. 凭据配置错误"
+        echo "  2. 网络连接问题" 
+        echo "  3. 网站结构变化"
+        echo "  4. Cloudflare验证失败"
+        echo ""
+        echo "建议检查:"
+        echo "1. 确认所有secrets已正确配置"
+        echo "2. 查看artifact中的详细日志"
+        echo "3. 检查各站点的final_status文件"
