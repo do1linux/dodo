@@ -1,0 +1,176 @@
+name: LinuxDo Multi-Site Automation
+
+on:
+  workflow_dispatch:
+    inputs:
+      site_selector:
+        description: '选择要运行的站点'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - linux_do
+          - idcflare
+  schedule:
+    - cron: '0 * * * *'  # 每小时运行一次
+
+jobs:
+  automate:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    # ========== 系统依赖安装 ==========
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 \
+          libcups2 libdrm2 libxkbcommon0 libxdamage1 libxcomposite1 \
+          libxrandr2 libgbm1 libpango-1.0-0 libcairo2 \
+          libatspi2.0-0 libx11-xcb1 libasound2t64 \
+          tesseract-ocr tesseract-ocr-chi-sim tesseract-ocr-eng \
+          python3-pil python3-pip \
+          libffi8 libx264-164
+
+    # ========== 浏览器环境缓存 ==========
+    - name: Cache Playwright browsers
+      uses: actions/cache@v4
+      id: playwright-cache
+      with:
+        path: ~/.cache/ms-playwright
+        key: ${{ runner.os }}-playwright-${{ hashFiles('requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-playwright-
+
+    # ========== Python环境配置 ==========
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        if [ "${{ steps.playwright-cache.outputs.cache-hit }}" != 'true' ]; then
+          python -m playwright install chromium
+        fi
+
+    # ========== 执行多站点核心任务 ==========
+    - name: Run automation script
+      timeout-minutes: 45
+      env:
+        LINUXDO_USERNAME: ${{ secrets.LINUXDO_USERNAME }}
+        LINUXDO_PASSWORD: ${{ secrets.LINUXDO_PASSWORD }}
+        IDCFLARE_USERNAME: ${{ secrets.IDCFLARE_USERNAME }}
+        IDCFLARE_PASSWORD: ${{ secrets.IDCFLARE_PASSWORD }}
+        HEADLESS: 'true'
+      run: |
+        echo "🚀 开始执行多站点自动化脚本..."
+        echo "触发方式: ${{ github.event_name }}"
+        
+        # 设置超时并运行脚本
+        timeout 2700s python main.py || echo "⏰ 脚本执行完成"
+        
+        # 显示执行结果
+        echo "=== 执行结果 ==="
+        for site in linux_do idcflare; do
+          if [ -f "final_status_${site}.json" ]; then
+            echo "🔍 ${site} 状态文件存在"
+          else
+            echo "🔍 ${site} 状态文件不存在"
+          fi
+        done
+
+    # ========== 结果归档 ==========
+    - name: Upload results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: automation-results
+        path: |
+          final_status_*.json
+          session_data_*.json
+          cf_cookies_*.json
+          browser_state_*.json
+          *.png
+          *.log
+        retention-days: 7
+
+    # ========== 状态报告 ==========
+    - name: Report status
+      if: always()
+      run: |
+        echo "=== 自动化执行报告 ==="
+        echo "工作流: ${{ github.workflow }}"
+        echo "运行ID: ${{ github.run_id }}"
+        echo "触发方式: ${{ github.event_name }}"
+        echo "执行时间: $(date)"
+        echo ""
+        
+        success_count=0
+        total_sites=2
+        
+        for site in linux_do idcflare; do
+          if [ -f "final_status_${site}.json" ]; then
+            # 正确处理嵌套的JSON结构
+            success=$(python -c "
+import json
+try:
+    with open('final_status_${site}.json', 'r') as f:
+        data = json.load(f)
+    # 处理缓存管理器的嵌套结构
+    if 'data' in data:
+        actual_data = data['data']
+    else:
+        actual_data = data
+    success_value = actual_data.get('success', False)
+    print('True' if success_value else 'False')
+except Exception as e:
+    print('False')
+")
+            
+            message=$(python -c "
+import json
+try:
+    with open('final_status_${site}.json', 'r') as f:
+        data = json.load(f)
+    if 'data' in data:
+        actual_data = data['data']
+    else:
+        actual_data = data
+    print(actual_data.get('message', '未知'))
+except Exception as e:
+    print('读取失败')
+")
+            
+            if [ "$success" = "True" ]; then
+              status_icon="✅"
+              ((success_count++))
+              status_text="成功"
+            else
+              status_icon="❌"
+              status_text="失败"
+            fi
+            
+            echo "${status_icon} ${site}: ${status_text}"
+            echo "   详情: $message"
+            echo ""
+          else
+            echo "❓ ${site}: 状态文件缺失"
+            echo ""
+          fi
+        done
+        
+        echo "🎯 总体完成度: ${success_count}/${total_sites}"
+        
+        if [ $success_count -eq $total_sites ]; then
+          echo "🎉 所有站点执行成功!"
+        elif [ $success_count -eq 0 ]; then
+          echo "💥 所有站点执行失败!"
+        else
+          echo "⚠️ 部分站点执行成功"
+        fi
