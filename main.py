@@ -124,7 +124,7 @@ class EnhancedCacheManager:
     @staticmethod
     def save_session_data(data, site_name):
         file_name = f"session_data_{site_name}.json"
-        return EnhancedCacheManager.save_cache(data, site_name)
+        return EnhancedCacheManager.save_cache(data, file_name)
 
     @staticmethod
     def load_cf_cookies(site_name):
@@ -134,7 +134,7 @@ class EnhancedCacheManager:
     @staticmethod
     def save_cf_cookies(data, site_name):
         file_name = f"cf_cookies_{site_name}.json"
-        return EnhancedCacheManager.save_cache(data, site_name)
+        return EnhancedCacheManager.save_cache(data, file_name)
 
     @staticmethod
     def load_browser_state(site_name):
@@ -144,7 +144,7 @@ class EnhancedCacheManager:
     @staticmethod
     def save_browser_state(data, site_name):
         file_name = f"browser_state_{site_name}.json"
-        return EnhancedCacheManager.save_cache(data, site_name)
+        return EnhancedCacheManager.save_cache(data, file_name)
 
     @staticmethod
     def load_final_status(site_name):
@@ -154,7 +154,7 @@ class EnhancedCacheManager:
     @staticmethod
     def save_final_status(data, site_name):
         file_name = f"final_status_{site_name}.json"
-        return EnhancedCacheManager.save_cache(data, site_name)
+        return EnhancedCacheManager.save_cache(data, file_name)
 
 # ======================== 终极Cloudflare处理器 - 修复版 ========================
 class UltimateCloudflareHandler:
@@ -430,7 +430,7 @@ class LinuxDoAutomator:
                         logger.warning(f"⚠️ {self.site_config['name']} Cloudflare验证未通过，但继续尝试登录")
                     
                     # 检查登录状态
-                    cached_login_success = await self.ultimate_check_login_status()
+                    cached_login_success = await self.enhanced_check_login_status()
                     if cached_login_success:
                         logger.success(f"✅ {self.site_config['name']} 缓存登录成功")
                         self.is_logged_in = True
@@ -488,6 +488,151 @@ class LinuxDoAutomator:
             return False
         finally:
             await self.close_context()
+
+    async def enhanced_check_login_status(self):
+        """增强版登录状态检查 - 包含用户名验证"""
+        try:
+            current_url = self.page.url
+            page_title = await self.page.title()
+            logger.info(f"🔍 检查登录状态 - URL: {current_url}, 标题: {page_title}")
+            
+            # 如果页面卡在Cloudflare验证，但cookie有效，我们仍然尝试继续
+            if page_title == "请稍候…":
+                cf_valid = await UltimateCloudflareHandler.is_cf_clearance_valid(
+                    self.page.context, self.site_config['base_url'].replace('https://', ''))
+                if cf_valid:
+                    logger.warning("⚠️ 页面卡住但Cloudflare cookie有效，尝试继续流程")
+                    # 尝试直接导航到登录页面
+                    await self.page.goto(self.site_config['login_url'], wait_until='networkidle', timeout=60000)
+                    await asyncio.sleep(5)
+                    # 重新检查状态
+                    page_title = await self.page.title()
+            
+            # 检查用户相关元素（登录成功的标志）
+            user_indicators = [
+                '#current-user',
+                '#toggle-current-user', 
+                '.header-dropdown-toggle.current-user',
+                'img.avatar',
+                '.user-menu',
+                '[data-user-menu]'
+            ]
+            
+            user_element_found = False
+            for selector in user_indicators:
+                try:
+                    user_elem = await self.page.query_selector(selector)
+                    if user_elem and await user_elem.is_visible():
+                        logger.success(f"✅ 检测到用户元素: {selector}")
+                        user_element_found = True
+                        break
+                except Exception:
+                    continue
+            
+            if user_element_found:
+                # 🔥 新增：验证用户名匹配
+                username = self.credentials['username']
+                username_verified = False
+                
+                # 方法1: 检查页面内容中是否包含用户名
+                page_content = await self.page.content()
+                if username.lower() in page_content.lower():
+                    logger.success(f"✅ 在页面内容中找到用户名: {username}")
+                    username_verified = True
+                    return True
+                
+                # 方法2: 尝试点击用户菜单查看详细信息
+                if not username_verified:
+                    try:
+                        logger.info("🔄 尝试点击用户菜单验证用户名")
+                        user_click_selectors = ['img.avatar', '.current-user', '[data-user-menu]', '.header-dropdown-toggle']
+                        for selector in user_click_selectors:
+                            user_elem = await self.page.query_selector(selector)
+                            if user_elem and await user_elem.is_visible():
+                                await user_elem.click()
+                                await asyncio.sleep(2)
+                                
+                                # 在展开的菜单中查找用户名
+                                user_menu_content = await self.page.content()
+                                if username.lower() in user_menu_content.lower():
+                                    logger.success(f"✅ 在用户菜单中找到用户名: {username}")
+                                    username_verified = True
+                                
+                                # 点击其他地方关闭菜单
+                                await self.page.click('body')
+                                await asyncio.sleep(1)
+                                break
+                    except Exception as e:
+                        logger.debug(f"点击用户菜单失败: {str(e)}")
+                
+                # 方法3: 导航到用户个人资料页面验证
+                if not username_verified:
+                    try:
+                        logger.info("🔄 尝试导航到用户个人资料页面验证")
+                        profile_url = f"{self.site_config['base_url']}/u/{username}"
+                        await self.page.goto(profile_url, wait_until='networkidle', timeout=30000)
+                        await asyncio.sleep(3)
+                        
+                        profile_content = await self.page.content()
+                        if username.lower() in profile_content.lower() or "个人资料" in await self.page.title():
+                            logger.success(f"✅ 在个人资料页面验证用户名: {username}")
+                            username_verified = True
+                            
+                        # 返回之前的页面
+                        await self.page.go_back(wait_until='networkidle')
+                        await asyncio.sleep(2)
+                    except Exception as e:
+                        logger.debug(f"导航到个人资料页面失败: {str(e)}")
+                
+                # 方法4: 检查URL中是否包含用户相关路径
+                if not username_verified and ('/u/' in current_url or '/users/' in current_url):
+                    logger.success("✅ 检测到用户相关URL路径")
+                    username_verified = True
+                
+                # 最终判断
+                if username_verified:
+                    return True
+                else:
+                    logger.warning(f"⚠️ 检测到用户元素但无法验证用户名 {username}，默认认为已登录")
+                    return True
+            
+            # 检查登录按钮（未登录的标志）
+            login_buttons = [
+                '.login-button',
+                'button:has-text("登录")',
+                'button:has-text("Log In")',
+                '.btn.btn-icon-text.login-button'
+            ]
+            
+            for selector in login_buttons:
+                try:
+                    login_btn = await self.page.query_selector(selector)
+                    if login_btn and await login_btn.is_visible():
+                        logger.warning(f"❌ 检测到登录按钮: {selector}")
+                        return False
+                except Exception:
+                    continue
+            
+            # 如果无法确定状态，保存调试信息
+            page_content = await self.page.content()
+            if "请稍候" not in page_title and "Checking" not in page_title:
+                # 页面可能已正常加载但没有明显的登录状态指示
+                username = self.credentials['username']
+                if username.lower() in page_content.lower():
+                    logger.success(f"✅ 在页面内容中找到用户名: {username}")
+                    return True
+                
+                # 检查是否有正常的内容
+                if len(page_content) > 1000:
+                    logger.success("✅ 页面显示正常内容，可能已登录")
+                    return True
+            
+            logger.warning(f"⚠️ 登录状态不确定，默认认为未登录。页面标题: {page_title}")
+            return False
+            
+        except Exception as e:
+            logger.warning(f"{self.site_config['name']} 检查登录状态时出错: {str(e)}")
+            return False
 
     async def clear_caches(self):
         try:
@@ -590,7 +735,7 @@ class LinuxDoAutomator:
                 logger.info("✅ 页面已跳转，可能登录成功")
                 # 等待页面稳定
                 await asyncio.sleep(5)
-                return await self.ultimate_check_login_status()
+                return await self.enhanced_check_login_status()
             
             # 检查错误消息
             error_selectors = ['.alert-error', '.error', '.flash-error', '.alert.alert-error']
@@ -608,87 +753,10 @@ class LinuxDoAutomator:
             await self.page.goto(self.site_config['base_url'], wait_until='networkidle', timeout=60000)
             await asyncio.sleep(5)
             
-            return await self.ultimate_check_login_status()
+            return await self.enhanced_check_login_status()
                 
         except Exception as e:
             logger.error(f"{self.site_config['name']} 登录过程异常: {e}")
-            return False
-
-    async def ultimate_check_login_status(self):
-        """终极登录状态检查 - 专门处理页面卡住的问题"""
-        try:
-            # 保存当前状态用于调试
-            current_url = self.page.url
-            page_title = await self.page.title()
-            logger.info(f"🔍 检查登录状态 - URL: {current_url}, 标题: {page_title}")
-            
-            # 如果页面卡在Cloudflare验证，但cookie有效，我们仍然尝试继续
-            if page_title == "请稍候…":
-                cf_valid = await UltimateCloudflareHandler.is_cf_clearance_valid(self.page.context, 
-                                                                               self.site_config['base_url'].replace('https://', ''))
-                if cf_valid:
-                    logger.warning("⚠️ 页面卡住但Cloudflare cookie有效，尝试继续流程")
-                    # 尝试直接导航到登录页面
-                    await self.page.goto(self.site_config['login_url'], wait_until='networkidle', timeout=60000)
-                    await asyncio.sleep(5)
-                    # 重新检查状态
-                    page_title = await self.page.title()
-            
-            # 检查用户相关元素（登录成功的标志）
-            user_indicators = [
-                '#current-user',
-                '#toggle-current-user', 
-                '.header-dropdown-toggle.current-user',
-                'img.avatar',
-                '.user-menu',
-                '[data-user-menu]'
-            ]
-            
-            for selector in user_indicators:
-                try:
-                    user_elem = await self.page.query_selector(selector)
-                    if user_elem and await user_elem.is_visible():
-                        logger.success(f"✅ 检测到用户元素: {selector}")
-                        return True
-                except Exception:
-                    continue
-            
-            # 检查登录按钮（未登录的标志）
-            login_buttons = [
-                '.login-button',
-                'button:has-text("登录")',
-                'button:has-text("Log In")',
-                '.btn.btn-icon-text.login-button'
-            ]
-            
-            for selector in login_buttons:
-                try:
-                    login_btn = await self.page.query_selector(selector)
-                    if login_btn and await login_btn.is_visible():
-                        logger.warning(f"❌ 检测到登录按钮: {selector}")
-                        return False
-                except Exception:
-                    continue
-            
-            # 如果无法确定状态，保存调试信息
-            page_content = await self.page.content()
-            if "请稍候" not in page_title and "Checking" not in page_title:
-                # 页面可能已正常加载但没有明显的登录状态指示
-                username = self.credentials['username']
-                if username.lower() in page_content.lower():
-                    logger.success(f"✅ 在页面内容中找到用户名: {username}")
-                    return True
-                
-                # 检查是否有正常的内容
-                if len(page_content) > 1000:
-                    logger.success("✅ 页面显示正常内容，可能已登录")
-                    return True
-            
-            logger.warning(f"⚠️ 登录状态不确定，默认认为未登录。页面标题: {page_title}")
-            return False
-            
-        except Exception as e:
-            logger.warning(f"{self.site_config['name']} 检查登录状态时出错: {str(e)}")
             return False
 
     async def save_all_caches(self):
