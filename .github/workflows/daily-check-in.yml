@@ -1,9 +1,10 @@
 name: LinuxDo Automation
 
 on:
+  workflow_dispatch:
   schedule:
     - cron: '0 * * * *'  # 每小时运行一次
-  workflow_dispatch:
+  
 
 jobs:
   automate:
