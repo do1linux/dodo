@@ -119,20 +119,55 @@ jobs:
         
         for site in linux_do idcflare; do
           if [ -f "final_status_${site}.json" ]; then
-            if python -c "import json; d=json.load(open('final_status_${site}.json')); exit(0 if d.get('success') else 1)" 2>/dev/null; then
-              status="✅"
+            # 修复：正确处理嵌套的JSON结构
+            success=$(python -c "
+import json
+try:
+    with open('final_status_${site}.json', 'r') as f:
+        data = json.load(f)
+    # 处理缓存管理器的嵌套结构
+    if 'data' in data:
+        actual_data = data['data']
+    else:
+        actual_data = data
+    print(actual_data.get('success', False))
+except Exception as e:
+    print('False')
+" 2>/dev/null || echo "False")
+            
+            message=$(python -c "
+import json
+try:
+    with open('final_status_${site}.json', 'r') as f:
+        data = json.load(f)
+    if 'data' in data:
+        actual_data = data['data']
+    else:
+        actual_data = data
+    print(actual_data.get('message', '未知'))
+except Exception as e:
+    print('读取失败')
+" 2>/dev/null || echo "读取失败")
+            
+            if [ "$success" = "True" ]; then
+              status_icon="✅"
               ((success_count++))
+              status_text="成功"
             else
-              status="❌"
+              status_icon="❌"
+              status_text="失败"
             fi
-            echo "${status} ${site}: 完成"
+            
+            echo "${status_icon} ${site}: ${status_text}"
+            echo "   详情: $message"
+            echo ""
           else
-            echo "❓ ${site}: 状态未知"
+            echo "❓ ${site}: 状态文件缺失"
+            echo ""
           fi
         done
         
-        echo ""
-        echo "🎯 完成度: ${success_count}/${total_sites}"
+        echo "🎯 总体完成度: ${success_count}/${total_sites}"
         
         if [ $success_count -eq $total_sites ]; then
           echo "🎉 所有站点执行成功!"
@@ -141,3 +176,34 @@ jobs:
         else
           echo "⚠️ 部分站点执行成功"
         fi
+        
+        # 额外检查：从日志中确认实际执行结果
+        echo ""
+        echo "=== 日志确认 ==="
+        if [ -f "automator.log" ]; then
+          if grep -q "🎉 脚本执行完成: 2/2 个站点成功" automator.log; then
+            echo "✅ 日志确认: 脚本报告2/2站点成功"
+          else
+            echo "❓ 日志确认: 未找到成功消息"
+          fi
+        else
+          echo "📁 日志文件不存在"
+        fi
+
+    # ========== 失败通知 ==========
+    - name: Notify on failure
+      if: failure()
+      run: |
+        echo "❌ 工作流执行失败!"
+        echo "请检查日志了解详细错误信息。"
+        echo ""
+        echo "可能的原因:"
+        echo "1. 凭据配置错误"
+        echo "2. 网络连接问题" 
+        echo "3. 网站结构变化"
+        echo "4. Cloudflare验证失败"
+        echo ""
+        echo "建议检查:"
+        echo "1. 确认所有secrets已正确配置"
+        echo "2. 查看artifact中的详细日志"
+        echo "3. 检查各站点的final_status文件"
