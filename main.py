@@ -156,11 +156,11 @@ class EnhancedCacheManager:
         file_name = f"final_status_{site_name}.json"
         return EnhancedCacheManager.save_cache(data, site_name)
 
-# ======================== 终极Cloudflare处理器 - 优化版 ========================
+# ======================== 终极Cloudflare处理器 - 进一步优化版 ========================
 class UltimateCloudflareHandler:
     @staticmethod
-    async def handle_cloudflare(page, max_attempts=20, timeout=300, domain="linux.do"):
-        """优化的Cloudflare处理 - 优先使用现有cookie"""
+    async def handle_cloudflare(page, max_attempts=10, timeout=180, domain="linux.do"):
+        """进一步优化的Cloudflare处理 - 减少不必要的重试"""
         start_time = time.time()
         logger.info(f"🛡️ 开始处理 {domain} Cloudflare验证")
         
@@ -234,6 +234,10 @@ class UltimateCloudflareHandler:
                             logger.success("✅ 已触发JavaScript重定向")
                             await asyncio.sleep(8)
                             continue
+                        
+                        # 如果cookie有效但页面仍然卡住，我们认为验证通过，让后续流程处理
+                        logger.warning("⚠️ Cookie有效但页面仍然卡住，认为验证通过，继续后续流程")
+                        return True
                     
                     else:
                         logger.success(f"✅ {domain} 页面已正常加载")
@@ -244,7 +248,13 @@ class UltimateCloudflareHandler:
                     logger.info(f"⏳ 等待Cloudflare验证完成 ({wait_time:.1f}秒) - 尝试 {attempt + 1}/{max_attempts}")
                     await asyncio.sleep(wait_time)
                     
-                    # 偶尔刷新页面
+                    # 每次等待后都检查cookie是否变得有效
+                    cf_valid_after_wait = await UltimateCloudflareHandler.is_cf_clearance_valid(page.context, domain)
+                    if cf_valid_after_wait:
+                        logger.success(f"✅ 等待后检测到有效的 cf_clearance cookie，提前结束验证")
+                        return True
+                    
+                    # 偶尔刷新页面（每3次尝试刷新一次）
                     if attempt % 3 == 0:
                         logger.info("🔄 刷新页面")
                         await page.reload(wait_until='networkidle', timeout=60000)
@@ -359,7 +369,7 @@ class BrowserManager:
             Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
         """
 
-# ======================== 主自动化类 - 优化版 ========================
+# ======================== 主自动化类 - 进一步优化版 ========================
 class LinuxDoAutomator:
     def __init__(self, site_config):
         self.site_config = site_config
@@ -416,16 +426,18 @@ class LinuxDoAutomator:
                             self.is_logged_in = login_success
                             self.cf_passed = True
                     else:
-                        # 没有有效cookie，进行完整Cloudflare验证
+                        # 没有有效cookie，进行完整Cloudflare验证（减少尝试次数）
                         logger.info(f"🛡️ 开始完整Cloudflare验证流程")
                         await self.page.goto(self.site_config['base_url'], wait_until='networkidle', timeout=120000)
                         
                         self.cf_passed = await UltimateCloudflareHandler.handle_cloudflare(
-                            self.page, max_attempts=20, timeout=300, 
+                            self.page, max_attempts=8, timeout=180,  # 减少尝试次数和超时时间
                             domain=self.site_config['base_url'].replace('https://', '')
                         )
                         
-                        if not self.cf_passed:
+                        if self.cf_passed:
+                            logger.success(f"✅ {self.site_config['name']} Cloudflare验证通过")
+                        else:
                             logger.warning(f"⚠️ {self.site_config['name']} Cloudflare验证未通过，但继续尝试登录")
                         
                         # 检查登录状态
@@ -659,7 +671,7 @@ class LinuxDoAutomator:
             if "请稍候" in page_title or "Checking" in page_title:
                 logger.info("🛡️ 登录页面需要Cloudflare验证")
                 domain = self.site_config['base_url'].replace('https://', '')
-                await UltimateCloudflareHandler.handle_cloudflare(self.page, max_attempts=15, timeout=180, domain=domain)
+                await UltimateCloudflareHandler.handle_cloudflare(self.page, max_attempts=8, timeout=120, domain=domain)
             
             # 等待登录表单 - 增加重试机制
             form_loaded = False
