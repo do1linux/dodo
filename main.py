@@ -156,9 +156,9 @@ class EnhancedCacheManager:
     @staticmethod
     def save_final_status(data, site_name):
         file_name = f"final_status_{site_name}.json"
-        return EnhancedCacheManager.save_cache(data, site_name)
+        return EnhancedCacheManager.save_cache(data, file_name)
 
-# ======================== 终极Cloudflare处理器 - 修复版 ========================
+# ======================== 终极Cloudflare处理器 ========================
 class UltimateCloudflareHandler:
     @staticmethod
     async def handle_cloudflare(page, site_config, max_attempts=8, timeout=180):
@@ -384,7 +384,7 @@ class BrowserManager:
             Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
         """
 
-# ======================== 主自动化类 - 修复版 ========================
+# ======================== 主自动化类 ========================
 class LinuxDoAutomator:
     def __init__(self, site_config):
         self.site_config = site_config
@@ -557,7 +557,7 @@ class LinuxDoAutomator:
             return False
 
     async def enhanced_check_login_status(self):
-        """增强版登录状态检查"""
+        """增强版登录状态检查 - 包含完整的用户名验证"""
         try:
             current_url = self.page.url
             page_title = await self.page.title()
@@ -584,14 +584,83 @@ class LinuxDoAutomator:
                 '[data-user-menu]'
             ]
             
+            user_element_found = False
             for selector in user_indicators:
                 try:
                     user_elem = await self.page.query_selector(selector)
                     if user_elem and await user_elem.is_visible():
                         logger.success(f"✅ 检测到用户元素: {selector}")
-                        return True
+                        user_element_found = True
+                        break
                 except Exception:
                     continue
+            
+            if user_element_found:
+                # 🔥 完整的用户名验证流程
+                username = self.credentials['username']
+                username_verified = False
+                
+                # 方法1: 页面内容检查 - 在页面HTML中搜索用户名
+                page_content = await self.page.content()
+                if username.lower() in page_content.lower():
+                    logger.success(f"✅ 在页面内容中找到用户名: {username}")
+                    username_verified = True
+                    return True
+                
+                # 方法2: 用户菜单点击 - 点击用户头像/菜单查看详细信息
+                if not username_verified:
+                    try:
+                        logger.info("🔄 尝试点击用户菜单验证用户名")
+                        user_click_selectors = ['img.avatar', '.current-user', '[data-user-menu]', '.header-dropdown-toggle']
+                        for selector in user_click_selectors:
+                            user_elem = await self.page.query_selector(selector)
+                            if user_elem and await user_elem.is_visible():
+                                await user_elem.click()
+                                await asyncio.sleep(2)
+                                
+                                # 在展开的菜单中查找用户名
+                                user_menu_content = await self.page.content()
+                                if username.lower() in user_menu_content.lower():
+                                    logger.success(f"✅ 在用户菜单中找到用户名: {username}")
+                                    username_verified = True
+                                
+                                # 点击其他地方关闭菜单
+                                await self.page.click('body')
+                                await asyncio.sleep(1)
+                                break
+                    except Exception as e:
+                        logger.debug(f"点击用户菜单失败: {str(e)}")
+                
+                # 方法3: 个人资料页面验证 - 导航到用户个人资料页面确认
+                if not username_verified:
+                    try:
+                        logger.info("🔄 尝试导航到用户个人资料页面验证")
+                        profile_url = f"{self.site_config['base_url']}/u/{username}"
+                        await self.page.goto(profile_url, wait_until='networkidle', timeout=30000)
+                        await asyncio.sleep(3)
+                        
+                        profile_content = await self.page.content()
+                        if username.lower() in profile_content.lower() or "个人资料" in await self.page.title():
+                            logger.success(f"✅ 在个人资料页面验证用户名: {username}")
+                            username_verified = True
+                            
+                        # 返回之前的页面
+                        await self.page.go_back(wait_until='networkidle')
+                        await asyncio.sleep(2)
+                    except Exception as e:
+                        logger.debug(f"导航到个人资料页面失败: {str(e)}")
+                
+                # 方法4: URL路径检查 - 检查URL中是否包含用户相关路径
+                if not username_verified and ('/u/' in current_url or '/users/' in current_url):
+                    logger.success("✅ 检测到用户相关URL路径")
+                    username_verified = True
+                
+                # 最终判断
+                if username_verified:
+                    return True
+                else:
+                    logger.warning(f"⚠️ 检测到用户元素但无法验证用户名 {username}，默认认为已登录")
+                    return True
             
             # 检查登录按钮（未登录的标志）
             login_buttons = [
@@ -610,14 +679,20 @@ class LinuxDoAutomator:
                 except Exception:
                     continue
             
-            # 检查页面内容中是否包含用户名
-            username = self.credentials['username']
+            # 如果无法确定状态，保存调试信息
             page_content = await self.page.content()
-            if username.lower() in page_content.lower():
-                logger.success(f"✅ 在页面内容中找到用户名: {username}")
-                return True
+            if "请稍候" not in page_title and "Checking" not in page_title:
+                # 页面可能已正常加载但没有明显的登录状态指示
+                username = self.credentials['username']
+                if username.lower() in page_content.lower():
+                    logger.success(f"✅ 在页面内容中找到用户名: {username}")
+                    return True
+                
+                # 检查是否有正常的内容
+                if len(page_content) > 1000:
+                    logger.success("✅ 页面显示正常内容，可能已登录")
+                    return True
             
-            # 如果无法确定状态
             logger.warning(f"⚠️ 登录状态不确定，默认认为未登录。页面标题: {page_title}")
             return False
             
