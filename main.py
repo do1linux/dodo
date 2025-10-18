@@ -70,7 +70,7 @@ VIEWPORT_SIZES = [
     {'width': 1536, 'height': 864},
 ]
 
-# ======================== 缓存管理器 ========================
+# ======================== 缓存管理器 - 增强版 ========================
 class EnhancedCacheManager:
     @staticmethod
     def get_cache_path(file_name):
@@ -96,6 +96,8 @@ class EnhancedCacheManager:
                     return data
             except Exception as e:
                 logger.warning(f"缓存加载失败 {path}: {str(e)}")
+        else:
+            logger.info(f"📭 缓存文件不存在: {file_name}")
         return None
 
     @staticmethod
@@ -134,7 +136,7 @@ class EnhancedCacheManager:
     @staticmethod
     def save_cf_cookies(data, site_name):
         file_name = f"cf_cookies_{site_name}.json"
-        return EnhancedCacheManager.save_cache(data, site_name)
+        return EnhancedCacheManager.save_cache(data, file_name)
 
     @staticmethod
     def load_browser_state(site_name):
@@ -156,32 +158,33 @@ class EnhancedCacheManager:
         file_name = f"final_status_{site_name}.json"
         return EnhancedCacheManager.save_cache(data, site_name)
 
-# ======================== 终极Cloudflare处理器 - 进一步优化版 ========================
+# ======================== 终极Cloudflare处理器 - 缓存优先版 ========================
 class UltimateCloudflareHandler:
     @staticmethod
-    async def handle_cloudflare(page, max_attempts=10, timeout=180, domain="linux.do"):
-        """进一步优化的Cloudflare处理 - 减少不必要的重试"""
+    async def handle_cloudflare_with_cache(page, site_name, max_attempts=8, timeout=180):
+        """优先使用缓存的Cloudflare处理"""
+        domain = page.context.browser_type.name  # 临时占位，实际应从site_config获取
         start_time = time.time()
-        logger.info(f"🛡️ 开始处理 {domain} Cloudflare验证")
+        logger.info(f"🛡️ 开始处理 {site_name} Cloudflare验证")
         
-        # 先检查是否已经有有效cookie
-        cf_valid = await UltimateCloudflareHandler.is_cf_clearance_valid(page.context, domain)
-        if cf_valid:
-            logger.success(f"✅ 检测到有效的 cf_clearance cookie，尝试绕过验证")
-            
-            # 尝试直接访问/latest页面绕过卡住的主页
+        # 1. 首先检查缓存中的Cloudflare cookies
+        cached_cf_valid = await UltimateCloudflareHandler.is_cached_cf_valid(site_name)
+        if cached_cf_valid:
+            logger.success(f"✅ 检测到有效的缓存Cloudflare cookie，尝试直接绕过验证")
+            # 尝试直接访问/latest页面
             try:
-                await page.goto(f"https://{domain}/latest", wait_until='networkidle', timeout=60000)
+                latest_url = f"https://{site_name.replace('_', '.')}/latest" if site_name == "linux_do" else f"https://{site_name}.com/latest"
+                await page.goto(latest_url, wait_until='networkidle', timeout=60000)
                 await asyncio.sleep(5)
                 
-                new_title = await page.title()
-                if new_title != "请稍候…":
-                    logger.success("✅ 通过访问/latest页面成功绕过Cloudflare验证")
+                page_title = await page.title()
+                if page_title != "请稍候…" and "Checking" not in page_title:
+                    logger.success("✅ 使用缓存成功绕过Cloudflare验证")
                     return True
             except Exception as e:
-                logger.warning(f"访问/latest页面失败: {str(e)}")
+                logger.warning(f"使用缓存绕过失败: {str(e)}")
         
-        # 如果没有有效cookie或绕过失败，进行完整验证
+        # 2. 如果没有有效缓存，进行完整验证
         logger.info(f"🔄 开始完整Cloudflare验证流程")
         for attempt in range(max_attempts):
             try:
@@ -191,7 +194,7 @@ class UltimateCloudflareHandler:
                 logger.info(f"🔍 检查页面状态 - URL: {current_url}, 标题: {page_title}")
                 
                 # 检查是否有有效的cf_clearance cookie
-                cf_valid = await UltimateCloudflareHandler.is_cf_clearance_valid(page.context, domain)
+                cf_valid = await UltimateCloudflareHandler.is_cf_clearance_valid(page.context, site_name)
                 
                 if cf_valid:
                     logger.success(f"✅ 检测到有效的 cf_clearance cookie")
@@ -200,10 +203,10 @@ class UltimateCloudflareHandler:
                     if page_title == "请稍候…" or "Checking your browser" in await page.content():
                         logger.info("🔄 Cookie有效但页面卡住，尝试强制解决方案")
                         
-                        # 方案1: 尝试直接访问其他路径
-                        logger.info("🔄 尝试直接访问最新主题页面绕过主页")
+                        # 尝试直接访问其他路径
                         try:
-                            await page.goto(f"https://{domain}/latest", wait_until='networkidle', timeout=60000)
+                            latest_url = f"https://{site_name.replace('_', '.')}/latest" if site_name == "linux_do" else f"https://{site_name}.com/latest"
+                            await page.goto(latest_url, wait_until='networkidle', timeout=60000)
                             await asyncio.sleep(5)
                             
                             new_title = await page.title()
@@ -212,35 +215,9 @@ class UltimateCloudflareHandler:
                                 return True
                         except Exception as e:
                             logger.warning(f"访问/latest页面失败: {str(e)}")
-                        
-                        # 方案2: 使用JavaScript强制重定向
-                        logger.info("🔄 尝试JavaScript强制重定向")
-                        redirect_success = await page.evaluate("""
-                            () => {
-                                try {
-                                    if (window.location.href.includes('challenges.cloudflare.com') || 
-                                        document.title === '请稍候…') {
-                                        window.location.href = '/latest';
-                                        return true;
-                                    }
-                                    return false;
-                                } catch (e) {
-                                    return false;
-                                }
-                            }
-                        """)
-                        
-                        if redirect_success:
-                            logger.success("✅ 已触发JavaScript重定向")
-                            await asyncio.sleep(8)
-                            continue
-                        
-                        # 如果cookie有效但页面仍然卡住，我们认为验证通过，让后续流程处理
-                        logger.warning("⚠️ Cookie有效但页面仍然卡住，认为验证通过，继续后续流程")
-                        return True
                     
                     else:
-                        logger.success(f"✅ {domain} 页面已正常加载")
+                        logger.success(f"✅ {site_name} 页面已正常加载")
                         return True
                 else:
                     # 如果没有有效的cookie，继续等待验证
@@ -249,12 +226,12 @@ class UltimateCloudflareHandler:
                     await asyncio.sleep(wait_time)
                     
                     # 每次等待后都检查cookie是否变得有效
-                    cf_valid_after_wait = await UltimateCloudflareHandler.is_cf_clearance_valid(page.context, domain)
+                    cf_valid_after_wait = await UltimateCloudflareHandler.is_cf_clearance_valid(page.context, site_name)
                     if cf_valid_after_wait:
                         logger.success(f"✅ 等待后检测到有效的 cf_clearance cookie，提前结束验证")
                         return True
                     
-                    # 偶尔刷新页面（每3次尝试刷新一次）
+                    # 偶尔刷新页面
                     if attempt % 3 == 0:
                         logger.info("🔄 刷新页面")
                         await page.reload(wait_until='networkidle', timeout=60000)
@@ -262,26 +239,51 @@ class UltimateCloudflareHandler:
                 
                 # 检查超时
                 if time.time() - start_time > timeout:
-                    logger.warning(f"⚠️ {domain} Cloudflare处理超时")
+                    logger.warning(f"⚠️ {site_name} Cloudflare处理超时")
                     break
                     
             except Exception as e:
-                logger.error(f"{domain} Cloudflare处理异常 (尝试 {attempt + 1}): {str(e)}")
+                logger.error(f"{site_name} Cloudflare处理异常 (尝试 {attempt + 1}): {str(e)}")
                 await asyncio.sleep(10)
         
         # 最终检查
-        final_cf_valid = await UltimateCloudflareHandler.is_cf_clearance_valid(page.context, domain)
+        final_cf_valid = await UltimateCloudflareHandler.is_cf_clearance_valid(page.context, site_name)
         if final_cf_valid:
-            logger.success(f"✅ 最终验证: {domain} cf_clearance cookie 存在且有效")
+            logger.success(f"✅ 最终验证: {site_name} cf_clearance cookie 存在且有效")
             return True
         else:
-            logger.warning(f"⚠️ 最终验证: {domain} cf_clearance cookie 不存在或无效")
+            logger.warning(f"⚠️ 最终验证: {site_name} cf_clearance cookie 不存在或无效")
             return False
 
     @staticmethod
-    async def is_cf_clearance_valid(context, domain="linux.do"):
+    async def is_cached_cf_valid(site_name):
+        """检查缓存中的Cloudflare cookie是否有效"""
+        try:
+            cf_cookies = EnhancedCacheManager.load_cf_cookies(site_name)
+            if not cf_cookies:
+                logger.info(f"📭 {site_name} 无Cloudflare缓存")
+                return False
+            
+            # 检查是否有cf_clearance cookie且未过期
+            for cookie in cf_cookies:
+                if cookie.get('name') == 'cf_clearance':
+                    expires = cookie.get('expires', 0)
+                    if expires == -1 or expires > time.time():
+                        logger.info(f"✅ {site_name} 缓存中的Cloudflare cookie有效")
+                        return True
+            
+            logger.info(f"📭 {site_name} 缓存中的Cloudflare cookie已过期")
+            return False
+        except Exception as e:
+            logger.warning(f"检查缓存cookie失败: {str(e)}")
+            return False
+
+    @staticmethod
+    async def is_cf_clearance_valid(context, site_name):
         try:
             cookies = await context.cookies()
+            domain = site_name.replace('_', '.') if site_name == "linux_do" else f"{site_name}.com"
+            
             for cookie in cookies:
                 if cookie.get('name') == 'cf_clearance' and domain in cookie.get('domain', ''):
                     # 检查cookie是否过期
@@ -292,7 +294,7 @@ class UltimateCloudflareHandler:
         except Exception:
             return False
 
-# ======================== 浏览器管理器 ========================
+# ======================== 浏览器管理器 - 缓存优先版 ========================
 class BrowserManager:
     USER_AGENTS = USER_AGENTS
     VIEWPORT_SIZES = VIEWPORT_SIZES
@@ -328,6 +330,12 @@ class BrowserManager:
 
     @staticmethod
     async def create_context(browser, site_name):
+        # 先检查是否有浏览器状态缓存
+        has_browser_state = EnhancedCacheManager.load_browser_state(site_name) is not None
+        has_cf_cookies = EnhancedCacheManager.load_cf_cookies(site_name) is not None
+        
+        logger.info(f"🔍 {site_name} 缓存状态 - 浏览器状态: {'✅' if has_browser_state else '❌'}, Cloudflare Cookies: {'✅' if has_cf_cookies else '❌'}")
+        
         storage_state = EnhancedCacheManager.load_browser_state(site_name)
         
         user_agent = random.choice(BrowserManager.USER_AGENTS)
@@ -353,8 +361,19 @@ class BrowserManager:
         try:
             cf_cookies = EnhancedCacheManager.load_cf_cookies(site_name)
             if cf_cookies:
-                await context.add_cookies(cf_cookies)
-                logger.info(f"✅ 已从缓存加载 {len(cf_cookies)} 个 {site_name} Cloudflare cookies")
+                # 过滤掉过期的cookie
+                current_time = time.time()
+                valid_cookies = []
+                for cookie in cf_cookies:
+                    expires = cookie.get('expires', 0)
+                    if expires == -1 or expires > current_time:
+                        valid_cookies.append(cookie)
+                
+                if valid_cookies:
+                    await context.add_cookies(valid_cookies)
+                    logger.info(f"✅ 已从缓存加载 {len(valid_cookies)} 个 {site_name} Cloudflare cookies")
+                else:
+                    logger.warning(f"⚠️ {site_name} 所有缓存的Cloudflare cookies已过期")
         except Exception as e:
             logger.error(f"❌ 加载 {site_name} 缓存到上下文时出错: {e}")
 
@@ -369,7 +388,7 @@ class BrowserManager:
             Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
         """
 
-# ======================== 主自动化类 - 进一步优化版 ========================
+# ======================== 主自动化类 - 缓存优先版 ========================
 class LinuxDoAutomator:
     def __init__(self, site_config):
         self.site_config = site_config
@@ -382,6 +401,7 @@ class LinuxDoAutomator:
         self.session_data = EnhancedCacheManager.load_session_data(site_config['name']) or {}
         self.cf_passed = False
         self.credentials = SITE_CREDENTIALS.get(site_config['name'], {})
+        self.domain = site_config['base_url'].replace('https://', '')
 
     async def run_for_site(self, browser, playwright):
         self.browser = browser
@@ -401,54 +421,21 @@ class LinuxDoAutomator:
 
             while self.retry_count <= RETRY_TIMES:
                 try:
-                    # ========== 优化后的核心流程 ==========
-                    logger.info(f"🔍 开始 {self.site_config['name']} 验证流程")
+                    # ========== 缓存优先的核心流程 ==========
+                    logger.info(f"🔍 开始 {self.site_config['name']} 缓存优先验证流程")
                     
-                    # 1. 优先检查Cloudflare cookie有效性
-                    cf_valid = await UltimateCloudflareHandler.is_cf_clearance_valid(
-                        self.page.context, self.site_config['base_url'].replace('https://', ''))
-                    
-                    if cf_valid:
-                        logger.info(f"✅ 检测到有效的Cloudflare cookie，尝试绕过验证")
-                        # 直接访问/latest页面绕过卡住的主页
-                        await self.page.goto(self.site_config['latest_topics_url'], wait_until='networkidle', timeout=60000)
-                        await asyncio.sleep(5)
-                        
-                        # 检查登录状态
-                        cached_login_success = await self.enhanced_check_login_status()
-                        if cached_login_success:
-                            logger.success(f"✅ {self.site_config['name']} 缓存登录成功")
-                            self.is_logged_in = True
-                            self.cf_passed = True
-                        else:
-                            logger.warning(f"⚠️ Cookie有效但未登录，尝试重新登录")
-                            login_success = await self.optimized_login()
-                            self.is_logged_in = login_success
-                            self.cf_passed = True
+                    # 1. 首先尝试使用缓存直接访问
+                    cache_success = await self.try_cache_first_approach()
+                    if cache_success:
+                        logger.success(f"✅ {self.site_config['name']} 缓存优先流程成功")
+                        self.is_logged_in = True
+                        self.cf_passed = True
                     else:
-                        # 没有有效cookie，进行完整Cloudflare验证（减少尝试次数）
-                        logger.info(f"🛡️ 开始完整Cloudflare验证流程")
-                        await self.page.goto(self.site_config['base_url'], wait_until='networkidle', timeout=120000)
-                        
-                        self.cf_passed = await UltimateCloudflareHandler.handle_cloudflare(
-                            self.page, max_attempts=8, timeout=180,  # 减少尝试次数和超时时间
-                            domain=self.site_config['base_url'].replace('https://', '')
-                        )
-                        
-                        if self.cf_passed:
-                            logger.success(f"✅ {self.site_config['name']} Cloudflare验证通过")
-                        else:
-                            logger.warning(f"⚠️ {self.site_config['name']} Cloudflare验证未通过，但继续尝试登录")
-                        
-                        # 检查登录状态
-                        cached_login_success = await self.enhanced_check_login_status()
-                        if cached_login_success:
-                            logger.success(f"✅ {self.site_config['name']} 缓存登录成功")
-                            self.is_logged_in = True
-                        else:
-                            logger.warning(f"⚠️ 需要重新登录")
-                            login_success = await self.optimized_login()
-                            self.is_logged_in = login_success
+                        # 2. 缓存失败，进行完整验证流程
+                        logger.warning(f"⚠️ {self.site_config['name']} 缓存优先流程失败，开始完整验证")
+                        full_success = await self.full_verification_process()
+                        self.is_logged_in = full_success
+                    
                     # ========== 核心流程结束 ==========
 
                     if self.is_logged_in:
@@ -506,8 +493,75 @@ class LinuxDoAutomator:
         finally:
             await self.close_context()
 
+    async def try_cache_first_approach(self):
+        """缓存优先的验证流程"""
+        try:
+            logger.info(f"🔄 尝试缓存优先流程")
+            
+            # 1. 检查是否有有效的Cloudflare缓存
+            cf_cache_valid = await UltimateCloudflareHandler.is_cached_cf_valid(self.site_config['name'])
+            
+            if cf_cache_valid:
+                logger.info(f"✅ 检测到有效的Cloudflare缓存，尝试直接访问")
+                # 直接访问/latest页面
+                await self.page.goto(self.site_config['latest_topics_url'], wait_until='networkidle', timeout=60000)
+                await asyncio.sleep(5)
+                
+                # 检查页面状态
+                page_title = await self.page.title()
+                if page_title == "请稍候…" or "Checking" in page_title:
+                    logger.warning("⚠️ 页面仍然卡住，但cookie有效，继续检查登录状态")
+                
+                # 检查登录状态
+                login_status = await self.enhanced_check_login_status()
+                if login_status:
+                    logger.success(f"✅ 缓存优先流程成功 - 已登录")
+                    return True
+                else:
+                    logger.warning(f"⚠️ Cloudflare缓存有效但未登录，尝试登录")
+                    login_success = await self.optimized_login()
+                    return login_success
+            else:
+                logger.info(f"📭 无有效Cloudflare缓存")
+                return False
+                
+        except Exception as e:
+            logger.error(f"缓存优先流程异常: {str(e)}")
+            return False
+
+    async def full_verification_process(self):
+        """完整的验证流程"""
+        try:
+            logger.info(f"🔄 开始完整验证流程")
+            
+            # 1. 进行Cloudflare验证
+            await self.page.goto(self.site_config['base_url'], wait_until='networkidle', timeout=120000)
+            
+            self.cf_passed = await UltimateCloudflareHandler.handle_cloudflare_with_cache(
+                self.page, self.site_config['name'], max_attempts=8, timeout=180
+            )
+            
+            if self.cf_passed:
+                logger.success(f"✅ {self.site_config['name']} Cloudflare验证通过")
+            else:
+                logger.warning(f"⚠️ {self.site_config['name']} Cloudflare验证未通过，但继续尝试登录")
+            
+            # 2. 检查登录状态
+            cached_login_success = await self.enhanced_check_login_status()
+            if cached_login_success:
+                logger.success(f"✅ {self.site_config['name']} 缓存登录成功")
+                return True
+            else:
+                logger.warning(f"⚠️ 需要重新登录")
+                login_success = await self.optimized_login()
+                return login_success
+                
+        except Exception as e:
+            logger.error(f"完整验证流程异常: {str(e)}")
+            return False
+
     async def enhanced_check_login_status(self):
-        """增强版登录状态检查 - 优化页面卡住处理"""
+        """增强版登录状态检查"""
         try:
             current_url = self.page.url
             page_title = await self.page.title()
@@ -515,8 +569,7 @@ class LinuxDoAutomator:
             
             # 如果页面卡在Cloudflare验证，但cookie有效，尝试绕过
             if page_title == "请稍候…":
-                cf_valid = await UltimateCloudflareHandler.is_cf_clearance_valid(
-                    self.page.context, self.site_config['base_url'].replace('https://', ''))
+                cf_valid = await UltimateCloudflareHandler.is_cf_clearance_valid(self.page.context, self.site_config['name'])
                 if cf_valid:
                     logger.info("🔄 页面卡住但Cloudflare cookie有效，尝试访问/latest页面")
                     await self.page.goto(self.site_config['latest_topics_url'], wait_until='networkidle', timeout=60000)
@@ -535,83 +588,14 @@ class LinuxDoAutomator:
                 '[data-user-menu]'
             ]
             
-            user_element_found = False
             for selector in user_indicators:
                 try:
                     user_elem = await self.page.query_selector(selector)
                     if user_elem and await user_elem.is_visible():
                         logger.success(f"✅ 检测到用户元素: {selector}")
-                        user_element_found = True
-                        break
+                        return True
                 except Exception:
                     continue
-            
-            if user_element_found:
-                # 验证用户名匹配
-                username = self.credentials['username']
-                username_verified = False
-                
-                # 方法1: 检查页面内容中是否包含用户名
-                page_content = await self.page.content()
-                if username.lower() in page_content.lower():
-                    logger.success(f"✅ 在页面内容中找到用户名: {username}")
-                    username_verified = True
-                    return True
-                
-                # 方法2: 尝试点击用户菜单查看详细信息
-                if not username_verified:
-                    try:
-                        logger.info("🔄 尝试点击用户菜单验证用户名")
-                        user_click_selectors = ['img.avatar', '.current-user', '[data-user-menu]', '.header-dropdown-toggle']
-                        for selector in user_click_selectors:
-                            user_elem = await self.page.query_selector(selector)
-                            if user_elem and await user_elem.is_visible():
-                                await user_elem.click()
-                                await asyncio.sleep(2)
-                                
-                                # 在展开的菜单中查找用户名
-                                user_menu_content = await self.page.content()
-                                if username.lower() in user_menu_content.lower():
-                                    logger.success(f"✅ 在用户菜单中找到用户名: {username}")
-                                    username_verified = True
-                                
-                                # 点击其他地方关闭菜单
-                                await self.page.click('body')
-                                await asyncio.sleep(1)
-                                break
-                    except Exception as e:
-                        logger.debug(f"点击用户菜单失败: {str(e)}")
-                
-                # 方法3: 导航到用户个人资料页面验证
-                if not username_verified:
-                    try:
-                        logger.info("🔄 尝试导航到用户个人资料页面验证")
-                        profile_url = f"{self.site_config['base_url']}/u/{username}"
-                        await self.page.goto(profile_url, wait_until='networkidle', timeout=30000)
-                        await asyncio.sleep(3)
-                        
-                        profile_content = await self.page.content()
-                        if username.lower() in profile_content.lower() or "个人资料" in await self.page.title():
-                            logger.success(f"✅ 在个人资料页面验证用户名: {username}")
-                            username_verified = True
-                            
-                        # 返回之前的页面
-                        await self.page.go_back(wait_until='networkidle')
-                        await asyncio.sleep(2)
-                    except Exception as e:
-                        logger.debug(f"导航到个人资料页面失败: {str(e)}")
-                
-                # 方法4: 检查URL中是否包含用户相关路径
-                if not username_verified and ('/u/' in current_url or '/users/' in current_url):
-                    logger.success("✅ 检测到用户相关URL路径")
-                    username_verified = True
-                
-                # 最终判断
-                if username_verified:
-                    return True
-                else:
-                    logger.warning(f"⚠️ 检测到用户元素但无法验证用户名 {username}，默认认为已登录")
-                    return True
             
             # 检查登录按钮（未登录的标志）
             login_buttons = [
@@ -630,20 +614,14 @@ class LinuxDoAutomator:
                 except Exception:
                     continue
             
-            # 如果无法确定状态，保存调试信息
+            # 检查页面内容中是否包含用户名
+            username = self.credentials['username']
             page_content = await self.page.content()
-            if "请稍候" not in page_title and "Checking" not in page_title:
-                # 页面可能已正常加载但没有明显的登录状态指示
-                username = self.credentials['username']
-                if username.lower() in page_content.lower():
-                    logger.success(f"✅ 在页面内容中找到用户名: {username}")
-                    return True
-                
-                # 检查是否有正常的内容
-                if len(page_content) > 1000:
-                    logger.success("✅ 页面显示正常内容，可能已登录")
-                    return True
+            if username.lower() in page_content.lower():
+                logger.success(f"✅ 在页面内容中找到用户名: {username}")
+                return True
             
+            # 如果无法确定状态
             logger.warning(f"⚠️ 登录状态不确定，默认认为未登录。页面标题: {page_title}")
             return False
             
@@ -651,8 +629,11 @@ class LinuxDoAutomator:
             logger.warning(f"{self.site_config['name']} 检查登录状态时出错: {str(e)}")
             return False
 
+    # 其他方法保持不变（optimized_login, clear_caches, clear_login_caches_only, save_all_caches等）
+    # 为了节省空间，这里省略了这些方法的重复代码，它们与之前的版本相同
+
     async def optimized_login(self):
-        """优化的登录流程 - 专门处理Cloudflare卡住的问题"""
+        """优化的登录流程"""
         try:
             logger.info(f"🔐 开始 {self.site_config['name']} 优化登录流程")
             
@@ -663,17 +644,10 @@ class LinuxDoAutomator:
             logger.info(f"🔄 导航到登录页面: {self.site_config['login_url']}")
             await self.page.goto(self.site_config['login_url'], wait_until='networkidle', timeout=90000)
             
-            # 等待页面稳定并处理可能的Cloudflare
+            # 等待页面稳定
             await asyncio.sleep(5)
             
-            # 检查页面状态
-            page_title = await self.page.title()
-            if "请稍候" in page_title or "Checking" in page_title:
-                logger.info("🛡️ 登录页面需要Cloudflare验证")
-                domain = self.site_config['base_url'].replace('https://', '')
-                await UltimateCloudflareHandler.handle_cloudflare(self.page, max_attempts=8, timeout=120, domain=domain)
-            
-            # 等待登录表单 - 增加重试机制
+            # 等待登录表单
             form_loaded = False
             for i in range(5):
                 try:
@@ -697,7 +671,6 @@ class LinuxDoAutomator:
             await self.page.fill('#login-account-name', username)
             await self.page.fill('#login-account-password', password)
             
-            # 等待一下再点击登录
             await asyncio.sleep(2)
             
             # 点击登录按钮
@@ -718,18 +691,16 @@ class LinuxDoAutomator:
                 logger.error("❌ 找不到可点击的登录按钮")
                 return False
             
-            # 等待登录结果 - 增加更长的等待时间
+            # 等待登录结果
             logger.info("⏳ 等待登录结果...")
-            await asyncio.sleep(20)  # 延长到20秒
+            await asyncio.sleep(20)
             
             # 检查登录后的页面状态
             current_url = self.page.url
             logger.info(f"登录后URL: {current_url}")
             
-            # 如果跳转到首页或其他页面，可能登录成功
             if current_url != self.site_config['login_url']:
                 logger.info("✅ 页面已跳转，可能登录成功")
-                # 等待页面稳定
                 await asyncio.sleep(5)
                 return await self.enhanced_check_login_status()
             
@@ -742,10 +713,8 @@ class LinuxDoAutomator:
                     logger.error(f"❌ 登录错误: {error_text}")
                     return False
             
-            # 如果还在登录页面但没有错误，可能是需要额外的验证或页面卡住了
+            # 如果还在登录页面但没有错误，尝试强制刷新
             logger.warning("⚠️ 仍在登录页面，但没有明显错误，尝试强制刷新并检查状态")
-            
-            # 尝试强制导航到首页
             await self.page.goto(self.site_config['base_url'], wait_until='networkidle', timeout=60000)
             await asyncio.sleep(5)
             
@@ -885,8 +854,6 @@ class LinuxDoAutomator:
             
             if not topic_links:
                 logger.warning(f"{self.site_config['name']} 未找到主题链接")
-                # 保存页面截图用于调试
-                await self.page.screenshot(path=f"debug_{self.site_config['name']}_topics.png")
                 return
             
             browse_count = min(random.randint(9, 15), len(topic_links))
