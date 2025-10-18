@@ -417,27 +417,42 @@ class LinuxDoAutomator:
 
             while self.retry_count <= RETRY_TIMES:
                 try:
-                    logger.info(f"🌐 导航到 {self.site_config['base_url']}")
-                    await self.page.goto(self.site_config['base_url'], wait_until='networkidle', timeout=120000)
-                    domain = self.site_config['base_url'].replace('https://', '')
+                    # ========== 优化：优先检查缓存登录状态 ==========
+                    logger.info(f"🔍 优先检查 {self.site_config['name']} 缓存登录状态")
+                    await self.page.goto(self.site_config['base_url'], wait_until='domcontentloaded', timeout=30000)
+                    await asyncio.sleep(3)
                     
-                    # 处理Cloudflare验证
-                    self.cf_passed = await UltimateCloudflareHandler.handle_cloudflare(
-                        self.page, max_attempts=20, timeout=300, domain=domain
-                    )
-                    
-                    if not self.cf_passed:
-                        logger.warning(f"⚠️ {self.site_config['name']} Cloudflare验证未通过，但继续尝试登录")
-                    
-                    # 检查登录状态
                     cached_login_success = await self.enhanced_check_login_status()
                     if cached_login_success:
-                        logger.success(f"✅ {self.site_config['name']} 缓存登录成功")
+                        logger.success(f"✅ {self.site_config['name']} 缓存登录成功，跳过Cloudflare验证")
                         self.is_logged_in = True
+                        self.cf_passed = True
                     else:
-                        logger.warning(f"⚠️ {self.site_config['name']} 缓存登录失败，尝试重新登录")
-                        login_success = await self.ultimate_login()
-                        self.is_logged_in = login_success
+                        logger.warning(f"⚠️ {self.site_config['name']} 缓存登录失败，开始完整验证流程")
+                        
+                        # 重新导航并进行完整Cloudflare验证
+                        logger.info(f"🌐 重新导航到 {self.site_config['base_url']}")
+                        await self.page.goto(self.site_config['base_url'], wait_until='networkidle', timeout=120000)
+                        domain = self.site_config['base_url'].replace('https://', '')
+                        
+                        # 处理Cloudflare验证
+                        self.cf_passed = await UltimateCloudflareHandler.handle_cloudflare(
+                            self.page, max_attempts=20, timeout=300, domain=domain
+                        )
+                        
+                        if not self.cf_passed:
+                            logger.warning(f"⚠️ {self.site_config['name']} Cloudflare验证未通过，但继续尝试登录")
+                        
+                        # 再次检查登录状态
+                        cached_login_success = await self.enhanced_check_login_status()
+                        if cached_login_success:
+                            logger.success(f"✅ {self.site_config['name']} 缓存登录成功")
+                            self.is_logged_in = True
+                        else:
+                            logger.warning(f"⚠️ {self.site_config['name']} 缓存登录失败，尝试重新登录")
+                            login_success = await self.ultimate_login()
+                            self.is_logged_in = login_success
+                    # ========== 优化结束 ==========
 
                     if self.is_logged_in:
                         logger.success(f"✅ {self.site_config['name']} 登录成功，开始执行后续任务")
