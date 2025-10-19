@@ -43,6 +43,18 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-playwright-
 
+    # 恢复自动化数据缓存 - 放在运行脚本之前
+    - name: Restore automation cache
+      uses: actions/cache@v4
+      id: automation-cache
+      with:
+        path: |
+          *.json
+          *.log
+        key: ${{ runner.os }}-automation-${{ github.sha }}
+        restore-keys: |
+          ${{ runner.os }}-automation-
+
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
@@ -66,7 +78,23 @@ jobs:
         HEADLESS: 'true'
       run: |
         echo "🚀 开始执行多站点自动化脚本..."
+        # 列出当前目录文件，检查缓存是否恢复
+        echo "📁 当前目录文件:"
+        ls -la *.json 2>/dev/null || echo "无JSON缓存文件"
         timeout 2700s python main.py || echo "⏰ 脚本执行完成"
+
+    # 保存自动化数据缓存 - 放在运行脚本之后
+    - name: Save automation cache
+      uses: actions/cache@v4
+      if: always()  # 即使脚本失败也要保存缓存
+      with:
+        path: |
+          *.json
+          *.log
+        key: ${{ runner.os }}-automation-${{ github.sha }}-${{ github.run_id }}
+        restore-keys: |
+          ${{ runner.os }}-automation-${{ github.sha }}-
+          ${{ runner.os }}-automation-
 
     - name: Upload results
       uses: actions/upload-artifact@v4
