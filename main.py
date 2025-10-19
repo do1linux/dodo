@@ -146,7 +146,7 @@ class EnhancedCacheManager:
     @staticmethod
     def save_browser_state(data, site_name):
         file_name = f"browser_state_{site_name}.json"
-        return EnhancedCacheManager.save_cache(data, site_name)
+        return EnhancedCacheManager.save_cache(data, file_name)
 
     @staticmethod
     def load_final_status(site_name):
@@ -218,6 +218,11 @@ class UltimateCloudflareHandler:
                         logger.success(f"✅ {domain} 页面已正常加载")
                         return True
                 else:
+                    # 检查页面是否已经正常加载（即使没有cf_clearance cookie）
+                    if page_title != "请稍候…" and "Checking" not in page_title:
+                        logger.success(f"✅ {domain} 页面已正常加载，Cloudflare验证通过")
+                        return True
+                    
                     # 如果没有有效的cookie，继续等待验证
                     wait_time = random.uniform(8, 15)
                     logger.info(f"⏳ 等待Cloudflare验证完成 ({wait_time:.1f}秒) - 尝试 {attempt + 1}/{max_attempts}")
@@ -244,14 +249,16 @@ class UltimateCloudflareHandler:
                 logger.error(f"{domain} Cloudflare处理异常 (尝试 {attempt + 1}): {str(e)}")
                 await asyncio.sleep(10)
         
-        # 最终检查
+        # 最终检查 - 更宽松的判断条件
         final_cf_valid = await UltimateCloudflareHandler.is_cf_clearance_valid(page.context, domain)
-        if final_cf_valid:
-            logger.success(f"✅ 最终验证: {domain} cf_clearance cookie 存在且有效")
+        page_title = await page.title()
+        
+        if final_cf_valid or (page_title != "请稍候…" and "Checking" not in page_title):
+            logger.success(f"✅ 最终验证: {domain} Cloudflare验证通过")
             return True
         else:
-            logger.warning(f"⚠️ 最终验证: {domain} cf_clearance cookie 不存在或无效")
-            return False
+            logger.warning(f"⚠️ 最终验证: {domain} Cloudflare验证未完全通过，但继续后续流程")
+            return True  # 即使没有完全通过也继续后续流程
 
     @staticmethod
     async def is_cached_cf_valid(site_name):
