@@ -74,11 +74,19 @@ VIEWPORT_SIZES = [
 class EnhancedCacheManager:
     @staticmethod
     def get_cache_path(file_name):
-        return file_name
+        # 添加工作目录信息用于调试
+        cache_dir = os.getcwd()
+        full_path = os.path.join(cache_dir, file_name)
+        return full_path
 
     @staticmethod
     def load_cache(file_name, max_age_hours=None):
         path = EnhancedCacheManager.get_cache_path(file_name)
+        
+        # 调试信息：显示当前工作目录和完整路径
+        current_dir = os.getcwd()
+        logger.debug(f"🔍 缓存查找 - 工作目录: {current_dir}, 完整路径: {path}")
+        
         if os.path.exists(path):
             try:
                 with open(path, "r", encoding='utf-8') as f:
@@ -97,22 +105,47 @@ class EnhancedCacheManager:
             except Exception as e:
                 logger.warning(f"缓存加载失败 {path}: {str(e)}")
         else:
-            logger.info(f"📭 缓存文件不存在: {file_name}")
+            # 列出当前目录的所有文件，帮助调试
+            try:
+                files = os.listdir(current_dir)
+                cache_files = [f for f in files if f.endswith('.json')]
+                logger.info(f"📁 当前目录JSON文件: {cache_files}")
+            except Exception as e:
+                logger.debug(f"无法列出目录文件: {str(e)}")
+                
+            logger.info(f"📭 缓存文件不存在: {file_name} (完整路径: {path})")
         return None
 
     @staticmethod
     def save_cache(data, file_name):
         path = EnhancedCacheManager.get_cache_path(file_name)
+        
+        # 调试信息
+        current_dir = os.getcwd()
+        logger.debug(f"💾 缓存保存 - 工作目录: {current_dir}, 完整路径: {path}")
+        
         try:
+            # 确保目录存在
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            
             data_to_save = {
                 'data': data,
                 'cache_timestamp': datetime.now().isoformat(),
-                'cache_version': '1.3'
+                'cache_version': '1.3',
+                'saved_from': current_dir  # 添加保存位置信息
             }
             
             with open(path, "w", encoding='utf-8') as f:
                 json.dump(data_to_save, f, ensure_ascii=False, indent=2)
             logger.info(f"✅ 缓存已保存到 {path}")
+            
+            # 验证文件确实被创建
+            if os.path.exists(path):
+                file_size = os.path.getsize(path)
+                logger.info(f"✅ 缓存文件验证成功: {path} (大小: {file_size} 字节)")
+            else:
+                logger.error(f"❌ 缓存文件保存后不存在: {path}")
+                
             return True
         except Exception as e:
             logger.error(f"缓存保存失败 {path}: {str(e)}")
@@ -989,7 +1022,18 @@ class LinuxDoAutomator:
 
 # ======================== 主执行函数 ========================
 async def main():
-    logger.info("🚀 LinuxDo多站点自动化脚本启动")
+    # 添加工作目录调试信息
+    current_dir = os.getcwd()
+    logger.info(f"🚀 LinuxDo多站点自动化脚本启动")
+    logger.info(f"📁 当前工作目录: {current_dir}")
+    
+    # 列出当前目录的JSON文件
+    try:
+        files = os.listdir(current_dir)
+        json_files = [f for f in files if f.endswith('.json')]
+        logger.info(f"📋 当前目录JSON文件: {json_files}")
+    except Exception as e:
+        logger.warning(f"无法列出目录文件: {str(e)}")
     
     browser, playwright = await BrowserManager.init_browser()
     
