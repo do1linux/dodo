@@ -102,7 +102,8 @@ class EnhancedCacheManager:
             data_to_save = {
                 'data': data,
                 'cache_timestamp': datetime.now().isoformat(),
-                'cache_version': '1.3'
+                'cache_version': '1.4',  # 更新版本号
+                'cache_strategy': 'always_overwrite'  # 明确缓存策略
             }
             
             with open(path, "w", encoding='utf-8') as f:
@@ -403,20 +404,28 @@ class LinuxDoAutomator:
                 try:
                     logger.info(f"🔍 开始 {self.site_config['name']} 缓存优先验证流程")
                     
-                    # 缓存优先流程
+                    # 1. 首先尝试使用缓存直接访问
                     cache_success = await self.try_cache_first_approach()
                     if cache_success:
                         logger.success(f"✅ {self.site_config['name']} 缓存优先流程成功")
                         self.is_logged_in = True
                         self.cf_passed = True
+                        
+                        # 🔥 关键改进：即使缓存优先成功，也强制保存最新缓存
+                        await self.save_all_caches()
+                        
                     else:
+                        # 2. 缓存失败，进行完整验证流程
                         logger.warning(f"⚠️ {self.site_config['name']} 缓存优先流程失败，开始完整验证")
                         full_success = await self.full_verification_process()
                         self.is_logged_in = full_success
 
+                    # ========== 核心流程结束 ==========
+
                     if self.is_logged_in:
                         logger.success(f"✅ {self.site_config['name']} 登录成功，开始执行后续任务")
-                        await self.save_all_caches()
+                        
+                        # 🔥 关键改进：确保浏览主题前缓存是最新的
                         await self.browse_topics()
                         await self.save_final_status(success=True)
                         break
@@ -518,10 +527,16 @@ class LinuxDoAutomator:
             cached_login_success = await self.enhanced_check_login_status()
             if cached_login_success:
                 logger.success(f"✅ {self.site_config['name']} 缓存登录成功")
+                # 🔥 关键改进：即使使用缓存登录成功，也强制保存最新状态
+                await self.save_all_caches()
                 return True
             else:
                 logger.warning(f"⚠️ 需要重新登录")
-                return await self.optimized_login()
+                login_success = await self.optimized_login()
+                if login_success:
+                    # 🔥 关键改进：登录成功后立即保存缓存
+                    await self.save_all_caches()
+                return login_success
                 
         except Exception as e:
             logger.error(f"完整验证流程异常: {str(e)}")
@@ -763,22 +778,28 @@ class LinuxDoAutomator:
             logger.error(f"清除登录缓存失败: {str(e)}")
 
     async def save_all_caches(self):
+        """始终覆盖保存所有缓存"""
         try:
+            # 保存 Cloudflare cookies
             await self.save_cf_cookies()
             
+            # 保存浏览器状态
             if self.context:
                 state = await self.context.storage_state()
                 EnhancedCacheManager.save_browser_state(state, self.site_config['name'])
             
+            # 更新并保存会话数据
             self.session_data.update({
                 'last_success': datetime.now().isoformat(),
                 'login_status': 'success',
                 'retry_count': self.retry_count,
                 'cf_passed': self.cf_passed,
+                'cache_strategy': 'always_overwrite',
+                'last_updated': datetime.now().isoformat()
             })
             EnhancedCacheManager.save_session_data(self.session_data, self.site_config['name'])
             
-            logger.info(f"✅ {self.site_config['name']} 所有缓存已保存")
+            logger.info(f"✅ {self.site_config['name']} 所有缓存已覆盖保存")
         except Exception as e:
             logger.error(f"{self.site_config['name']} 保存缓存失败: {str(e)}")
 
@@ -790,7 +811,8 @@ class LinuxDoAutomator:
             'login_status': 'success' if success else 'failed',
             'cf_passed': self.cf_passed,
             'message': '任务执行完成' if success else '任务执行失败',
-            'session_data': self.session_data
+            'session_data': self.session_data,
+            'cache_strategy': 'always_overwrite'
         }
         EnhancedCacheManager.save_final_status(final_status, self.site_config['name'])
 
@@ -814,6 +836,7 @@ class LinuxDoAutomator:
     async def close_context(self):
         try:
             if self.context:
+                # 关闭前再次确保缓存是最新的
                 state = await self.context.storage_state()
                 EnhancedCacheManager.save_browser_state(state, self.site_config['name'])
                 await self.context.close()
