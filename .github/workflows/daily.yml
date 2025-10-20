@@ -43,7 +43,7 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-playwright-
 
-    # 恢复自动化数据缓存 - 放在运行脚本之前
+    # 恢复自动化数据缓存 - 使用分支作为缓存键，确保同一分支复用缓存
     - name: Restore automation cache
       uses: actions/cache@v4
       id: automation-cache
@@ -51,8 +51,9 @@ jobs:
         path: |
           *.json
           *.log
-        key: ${{ runner.os }}-automation-${{ github.sha }}
+        key: ${{ runner.os }}-automation-${{ github.ref_name }}-cache
         restore-keys: |
+          ${{ runner.os }}-automation-${{ github.ref_name }}-
           ${{ runner.os }}-automation-
 
     - name: Set up Python
@@ -81,9 +82,18 @@ jobs:
         # 列出当前目录文件，检查缓存是否恢复
         echo "📁 当前目录文件:"
         ls -la *.json 2>/dev/null || echo "无JSON缓存文件"
+        
+        # 检查缓存是否命中
+        if [ "${{ steps.automation-cache.outputs.cache-hit }}" == 'true' ]; then
+          echo "✅ 缓存命中，使用现有缓存文件"
+          find . -name "*.json" -type f -exec echo "📄 {} - 年龄: $(echo $(($(date +%s) - $(stat -c %Y {}))) | awk '{printf "%.1f", $1/3600}') 小时" \;
+        else
+          echo "❌ 缓存未命中，将创建新缓存"
+        fi
+        
         timeout 2700s python main.py || echo "⏰ 脚本执行完成"
 
-    # 保存自动化数据缓存 - 放在运行脚本之后
+    # 保存自动化数据缓存 - 使用相同的缓存键覆盖旧缓存
     - name: Save automation cache
       uses: actions/cache@v4
       if: always()  # 即使脚本失败也要保存缓存
@@ -91,9 +101,9 @@ jobs:
         path: |
           *.json
           *.log
-        key: ${{ runner.os }}-automation-${{ github.sha }}-${{ github.run_id }}
+        key: ${{ runner.os }}-automation-${{ github.ref_name }}-cache
         restore-keys: |
-          ${{ runner.os }}-automation-${{ github.sha }}-
+          ${{ runner.os }}-automation-${{ github.ref_name }}-
           ${{ runner.os }}-automation-
 
     - name: Upload results
