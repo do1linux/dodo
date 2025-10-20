@@ -1,4 +1,4 @@
-name: LinuxDo Multi-Site Automation
+name: LinuxDo Automation
 
 on:
   workflow_dispatch:
@@ -43,7 +43,7 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-playwright-
 
-    # 恢复自动化数据缓存 - 使用分支作为缓存键，确保同一分支复用缓存
+    # 恢复自动化数据缓存 - 使用统一缓存键
     - name: Restore automation cache
       uses: actions/cache@v4
       id: automation-cache
@@ -79,24 +79,30 @@ jobs:
         HEADLESS: 'true'
       run: |
         echo "🚀 开始执行多站点自动化脚本..."
-        # 列出当前目录文件，检查缓存是否恢复
+        
+        # 修复的文件年龄检查
         echo "📁 当前目录文件:"
         ls -la *.json 2>/dev/null || echo "无JSON缓存文件"
         
-        # 检查缓存是否命中
+        # 修复的文件年龄计算
         if [ "${{ steps.automation-cache.outputs.cache-hit }}" == 'true' ]; then
           echo "✅ 缓存命中，使用现有缓存文件"
-          find . -name "*.json" -type f -exec echo "📄 {} - 年龄: $(echo $(($(date +%s) - $(stat -c %Y {}))) | awk '{printf "%.1f", $1/3600}') 小时" \;
+          for file in *.json; do
+            if [ -f "$file" ]; then
+              file_age=$(( ($(date +%s) - $(stat -c %Y "$file")) / 3600 ))
+              echo "📄 $file - 年龄: ${file_age} 小时"
+            fi
+          done
         else
           echo "❌ 缓存未命中，将创建新缓存"
         fi
         
         timeout 2700s python main.py || echo "⏰ 脚本执行完成"
 
-    # 保存自动化数据缓存 - 使用相同的缓存键覆盖旧缓存
+    # 保存自动化数据缓存 - 使用相同的缓存键覆盖
     - name: Save automation cache
       uses: actions/cache@v4
-      if: always()  # 即使脚本失败也要保存缓存
+      if: always()
       with:
         path: |
           *.json
