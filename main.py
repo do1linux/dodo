@@ -77,17 +77,17 @@ class CacheManager:
                 with open(file_name, "r", encoding='utf-8') as f:
                     data = json.load(f)
                 
-                # 检查缓存时间戳
-                if 'cache_timestamp' in data:
-                    cache_time = datetime.fromisoformat(data['cache_timestamp'])
-                    age_hours = (datetime.now() - cache_time).total_seconds() / 3600
-                    age_status = "较新" if age_hours < 6 else "较旧"  # 6小时内为较新
-                    logger.info(f"📦 加载缓存 {file_name} (年龄: {age_hours:.1f}小时, {age_status})")
-                    return data.get('data', data)
-                else:
-                    # 旧格式缓存文件
-                    logger.info(f"📦 加载旧格式缓存 {file_name}")
-                    return data
+                # 检查缓存时间戳 - 修复时间戳逻辑
+                file_mtime = os.path.getmtime(file_name)
+                current_time = time.time()
+                age_hours = (current_time - file_mtime) / 3600
+                
+                # 使用文件修改时间而不是缓存内部时间戳
+                age_status = "较新" if age_hours < 6 else "较旧"
+                logger.info(f"📦 加载缓存 {file_name} (年龄: {age_hours:.1f}小时, {age_status})")
+                
+                # 返回数据部分
+                return data.get('data', data)
             except Exception as e:
                 logger.warning(f"缓存加载失败 {file_name}: {str(e)}")
         else:
@@ -102,11 +102,15 @@ class CacheManager:
                 'data': data,
                 'cache_timestamp': datetime.now().isoformat(),
                 'cache_version': '2.0',
-                'cache_strategy': 'force_refresh'
+                'file_timestamp': time.time()  # 添加文件时间戳
             }
             
             with open(file_name, "w", encoding='utf-8') as f:
                 json.dump(data_to_save, f, ensure_ascii=False, indent=2)
+            
+            # 强制更新文件修改时间
+            os.utime(file_name, None)
+            
             logger.info(f"✅ 缓存已保存到 {file_name}")
             return True
         except Exception as e:
@@ -379,6 +383,8 @@ class SiteAutomator:
                         logger.success(f"✅ {self.site_config['name']} 缓存优先流程成功")
                         self.is_logged_in = True
                         self.cf_passed = True
+                        # 登录成功后保存缓存
+                        await self.save_all_caches()
                     else:
                         # 缓存失败，进行完整验证流程
                         logger.warning(f"⚠️ {self.site_config['name']} 缓存优先流程失败，开始完整验证")
@@ -451,10 +457,6 @@ class SiteAutomator:
                 login_status = await self.enhanced_check_login_status()
                 if login_status:
                     logger.success(f"✅ 缓存优先流程成功 - 已登录")
-                    # 只在成功时保存一次缓存
-                    if not self.cache_saved:
-                        await self.save_all_caches()
-                        self.cache_saved = True
                     return True
                 else:
                     logger.warning(f"⚠️ Cloudflare缓存有效但未登录，尝试登录")
@@ -483,17 +485,10 @@ class SiteAutomator:
             cached_login_success = await self.enhanced_check_login_status()
             if cached_login_success:
                 logger.success(f"✅ {self.site_config['name']} 缓存登录成功")
-                # 只在成功时保存一次缓存
-                if not self.cache_saved:
-                    await self.save_all_caches()
-                    self.cache_saved = True
                 return True
             else:
                 logger.warning(f"⚠️ 需要重新登录")
                 login_success = await self.optimized_login()
-                if login_success and not self.cache_saved:
-                    await self.save_all_caches()
-                    self.cache_saved = True
                 return login_success
                 
         except Exception as e:
@@ -713,7 +708,7 @@ class SiteAutomator:
             logger.error(f"清除登录缓存失败: {str(e)}")
 
     async def save_all_caches(self):
-        """统一保存所有缓存，避免重复保存"""
+        """统一保存所有缓存"""
         try:
             # 保存 Cloudflare cookies
             await self.save_cf_cookies()
@@ -734,6 +729,7 @@ class SiteAutomator:
             CacheManager.save_site_cache(self.session_data, self.site_config['name'], 'session_data')
             
             logger.info(f"✅ {self.site_config['name']} 所有缓存已保存")
+            self.cache_saved = True
         except Exception as e:
             logger.error(f"{self.site_config['name']} 保存缓存失败: {str(e)}")
 
@@ -816,6 +812,10 @@ class SiteAutomator:
             self.session_data['browse_history'] = browse_history[-50:]
             self.session_data['last_browse'] = datetime.now().isoformat()
             self.session_data['total_browsed'] = self.session_data.get('total_browsed', 0) + success_count
+            
+            # 主题浏览完成后保存一次缓存
+            if not self.cache_saved:
+                await self.save_all_caches()
             
             logger.success(f"✅ {self.site_config['name']} 主题浏览完成: 成功 {success_count} 个主题")
 
