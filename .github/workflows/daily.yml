@@ -43,12 +43,18 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-playwright-
 
-    # 关键修复：在运行前强制清除旧缓存文件
-    - name: Clear old cache files
-      run: |
-        echo "🗑️ 清除旧缓存文件..."
-        rm -f *.json || true
-        echo "✅ 旧缓存文件已清除"
+    # 恢复自动化数据缓存
+    - name: Restore automation cache
+      uses: actions/cache@v4
+      id: automation-cache
+      with:
+        path: |
+          *.json
+          *.log
+        key: ${{ runner.os }}-automation-${{ github.ref_name }}-cache
+        restore-keys: |
+          ${{ runner.os }}-automation-${{ github.ref_name }}-
+          ${{ runner.os }}-automation-
 
     - name: Set up Python
       uses: actions/setup-python@v5
@@ -73,24 +79,20 @@ jobs:
         HEADLESS: 'true'
       run: |
         echo "🚀 开始执行多站点自动化脚本..."
-        
-        # 检查当前目录状态
-        echo "📁 当前目录文件:"
-        ls -la *.json 2>/dev/null || echo "无JSON缓存文件 - 这是正常的，因为我们清除了旧缓存"
-        
         timeout 2700s python main.py || echo "⏰ 脚本执行完成"
 
-    # 关键修复：只在脚本成功完成后保存缓存
+    # 保存自动化数据缓存
     - name: Save automation cache
       uses: actions/cache@v4
-      if: success()  # 只有成功运行时才保存缓存
+      if: success()
       with:
         path: |
           *.json
           *.log
-        key: ${{ runner.os }}-automation-${{ github.ref_name }}-${{ github.run_number }}
+        key: ${{ runner.os }}-automation-${{ github.ref_name }}-cache
         restore-keys: |
           ${{ runner.os }}-automation-${{ github.ref_name }}-
+          ${{ runner.os }}-automation-
 
     - name: Upload results
       uses: actions/upload-artifact@v4
