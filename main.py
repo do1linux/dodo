@@ -102,8 +102,8 @@ class EnhancedCacheManager:
             data_to_save = {
                 'data': data,
                 'cache_timestamp': datetime.now().isoformat(),
-                'cache_version': '1.4',  # 更新版本号
-                'cache_strategy': 'always_overwrite'  # 明确缓存策略
+                'cache_version': '1.5',  # 更新版本号
+                'cache_strategy': 'always_overwrite_latest'
             }
             
             with open(path, "w", encoding='utf-8') as f:
@@ -411,7 +411,7 @@ class LinuxDoAutomator:
                         self.is_logged_in = True
                         self.cf_passed = True
                         
-                        # 🔥 关键改进：即使缓存优先成功，也强制保存最新缓存
+                        # 🔥 关键改进：强制保存最新缓存
                         await self.save_all_caches()
                         
                     else:
@@ -425,7 +425,7 @@ class LinuxDoAutomator:
                     if self.is_logged_in:
                         logger.success(f"✅ {self.site_config['name']} 登录成功，开始执行后续任务")
                         
-                        # 🔥 关键改进：确保浏览主题前缓存是最新的
+                        # 执行主题浏览
                         await self.browse_topics()
                         await self.save_final_status(success=True)
                         break
@@ -527,14 +527,14 @@ class LinuxDoAutomator:
             cached_login_success = await self.enhanced_check_login_status()
             if cached_login_success:
                 logger.success(f"✅ {self.site_config['name']} 缓存登录成功")
-                # 🔥 关键改进：即使使用缓存登录成功，也强制保存最新状态
+                # 强制保存最新状态
                 await self.save_all_caches()
                 return True
             else:
                 logger.warning(f"⚠️ 需要重新登录")
                 login_success = await self.optimized_login()
                 if login_success:
-                    # 🔥 关键改进：登录成功后立即保存缓存
+                    # 登录成功后立即保存缓存
                     await self.save_all_caches()
                 return login_success
                 
@@ -778,7 +778,7 @@ class LinuxDoAutomator:
             logger.error(f"清除登录缓存失败: {str(e)}")
 
     async def save_all_caches(self):
-        """始终覆盖保存所有缓存"""
+        """统一保存所有缓存，避免冗余"""
         try:
             # 保存 Cloudflare cookies
             await self.save_cf_cookies()
@@ -794,7 +794,7 @@ class LinuxDoAutomator:
                 'login_status': 'success',
                 'retry_count': self.retry_count,
                 'cf_passed': self.cf_passed,
-                'cache_strategy': 'always_overwrite',
+                'cache_strategy': 'always_overwrite_latest',
                 'last_updated': datetime.now().isoformat()
             })
             EnhancedCacheManager.save_session_data(self.session_data, self.site_config['name'])
@@ -812,7 +812,7 @@ class LinuxDoAutomator:
             'cf_passed': self.cf_passed,
             'message': '任务执行完成' if success else '任务执行失败',
             'session_data': self.session_data,
-            'cache_strategy': 'always_overwrite'
+            'cache_strategy': 'always_overwrite_latest'
         }
         EnhancedCacheManager.save_final_status(final_status, self.site_config['name'])
 
@@ -836,13 +836,12 @@ class LinuxDoAutomator:
     async def close_context(self):
         try:
             if self.context:
-                # 关闭前再次确保缓存是最新的
-                state = await self.context.storage_state()
-                EnhancedCacheManager.save_browser_state(state, self.site_config['name'])
+                # 关闭前确保缓存是最新的
+                await self.save_all_caches()
                 await self.context.close()
                 logger.info(f"✅ {self.site_config['name']} 浏览器上下文已关闭")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"关闭上下文失败: {str(e)}")
 
     async def browse_topics(self):
         try:
@@ -889,6 +888,9 @@ class LinuxDoAutomator:
             self.session_data['browse_history'] = browse_history[-50:]
             self.session_data['last_browse'] = datetime.now().isoformat()
             self.session_data['total_browsed'] = self.session_data.get('total_browsed', 0) + success_count
+            
+            # 保存浏览结果
+            await self.save_all_caches()
             
             logger.success(f"✅ {self.site_config['name']} 主题浏览完成: 成功 {success_count} 个主题")
 
