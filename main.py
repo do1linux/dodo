@@ -68,8 +68,8 @@ VIEWPORT_SIZES = [
     {'width': 1536, 'height': 864},
 ]
 
-# ======================== 修复的缓存管理器 ========================
-class CacheManager:
+# ======================== 终极缓存管理器 ========================
+class UltimateCacheManager:
     @staticmethod
     def get_file_age_hours(file_path):
         """获取文件年龄（小时）"""
@@ -88,10 +88,10 @@ class CacheManager:
                     data = json.load(f)
                 
                 # 使用文件系统时间而不是缓存内部时间戳
-                age_hours = CacheManager.get_file_age_hours(file_name)
+                age_hours = UltimateCacheManager.get_file_age_hours(file_name)
                 if age_hours is not None:
-                    age_status = "较新" if age_hours < 6 else "较旧"
-                    logger.info(f"📦 加载缓存 {file_name} (年龄: {age_hours:.1f}小时, {age_status})")
+                    age_status = "全新" if age_hours < 0.1 else "较新" if age_hours < 6 else "较旧"
+                    logger.info(f"📦 加载缓存 {file_name} (年龄: {age_hours:.3f}小时, {age_status})")
                 
                 # 返回数据部分
                 return data.get('data', data)
@@ -108,8 +108,9 @@ class CacheManager:
             data_to_save = {
                 'data': data,
                 'cache_timestamp': datetime.now().isoformat(),
-                'cache_version': '3.0',
-                'file_created': time.time()
+                'cache_version': '4.0',
+                'file_created': time.time(),
+                'run_id': os.getenv('GITHUB_RUN_ID', 'local')
             }
             
             with open(file_name, "w", encoding='utf-8') as f:
@@ -120,8 +121,9 @@ class CacheManager:
             os.utime(file_name, (current_time, current_time))
             
             # 验证文件时间戳是否更新
-            new_age = CacheManager.get_file_age_hours(file_name)
-            logger.info(f"✅ 缓存已保存到 {file_name} (新年龄: {new_age:.3f}小时)")
+            new_age = UltimateCacheManager.get_file_age_hours(file_name)
+            file_size = os.path.getsize(file_name)
+            logger.info(f"💾 缓存已保存到 {file_name} (新年龄: {new_age:.3f}小时, 大小: {file_size} 字节)")
             return True
         except Exception as e:
             logger.error(f"缓存保存失败 {file_name}: {str(e)}")
@@ -131,12 +133,12 @@ class CacheManager:
     @staticmethod
     def load_site_cache(site_name, cache_type):
         file_name = f"{cache_type}_{site_name}.json"
-        return CacheManager.load_cache(file_name)
+        return UltimateCacheManager.load_cache(file_name)
 
     @staticmethod
     def save_site_cache(data, site_name, cache_type):
         file_name = f"{cache_type}_{site_name}.json"
-        return CacheManager.save_cache(data, file_name)
+        return UltimateCacheManager.save_cache(data, file_name)
 
 # ======================== Cloudflare处理器 ========================
 class CloudflareHandler:
@@ -237,7 +239,7 @@ class CloudflareHandler:
     @staticmethod
     async def is_cached_cf_valid(site_name):
         try:
-            cf_cookies = CacheManager.load_site_cache(site_name, 'cf_cookies')
+            cf_cookies = UltimateCacheManager.load_site_cache(site_name, 'cf_cookies')
             if not cf_cookies:
                 return False
             
@@ -299,12 +301,12 @@ class BrowserManager:
 
     @staticmethod
     async def create_context(browser, site_name):
-        has_browser_state = CacheManager.load_site_cache(site_name, 'browser_state') is not None
-        has_cf_cookies = CacheManager.load_site_cache(site_name, 'cf_cookies') is not None
+        has_browser_state = UltimateCacheManager.load_site_cache(site_name, 'browser_state') is not None
+        has_cf_cookies = UltimateCacheManager.load_site_cache(site_name, 'cf_cookies') is not None
         
         logger.info(f"🔍 {site_name} 缓存状态 - 浏览器状态: {'✅' if has_browser_state else '❌'}, Cloudflare Cookies: {'✅' if has_cf_cookies else '❌'}")
         
-        storage_state = CacheManager.load_site_cache(site_name, 'browser_state')
+        storage_state = UltimateCacheManager.load_site_cache(site_name, 'browser_state')
         
         user_agent = random.choice(USER_AGENTS)
         viewport = random.choice(VIEWPORT_SIZES)
@@ -327,7 +329,7 @@ class BrowserManager:
     @staticmethod
     async def load_caches_into_context(context, site_name):
         try:
-            cf_cookies = CacheManager.load_site_cache(site_name, 'cf_cookies')
+            cf_cookies = UltimateCacheManager.load_site_cache(site_name, 'cf_cookies')
             if cf_cookies:
                 current_time = time.time()
                 valid_cookies = []
@@ -353,8 +355,8 @@ class BrowserManager:
             Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
         """
 
-# ======================== 修复的主自动化类 ========================
-class SiteAutomator:
+# ======================== 终极主自动化类 ========================
+class UltimateSiteAutomator:
     def __init__(self, site_config):
         self.site_config = site_config
         self.browser = None
@@ -363,7 +365,7 @@ class SiteAutomator:
         self.playwright = None
         self.is_logged_in = False
         self.retry_count = 0
-        self.session_data = CacheManager.load_site_cache(site_config['name'], 'session_data') or {}
+        self.session_data = UltimateCacheManager.load_site_cache(site_config['name'], 'session_data') or {}
         self.cf_passed = False
         self.credentials = SITE_CREDENTIALS.get(site_config['name'], {})
         self.domain = site_config['base_url'].replace('https://', '')
@@ -733,7 +735,7 @@ class SiteAutomator:
             # 保存浏览器状态
             if self.context:
                 state = await self.context.storage_state()
-                CacheManager.save_site_cache(state, self.site_config['name'], 'browser_state')
+                UltimateCacheManager.save_site_cache(state, self.site_config['name'], 'browser_state')
             
             # 更新并保存会话数据
             self.session_data.update({
@@ -741,9 +743,10 @@ class SiteAutomator:
                 'login_status': 'success',
                 'retry_count': self.retry_count,
                 'cf_passed': self.cf_passed,
-                'last_updated': datetime.now().isoformat()
+                'last_updated': datetime.now().isoformat(),
+                'cache_strategy': 'always_overwrite_latest'
             })
-            CacheManager.save_site_cache(self.session_data, self.site_config['name'], 'session_data')
+            UltimateCacheManager.save_site_cache(self.session_data, self.site_config['name'], 'session_data')
             
             logger.info(f"✅ {self.site_config['name']} 所有缓存已保存")
             self.cache_saved = True
@@ -757,9 +760,10 @@ class SiteAutomator:
             'retry_count': self.retry_count,
             'login_status': 'success' if success else 'failed',
             'cf_passed': self.cf_passed,
-            'message': '任务执行完成' if success else '任务执行失败'
+            'message': '任务执行完成' if success else '任务执行失败',
+            'cache_strategy': 'always_overwrite_latest'
         }
-        CacheManager.save_site_cache(final_status, self.site_config['name'], 'final_status')
+        UltimateCacheManager.save_site_cache(final_status, self.site_config['name'], 'final_status')
 
     async def save_cf_cookies(self):
         try:
@@ -772,7 +776,7 @@ class SiteAutomator:
             ]
             
             if cf_cookies:
-                CacheManager.save_site_cache(cf_cookies, self.site_config['name'], 'cf_cookies')
+                UltimateCacheManager.save_site_cache(cf_cookies, self.site_config['name'], 'cf_cookies')
                 logger.info(f"✅ {self.site_config['name']} Cloudflare Cookies 已保存: {len(cf_cookies)} 个")
                 
         except Exception as e:
@@ -879,7 +883,7 @@ async def main():
         for site_config in SITES:
             logger.info(f"🎯 开始处理站点: {site_config['name']}")
             
-            automator = SiteAutomator(site_config)
+            automator = UltimateSiteAutomator(site_config)
             success = await automator.run_for_site(browser, playwright)
             
             results.append({
