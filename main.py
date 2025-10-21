@@ -861,7 +861,7 @@ class UltimateSiteAutomator:
             tab = await self.context.new_page()
             try:
                 await tab.goto(topic_url, timeout=45000, wait_until='domcontentloaded')
-                await asyncio.sleep(random.uniform(20, 40))
+                await asyncio.sleep(random.uniform(20, 720))
                 browse_history.append(href)
                 return True
             finally:
@@ -932,3 +932,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
