@@ -43,44 +43,12 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-playwright-
 
-    # 关键修复：在恢复缓存前显示当前目录状态
-    - name: Check initial directory state
+    # 关键修复：在运行前强制清除所有缓存文件
+    - name: Clear all cache files before run
       run: |
-        echo "📁 恢复缓存前的目录状态:"
-        ls -la *.json 2>/dev/null || echo "无JSON缓存文件 - 这是正常的"
-
-    # 关键修复：使用时间戳作为缓存键的一部分
-    - name: Restore automation cache
-      uses: actions/cache@v4
-      id: automation-cache
-      with:
-        path: |
-          *.json
-          *.log
-        key: ${{ runner.os }}-automation-${{ github.ref_name }}-${{ github.sha }}
-        restore-keys: |
-          ${{ runner.os }}-automation-${{ github.ref_name }}-
-          ${{ runner.os }}-automation-
-
-    # 关键修复：显示恢复的缓存文件状态
-    - name: Check restored cache state
-      run: |
-        echo "📁 恢复缓存后的目录状态:"
-        if [ "${{ steps.automation-cache.outputs.cache-hit }}" == 'true' ]; then
-          echo "✅ 缓存命中，已恢复以下文件:"
-          for file in *.json; do
-            if [ -f "$file" ]; then
-              file_age=$(( ($(date +%s) - $(stat -c %Y "$file")) / 3600 ))
-              file_size=$(stat -c %s "$file")
-              echo "📄 $file - 年龄: ${file_age} 小时, 大小: ${file_size} 字节"
-            fi
-          done
-        else
-          echo "❌ 缓存未命中，将创建新缓存"
-          # 确保没有残留的旧缓存文件
-          rm -f *.json 2>/dev/null || true
-          echo "🗑️ 已清除可能的旧缓存文件"
-        fi
+        echo "🗑️ 强制清除所有缓存文件..."
+        rm -f *.json 2>/dev/null || true
+        echo "✅ 所有缓存文件已清除，确保从头开始"
 
     - name: Set up Python
       uses: actions/setup-python@v5
@@ -105,21 +73,13 @@ jobs:
         HEADLESS: 'true'
       run: |
         echo "🚀 开始执行多站点自动化脚本..."
+        # 显示当前目录状态
+        echo "📁 运行前目录状态:"
+        ls -la *.json 2>/dev/null || echo "无JSON缓存文件 - 这是正常的"
+        
         timeout 2700s python main.py || echo "⏰ 脚本执行完成"
 
-    # 关键修复：在保存缓存前显示文件状态
-    - name: Check files before cache save
-      run: |
-        echo "📁 保存缓存前的文件状态:"
-        for file in *.json; do
-          if [ -f "$file" ]; then
-            file_age=$(( ($(date +%s) - $(stat -c %Y "$file")) / 3600 ))
-            file_size=$(stat -c %s "$file")
-            echo "💾 将要保存: $file - 年龄: ${file_age} 小时, 大小: ${file_size} 字节"
-          fi
-        done
-
-    # 关键修复：使用新的缓存键策略
+    # 关键修复：使用基于时间的缓存键
     - name: Save automation cache
       uses: actions/cache@v4
       if: success()
@@ -127,11 +87,9 @@ jobs:
         path: |
           *.json
           *.log
-        key: ${{ runner.os }}-automation-${{ github.ref_name }}-${{ github.sha }}-${{ github.run_id }}
+        key: ${{ runner.os }}-automation-${{ github.ref_name }}-${{ github.run_id }}
         restore-keys: |
-          ${{ runner.os }}-automation-${{ github.ref_name }}-${{ github.sha }}-
           ${{ runner.os }}-automation-${{ github.ref_name }}-
-          ${{ runner.os }}-automation-
 
     - name: Upload results
       uses: actions/upload-artifact@v4
