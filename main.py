@@ -68,8 +68,18 @@ VIEWPORT_SIZES = [
     {'width': 1536, 'height': 864},
 ]
 
-# ======================== 简化的缓存管理器 ========================
+# ======================== 修复的缓存管理器 ========================
 class CacheManager:
+    @staticmethod
+    def get_file_age_hours(file_path):
+        """获取文件年龄（小时）"""
+        if not os.path.exists(file_path):
+            return None
+        file_mtime = os.path.getmtime(file_path)
+        current_time = time.time()
+        age_hours = (current_time - file_mtime) / 3600
+        return age_hours
+
     @staticmethod
     def load_cache(file_name):
         if os.path.exists(file_name):
@@ -77,14 +87,11 @@ class CacheManager:
                 with open(file_name, "r", encoding='utf-8') as f:
                     data = json.load(f)
                 
-                # 检查缓存时间戳 - 修复时间戳逻辑
-                file_mtime = os.path.getmtime(file_name)
-                current_time = time.time()
-                age_hours = (current_time - file_mtime) / 3600
-                
-                # 使用文件修改时间而不是缓存内部时间戳
-                age_status = "较新" if age_hours < 6 else "较旧"
-                logger.info(f"📦 加载缓存 {file_name} (年龄: {age_hours:.1f}小时, {age_status})")
+                # 使用文件系统时间而不是缓存内部时间戳
+                age_hours = CacheManager.get_file_age_hours(file_name)
+                if age_hours is not None:
+                    age_status = "较新" if age_hours < 6 else "较旧"
+                    logger.info(f"📦 加载缓存 {file_name} (年龄: {age_hours:.1f}小时, {age_status})")
                 
                 # 返回数据部分
                 return data.get('data', data)
@@ -97,21 +104,24 @@ class CacheManager:
     @staticmethod
     def save_cache(data, file_name):
         try:
-            # 确保数据是最新的时间戳
+            # 强制更新文件时间戳
             data_to_save = {
                 'data': data,
                 'cache_timestamp': datetime.now().isoformat(),
-                'cache_version': '2.0',
-                'file_timestamp': time.time()  # 添加文件时间戳
+                'cache_version': '3.0',
+                'file_created': time.time()
             }
             
             with open(file_name, "w", encoding='utf-8') as f:
                 json.dump(data_to_save, f, ensure_ascii=False, indent=2)
             
-            # 强制更新文件修改时间
-            os.utime(file_name, None)
+            # 强制更新文件系统时间戳
+            current_time = time.time()
+            os.utime(file_name, (current_time, current_time))
             
-            logger.info(f"✅ 缓存已保存到 {file_name}")
+            # 验证文件时间戳是否更新
+            new_age = CacheManager.get_file_age_hours(file_name)
+            logger.info(f"✅ 缓存已保存到 {file_name} (新年龄: {new_age:.3f}小时)")
             return True
         except Exception as e:
             logger.error(f"缓存保存失败 {file_name}: {str(e)}")
@@ -343,7 +353,7 @@ class BrowserManager:
             Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
         """
 
-# ======================== 简化的主自动化类 ========================
+# ======================== 修复的主自动化类 ========================
 class SiteAutomator:
     def __init__(self, site_config):
         self.site_config = site_config
@@ -383,7 +393,7 @@ class SiteAutomator:
                         logger.success(f"✅ {self.site_config['name']} 缓存优先流程成功")
                         self.is_logged_in = True
                         self.cf_passed = True
-                        # 登录成功后保存缓存
+                        # 关键修复：登录成功后立即保存缓存
                         await self.save_all_caches()
                     else:
                         # 缓存失败，进行完整验证流程
@@ -485,10 +495,15 @@ class SiteAutomator:
             cached_login_success = await self.enhanced_check_login_status()
             if cached_login_success:
                 logger.success(f"✅ {self.site_config['name']} 缓存登录成功")
+                # 关键修复：缓存登录成功也保存缓存
+                if not self.cache_saved:
+                    await self.save_all_caches()
                 return True
             else:
                 logger.warning(f"⚠️ 需要重新登录")
                 login_success = await self.optimized_login()
+                if login_success and not self.cache_saved:
+                    await self.save_all_caches()
                 return login_success
                 
         except Exception as e:
@@ -686,6 +701,7 @@ class SiteAutomator:
                 file_name = f"{cache_type}_{self.site_config['name']}.json"
                 if os.path.exists(file_name):
                     os.remove(file_name)
+                    logger.info(f"🗑️ 已清除缓存: {file_name}")
             
             self.session_data = {}
             logger.info(f"✅ {self.site_config['name']} 所有缓存已清除")
@@ -700,6 +716,7 @@ class SiteAutomator:
                 file_name = f"{cache_type}_{self.site_config['name']}.json"
                 if os.path.exists(file_name):
                     os.remove(file_name)
+                    logger.info(f"🗑️ 已清除缓存: {file_name}")
             
             self.session_data = {}
             logger.info(f"✅ {self.site_config['name']} 登录缓存已清除，保留Cloudflare cookies")
