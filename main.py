@@ -864,7 +864,7 @@ class UltimateSiteAutomator:
                 await tab.goto(topic_url, timeout=45000, wait_until='domcontentloaded')
                 
                 # 模拟阅读时间和滚动行为
-                total_read_time = random.uniform(20, 360)
+                total_read_time = random.uniform(20, 180)
                 scroll_interval = random.uniform(2, 8)  # 每次滚动间隔
                 total_scroll_steps = math.ceil(total_read_time / scroll_interval)
                 
@@ -919,7 +919,7 @@ async def main():
             
             # 站点间延迟
             if site_config != SITES[-1]:
-                delay = random.uniform(10, 20)
+                delay = random.uniform(5, 10)
                 logger.info(f"⏳ 站点间延迟 {delay:.1f} 秒")
                 await asyncio.sleep(delay)
         
@@ -955,3 +955,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
