@@ -43,7 +43,7 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-playwright-
 
-    # 恢复缓存 - 使用简单固定的缓存键
+    # 恢复缓存 - 使用带版本的基础键，允许恢复最近的缓存
     - name: Restore automation cache
       uses: actions/cache@v4
       id: automation-cache
@@ -51,9 +51,10 @@ jobs:
         path: |
           *.json
           *.log
-        key: automation-cache-v1
+        key: ${{ runner.os }}-automation-cache-v2-${{ github.run_id }}
         restore-keys: |
-          automation-cache-
+          ${{ runner.os }}-automation-cache-v2-
+          ${{ runner.os }}-automation-cache-
 
     - name: Set up Python
       uses: actions/setup-python@v5
@@ -92,15 +93,14 @@ jobs:
         
         timeout 3600s python main.py || echo "⏰ 脚本执行完成"
 
-    # 保存缓存 - 使用相同的固定缓存键
+    # 保存缓存 - 总是保存最新状态，不限制成功状态
     - name: Save automation cache
       uses: actions/cache@v4
-      if: success()
       with:
         path: |
           *.json
           *.log
-        key: automation-cache-v1
+        key: ${{ runner.os }}-automation-cache-v2-${{ github.run_id }}
 
     - name: Upload results
       uses: actions/upload-artifact@v4
