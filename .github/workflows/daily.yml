@@ -90,7 +90,7 @@ jobs:
           fi
         done
         
-        timeout 2700s python main.py || echo "⏰ 脚本执行完成"
+        timeout 3600s python main.py || echo "⏰ 脚本执行完成"
 
     # 保存缓存 - 使用相同的固定缓存键
     - name: Save automation cache
