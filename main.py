@@ -816,7 +816,7 @@ class UltimateSiteAutomator:
                 logger.warning(f"{self.site_config['name']} 未找到主题链接")
                 return
             
-            browse_count = min(random.randint(1, 3), len(topic_links))
+            browse_count = min(random.randint(5, 9), len(topic_links))
             selected_topics = random.sample(topic_links, browse_count)
             
             logger.info(f"📚 {self.site_config['name']} 计划浏览 {browse_count} 个主题")
@@ -955,5 +955,6 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
 
