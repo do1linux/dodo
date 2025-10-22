@@ -104,11 +104,11 @@ class UltimateCacheManager:
     @staticmethod
     def save_cache(data, file_name):
         try:
-            # 强制更新文件时间戳
+            # 强制更新文件时间戳，确保覆盖旧缓存
             data_to_save = {
                 'data': data,
                 'cache_timestamp': datetime.now().isoformat(),
-                'cache_version': '4.0',
+                'cache_version': '4.1',  # 版本更新
                 'file_created': time.time(),
                 'run_id': os.getenv('GITHUB_RUN_ID', 'local')
             }
@@ -116,7 +116,7 @@ class UltimateCacheManager:
             with open(file_name, "w", encoding='utf-8') as f:
                 json.dump(data_to_save, f, ensure_ascii=False, indent=2)
             
-            # 强制更新文件系统时间戳
+            # 强制更新文件系统时间戳，确保缓存被正确覆盖
             current_time = time.time()
             os.utime(file_name, (current_time, current_time))
             
@@ -727,7 +727,7 @@ class UltimateSiteAutomator:
             logger.error(f"清除登录缓存失败: {str(e)}")
 
     async def save_all_caches(self):
-        """统一保存所有缓存"""
+        """统一保存所有缓存，确保每次运行都覆盖旧缓存"""
         try:
             # 保存 Cloudflare cookies
             await self.save_cf_cookies()
@@ -744,11 +744,11 @@ class UltimateSiteAutomator:
                 'retry_count': self.retry_count,
                 'cf_passed': self.cf_passed,
                 'last_updated': datetime.now().isoformat(),
-                'cache_strategy': 'always_overwrite_latest'
+                'cache_strategy': 'always_overwrite_latest'  # 明确标记覆盖策略
             })
             UltimateCacheManager.save_site_cache(self.session_data, self.site_config['name'], 'session_data')
             
-            logger.info(f"✅ {self.site_config['name']} 所有缓存已保存")
+            logger.info(f"✅ {self.site_config['name']} 所有缓存已保存（覆盖旧缓存）")
             self.cache_saved = True
         except Exception as e:
             logger.error(f"{self.site_config['name']} 保存缓存失败: {str(e)}")
@@ -785,7 +785,7 @@ class UltimateSiteAutomator:
     async def close_context(self):
         try:
             if self.context:
-                # 只在关闭时保存一次缓存，避免重复
+                # 只在关闭时保存一次缓存，确保最终状态被保存
                 if not self.cache_saved and self.is_logged_in:
                     await self.save_all_caches()
                 await self.context.close()
@@ -844,6 +844,7 @@ class UltimateSiteAutomator:
             logger.error(f"{self.site_config['name']} 主题浏览流程失败: {str(e)}")
 
     async def browse_single_topic(self, topic, topic_idx, total_topics, browse_history):
+        """浏览单个主题并模拟鼠标滚动到页面底部"""
         try:
             title = (await topic.text_content() or "").strip()[:60]
             href = await topic.get_attribute('href')
@@ -861,7 +862,29 @@ class UltimateSiteAutomator:
             tab = await self.context.new_page()
             try:
                 await tab.goto(topic_url, timeout=45000, wait_until='domcontentloaded')
-                await asyncio.sleep(random.uniform(20, 360))
+                
+                # 模拟阅读时间和滚动行为
+                total_read_time = random.uniform(20, 360)
+                scroll_interval = random.uniform(2, 8)  # 每次滚动间隔
+                total_scroll_steps = math.ceil(total_read_time / scroll_interval)
+                
+                # 先等待1-3秒再开始滚动
+                await asyncio.sleep(random.uniform(1, 3))
+                
+                # 逐步滚动到页面底部
+                for step in range(total_scroll_steps):
+                    # 计算当前滚动位置 (0.0 到 1.0)
+                    scroll_position = min(step / total_scroll_steps, 1.0)
+                    
+                    # 使用JavaScript滚动到相应位置
+                    await tab.evaluate(f"window.scrollTo(0, document.body.scrollHeight * {scroll_position});")
+                    
+                    # 随机微小停顿，模拟阅读行为
+                    await asyncio.sleep(scroll_interval)
+                
+                # 到达底部后再停留2-5秒
+                await asyncio.sleep(random.uniform(2, 5))
+                
                 browse_history.append(href)
                 return True
             finally:
@@ -932,5 +955,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-
