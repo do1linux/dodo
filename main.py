@@ -347,12 +347,47 @@ class BrowserManager:
     @staticmethod
     def get_anti_detection_script():
         return """
+            // 基础反检测
             Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
             Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
             Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh', 'en-US', 'en'] });
             window.chrome = { runtime: {}, loadTimes: function() {}, csi: function() {}, app: {isInstalled: false} };
             Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
             Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
+            
+            // 增强反检测措施
+            Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
+            Object.defineProperty(navigator, 'maxTouchPoints', { get: () => 0 });
+            
+            // 模拟真实的屏幕信息
+            window.screen = {
+                width: window.innerWidth,
+                height: window.innerHeight,
+                availWidth: window.innerWidth,
+                availHeight: window.innerHeight,
+                colorDepth: 24,
+                pixelDepth: 24
+            };
+            
+            // 模拟电池状态
+            navigator.getBattery = async () => ({
+                level: 0.7 + Math.random() * 0.3,
+                charging: Math.random() > 0.7,
+                chargingTime: Math.random() > 0.7 ? 0 : Math.floor(Math.random() * 3600),
+                dischargingTime: Math.random() > 0.7 ? Infinity : Math.floor(Math.random() * 3600)
+            });
+            
+            // 模拟媒体设备
+            navigator.mediaDevices.enumerateDevices = async () => [];
+            
+            // 覆盖日期和时区检测
+            const originalDate = Date;
+            Date = function(...args) {
+                if (args.length === 0) return new originalDate();
+                return new originalDate(...args);
+            };
+            Date.now = originalDate.now;
+            Date.prototype = originalDate.prototype;
         """
 
 # ======================== 终极主自动化类 ========================
@@ -797,6 +832,15 @@ class UltimateSiteAutomator:
         try:
             logger.info(f"📖 开始 {self.site_config['name']} 主题浏览")
             
+            # 强化登录验证：浏览前再次确认登录状态
+            login_status = await self.enhanced_check_login_status()
+            if not login_status:
+                logger.warning(f"⚠️ {self.site_config['name']} 浏览前检测到未登录状态，尝试重新登录")
+                login_success = await self.optimized_login()
+                if not login_success:
+                    logger.error(f"❌ {self.site_config['name']} 重新登录失败，无法进行主题浏览")
+                    return
+            
             browse_history = self.session_data.get('browse_history', [])
             
             await self.page.goto(self.site_config['latest_topics_url'], timeout=60000, wait_until='networkidle')
@@ -828,7 +872,8 @@ class UltimateSiteAutomator:
                     success_count += 1
                     
                 if idx < browse_count:
-                    await asyncio.sleep(random.uniform(5, 10))
+                    # 随机化浏览间隔，2-60秒，模拟人类的不规律性
+                    await asyncio.sleep(random.uniform(2, 60))
             
             self.session_data['browse_history'] = browse_history[-50:]
             self.session_data['last_browse'] = datetime.now().isoformat()
@@ -844,7 +889,7 @@ class UltimateSiteAutomator:
             logger.error(f"{self.site_config['name']} 主题浏览流程失败: {str(e)}")
 
     async def browse_single_topic(self, topic, topic_idx, total_topics, browse_history):
-        """浏览单个主题并模拟鼠标滚动到页面底部"""
+        """浏览单个主题并模拟更真实的用户行为"""
         try:
             title = (await topic.text_content() or "").strip()[:60]
             href = await topic.get_attribute('href')
@@ -861,10 +906,35 @@ class UltimateSiteAutomator:
             
             tab = await self.context.new_page()
             try:
+                # 每次浏览前随机切换User-Agent
+                user_agent = random.choice(USER_AGENTS)
+                await tab.set_extra_http_headers({"User-Agent": user_agent})
+                
                 await tab.goto(topic_url, timeout=45000, wait_until='domcontentloaded')
                 
-                # 模拟阅读时间和滚动行为
-                total_read_time = random.uniform(20, 180)
+                # 获取当前视口大小
+                viewport = self.context.viewport_size
+                if not viewport:
+                    viewport = {'width': 1920, 'height': 1080}  # 默认值
+                
+                # 新增1：随机鼠标移动（模拟人类操作）
+                await tab.mouse.move(
+                    x=random.randint(100, viewport['width']-100),
+                    y=random.randint(100, viewport['height']-100),
+                    steps=random.randint(5, 15)  # 平滑移动，非瞬间跳转
+                )
+                await asyncio.sleep(random.uniform(1, 3))
+                
+                # 新增2：随机点击页面空白处（避免点击关键元素）
+                if random.choice([True, False]):
+                    await tab.mouse.click(
+                        x=random.randint(200, viewport['width']-200),
+                        y=random.randint(200, viewport['height']-200)
+                    )
+                    await asyncio.sleep(random.uniform(0.5, 1.5))
+                
+                # 原有滚动逻辑（延长最短停留时间）
+                total_read_time = random.uniform(30, 180)  # 最短30秒，避免低于网站阈值
                 scroll_interval = random.uniform(2, 8)  # 每次滚动间隔
                 total_scroll_steps = math.ceil(total_read_time / scroll_interval)
                 
@@ -955,6 +1025,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-
-
