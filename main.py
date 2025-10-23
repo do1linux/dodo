@@ -1190,7 +1190,7 @@ class UltimateSiteAutomator:
                 return
             
             # 减少浏览数量，增加质量
-            browse_count = min(random.randint(3, 6), len(topic_links))
+            browse_count = min(random.randint(3, 9), len(topic_links))
             selected_topics = random.sample(topic_links, browse_count)
             
             logger.info(f"📚 {self.site_config['name']} 计划浏览 {browse_count} 个主题 (统计优化)")
@@ -1567,3 +1567,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
