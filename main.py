@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from urllib.parse import urljoin
 from io import BytesIO
 from PIL import Image
-from playwright.async_api import async_playwright, Page, Browser, BrowserContext
+from playwright.async_api import async_playwright
 from loguru import logger
 from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
 from tabulate import tabulate
@@ -52,20 +52,25 @@ SITES = [
     }
 ]
 
-PAGE_TIMEOUT = 180000  # 3分钟超时
-RETRY_TIMES = 2  # 重试次数
+PAGE_TIMEOUT = 180000
+RETRY_TIMES = 2
 
 # ======================== 反检测配置 ========================
 USER_AGENTS = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
     'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Firefox/127.0',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Safari/605.1.15',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/126.0.0.0 Safari/537.36'
 ]
 
 VIEWPORT_SIZES = [
     {'width': 1920, 'height': 1080},
     {'width': 1366, 'height': 768},
     {'width': 1536, 'height': 864},
+    {'width': 1440, 'height': 900},
+    {'width': 1280, 'height': 720}
 ]
 
 # ======================== 终极缓存管理器 ========================
@@ -143,7 +148,7 @@ class UltimateCacheManager:
 # ======================== Cloudflare处理器 ========================
 class CloudflareHandler:
     @staticmethod
-    async def handle_cloudflare(page: Page, site_config, max_attempts=8, timeout=180):
+    async def handle_cloudflare(page, site_config, max_attempts=8, timeout=180):
         domain = site_config['base_url'].replace('https://', '')
         start_time = time.time()
         logger.info(f"🛡️ 开始处理 {domain} Cloudflare验证")
@@ -256,7 +261,7 @@ class CloudflareHandler:
             return False
 
     @staticmethod
-    async def is_cf_clearance_valid(context: BrowserContext, domain):
+    async def is_cf_clearance_valid(context, domain):
         try:
             cookies = await context.cookies()
             for cookie in cookies:
@@ -300,7 +305,7 @@ class BrowserManager:
         return browser, playwright
 
     @staticmethod
-    async def create_context(browser: Browser, site_name):
+    async def create_context(browser, site_name):
         has_browser_state = UltimateCacheManager.load_site_cache(site_name, 'browser_state') is not None
         has_cf_cookies = UltimateCacheManager.load_site_cache(site_name, 'cf_cookies') is not None
         
@@ -327,7 +332,7 @@ class BrowserManager:
         return context
 
     @staticmethod
-    async def load_caches_into_context(context: BrowserContext, site_name):
+    async def load_caches_into_context(context, site_name):
         try:
             cf_cookies = UltimateCacheManager.load_site_cache(site_name, 'cf_cookies')
             if cf_cookies:
@@ -347,12 +352,31 @@ class BrowserManager:
     @staticmethod
     def get_anti_detection_script():
         return """
+            // 增强的反检测脚本
             Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
             Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
             Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh', 'en-US', 'en'] });
             window.chrome = { runtime: {}, loadTimes: function() {}, csi: function() {}, app: {isInstalled: false} };
-            Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
-            Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
+            Object.defineProperty(navigator, 'platform', { get: () => ['Win32', 'MacIntel', 'Linux x86_64'][Math.floor(Math.random() * 3)] });
+            Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => [4, 8, 12, 16][Math.floor(Math.random() * 4)] });
+            
+            // 模拟真实的电池状态
+            navigator.getBattery = async function() {
+                return {
+                    level: 0.7 + Math.random() * 0.3,
+                    charging: Math.random() > 0.7,
+                    chargingTime: Math.floor(Math.random() * 3600),
+                    dischargingTime: Math.floor(Math.random() * 3600) + 3600,
+                    addEventListener: function() {},
+                    removeEventListener: function() {}
+                };
+            };
+            
+            // 覆盖日期和时间相关函数，避免被检测到脚本运行时间模式
+            const originalDateNow = Date.now;
+            Date.now = function() {
+                return originalDateNow() + Math.floor(Math.random() * 100) - 50;
+            };
         """
 
 # ======================== 终极主自动化类 ========================
@@ -370,8 +394,9 @@ class UltimateSiteAutomator:
         self.credentials = SITE_CREDENTIALS.get(site_config['name'], {})
         self.domain = site_config['base_url'].replace('https://', '')
         self.cache_saved = False  # 防止重复保存
+        self.viewport = random.choice(VIEWPORT_SIZES)  # 当前视口大小
 
-    async def run_for_site(self, browser: Browser, playwright):
+    async def run_for_site(self, browser, playwright):
         self.browser = browser
         self.playwright = playwright
         
@@ -431,7 +456,6 @@ class UltimateSiteAutomator:
 
                 except Exception as e:
                     logger.error(f"{self.site_config['name']} 当前尝试失败: {str(e)}")
-                    traceback.print_exc()
                     
                     if self.retry_count == 0:
                         logger.info(f"🔄 {self.site_config['name']} 清除缓存并重试")
@@ -439,305 +463,553 @@ class UltimateSiteAutomator:
                     
                     self.retry_count += 1
                     if self.retry_count <= RETRY_TIMES:
-                        wait_time = 15 + self.retry_count * 10
+                        wait_time = 10 + self.retry_count * 5
                         logger.warning(f"将在 {wait_time} 秒后重试 ({self.retry_count}/{RETRY_TIMES})")
                         await asyncio.sleep(wait_time)
                     else:
-                        logger.error(f"❌ {self.site_config['name']} 达到最大重试次数，任务失败")
+                        logger.error(f"❌ {self.site_config['name']} 最大重试次数耗尽，终止脚本")
                         await self.save_final_status(success=False)
                         return False
-            return self.is_logged_in
-            
+
+            return True
+
         except Exception as e:
-            logger.error(f"{self.site_config['name']} 主流程发生致命错误: {str(e)}")
-            traceback.print_exc()
+            logger.critical(f"{self.site_config['name']} 脚本执行异常: {str(e)}")
             await self.save_final_status(success=False)
+            traceback.print_exc()
             return False
         finally:
-            # 确保资源正确释放
-            if self.page:
-                await self.page.close()
-            if self.context:
-                await self.context.close()
-            logger.info(f"🔚 {self.site_config['name']} 自动化流程结束")
-
-    async def enhanced_check_login_status(self):
-        """增强版登录状态检查"""
-        try:
-            # 尝试访问个人主页或登录后才能访问的页面
-            profile_indicators = [
-                '//a[contains(@href, "/u/")]',  # 用户名链接
-                '//button[contains(text(), "退出") or contains(text(), "登出")]',  # 退出按钮
-                '//span[contains(@class, "username")]'  # 用户名显示
-            ]
-            
-            # 先检查当前页面
-            for indicator in profile_indicators:
-                if await self.page.query_selector(indicator):
-                    logger.success("✅ 在当前页面检测到登录状态")
-                    return True
-            
-            # 访问最新主题页再次检查
-            logger.info("🔍 访问最新主题页验证登录状态")
-            await self.page.goto(self.site_config['latest_topics_url'], wait_until='networkidle', timeout=60000)
-            await asyncio.sleep(3)
-            
-            for indicator in profile_indicators:
-                if await self.page.query_selector(indicator):
-                    logger.success("✅ 在最新主题页检测到登录状态")
-                    return True
-            
-            # 检查是否有登录表单（反证未登录）
-            login_form = await self.page.query_selector('form[action*="/login"]')
-            if login_form:
-                logger.warning("❌ 检测到登录表单，确认未登录")
-                return False
-                
-            logger.warning("❌ 未明确检测到登录状态")
-            return False
-        except Exception as e:
-            logger.error(f"检查登录状态时出错: {str(e)}")
-            return False
+            await self.close_context()
 
     async def try_cache_first_approach(self):
-        """尝试使用缓存直接访问站点"""
         try:
-            logger.info(f"🔍 尝试缓存优先访问 {self.site_config['name']}")
-            await self.page.goto(self.site_config['latest_topics_url'], wait_until='networkidle', timeout=60000)
-            await asyncio.sleep(5)
+            # 检查是否有有效的Cloudflare缓存
+            cf_cache_valid = await CloudflareHandler.is_cached_cf_valid(self.site_config['name'])
             
-            # 处理Cloudflare
-            cf_success = await CloudflareHandler.handle_cloudflare(self.page, self.site_config)
-            self.cf_passed = cf_success
-            
-            if not cf_success:
-                logger.warning("⚠️ Cloudflare验证未通过，无法使用缓存访问")
+            if cf_cache_valid:
+                logger.info(f"✅ 检测到有效的Cloudflare缓存，尝试直接访问")
+                await self.page.goto(self.site_config['latest_topics_url'], wait_until='networkidle', timeout=60000)
+                await asyncio.sleep(5)
+                
+                login_status = await self.enhanced_check_login_status()
+                if login_status:
+                    logger.success(f"✅ 缓存优先流程成功 - 已登录")
+                    return True
+                else:
+                    logger.warning(f"⚠️ Cloudflare缓存有效但未登录，尝试登录")
+                    return await self.optimized_login()
+            else:
+                logger.info(f"📭 无有效Cloudflare缓存")
                 return False
-            
-            # 检查登录状态
-            login_status = await self.enhanced_check_login_status()
-            if login_status:
-                logger.success(f"✅ {self.site_config['name']} 缓存登录状态有效")
-                return True
-            
-            logger.warning(f"⚠️ {self.site_config['name']} 缓存登录状态无效")
-            return False
+                
         except Exception as e:
-            logger.error(f"缓存优先访问失败: {str(e)}")
+            logger.error(f"缓存优先流程异常: {str(e)}")
             return False
 
     async def full_verification_process(self):
-        """完整的登录验证流程"""
         try:
-            logger.info(f"🔄 开始 {self.site_config['name']} 完整登录流程")
+            # Cloudflare验证
+            await self.page.goto(self.site_config['base_url'], wait_until='networkidle', timeout=120000)
             
-            # 1. 访问登录页
-            await self.page.goto(self.site_config['login_url'], wait_until='networkidle', timeout=60000)
+            self.cf_passed = await CloudflareHandler.handle_cloudflare(
+                self.page, self.site_config, max_attempts=8, timeout=180
+            )
+            
+            if self.cf_passed:
+                logger.success(f"✅ {self.site_config['name']} Cloudflare验证通过")
+            
+            # 检查登录状态
+            cached_login_success = await self.enhanced_check_login_status()
+            if cached_login_success:
+                logger.success(f"✅ {self.site_config['name']} 缓存登录成功")
+                # 关键修复：缓存登录成功也保存缓存
+                if not self.cache_saved:
+                    await self.save_all_caches()
+                return True
+            else:
+                logger.warning(f"⚠️ 需要重新登录")
+                login_success = await self.optimized_login()
+                if login_success and not self.cache_saved:
+                    await self.save_all_caches()
+                return login_success
+                
+        except Exception as e:
+            logger.error(f"完整验证流程异常: {str(e)}")
+            return False
+
+    async def enhanced_check_login_status(self):
+        try:
+            current_url = self.page.url
+            page_title = await self.page.title()
+            
+            # 如果页面卡在Cloudflare验证，但cookie有效，尝试绕过
+            if page_title == "请稍候…":
+                cf_valid = await CloudflareHandler.is_cf_clearance_valid(self.page.context, self.domain)
+                if cf_valid:
+                    logger.info("🔄 页面卡住但Cloudflare cookie有效，尝试访问/latest页面")
+                    await self.page.goto(self.site_config['latest_topics_url'], wait_until='networkidle', timeout=60000)
+                    await asyncio.sleep(5)
+                    current_url = self.page.url
+                    page_title = await self.page.title()
+            
+            # 检查用户相关元素
+            user_indicators = [
+                '#current-user', '#toggle-current-user', '.header-dropdown-toggle.current-user',
+                'img.avatar', '.user-menu', '[data-user-menu]'
+            ]
+            
+            for selector in user_indicators:
+                try:
+                    user_elem = await self.page.query_selector(selector)
+                    if user_elem and await user_elem.is_visible():
+                        logger.success(f"✅ 检测到用户元素: {selector}")
+                        return await self.verify_username()
+                except Exception:
+                    continue
+            
+            # 检查登录按钮
+            login_buttons = [
+                '.login-button', 'button:has-text("登录")', 
+                'button:has-text("Log In")', '.btn.btn-icon-text.login-button'
+            ]
+            
+            for selector in login_buttons:
+                try:
+                    login_btn = await self.page.query_selector(selector)
+                    if login_btn and await login_btn.is_visible():
+                        logger.warning(f"❌ 检测到登录按钮: {selector}")
+                        return False
+                except Exception:
+                    continue
+            
+            # 如果无法确定状态
+            page_content = await self.page.content()
+            if "请稍候" not in page_title and "Checking" not in page_title:
+                username = self.credentials['username']
+                if username.lower() in page_content.lower():
+                    logger.success(f"✅ 在页面内容中找到用户名: {username}")
+                    return True
+                
+                if len(page_content) > 1000:
+                    logger.success("✅ 页面显示正常内容，可能已登录")
+                    return True
+            
+            logger.warning(f"⚠️ 登录状态不确定，默认认为未登录。页面标题: {page_title}")
+            return False
+            
+        except Exception as e:
+            logger.warning(f"{self.site_config['name']} 检查登录状态时出错: {str(e)}")
+            return False
+
+    async def verify_username(self):
+        username = self.credentials['username']
+        
+        # 方法1: 页面内容检查
+        page_content = await self.page.content()
+        if username.lower() in page_content.lower():
+            logger.success(f"✅ 在页面内容中找到用户名: {username}")
+            return True
+        
+        # 方法2: 用户菜单点击
+        try:
+            user_click_selectors = ['img.avatar', '.current-user', '[data-user-menu]', '.header-dropdown-toggle']
+            for selector in user_click_selectors:
+                user_elem = await self.page.query_selector(selector)
+                if user_elem and await user_elem.is_visible():
+                    await user_elem.click()
+                    await asyncio.sleep(2)
+                    
+                    user_menu_content = await self.page.content()
+                    if username.lower() in user_menu_content.lower():
+                        logger.success(f"✅ 在用户菜单中找到用户名: {username}")
+                        await self.page.click('body')
+                        return True
+                    
+                    await self.page.click('body')
+                    await asyncio.sleep(1)
+                    break
+        except Exception:
+            pass
+        
+        # 方法3: 个人资料页面验证
+        try:
+            profile_url = f"{self.site_config['base_url']}/u/{username}"
+            await self.page.goto(profile_url, wait_until='networkidle', timeout=30000)
             await asyncio.sleep(3)
             
-            # 2. 处理Cloudflare
-            cf_success = await CloudflareHandler.handle_cloudflare(self.page, self.site_config)
-            self.cf_passed = cf_success
-            if not cf_success:
-                logger.error("❌ Cloudflare验证失败，无法继续登录")
-                return False
-            
-            # 3. 执行登录操作
-            login_success = await self.perform_login()
-            if not login_success:
-                logger.error("❌ 登录操作执行失败")
-                return False
-            
-            # 4. 验证登录状态
-            final_status = await self.enhanced_check_login_status()
-            if final_status:
-                logger.success(f"✅ {self.site_config['name']} 完整登录流程成功")
-                await self.save_all_caches()
+            profile_content = await self.page.content()
+            if username.lower() in profile_content.lower() or "个人资料" in await self.page.title():
+                logger.success(f"✅ 在个人资料页面验证用户名: {username}")
+                await self.page.go_back(wait_until='networkidle')
                 return True
-            
-            logger.error(f"❌ {self.site_config['name']} 完整登录流程验证失败")
-            return False
-        except Exception as e:
-            logger.error(f"完整验证流程出错: {str(e)}")
-            return False
-
-    async def perform_login(self):
-        """执行实际登录操作"""
-        try:
-            # 定位用户名和密码字段（适配常见论坛结构）
-            username_field = await self.page.query_selector('input[name="username"], input[name="login"]')
-            password_field = await self.page.query_selector('input[name="password"]')
-            submit_button = await self.page.query_selector('button[type="submit"], input[type="submit"][value*="登录"]')
-            
-            if not all([username_field, password_field, submit_button]):
-                logger.error("❌ 无法定位登录表单元素")
-                return False
-            
-            # 输入凭据
-            await username_field.fill(self.credentials['username'])
-            await password_field.fill(self.credentials['password'])
-            await asyncio.sleep(random.uniform(1, 2))  # 模拟人类输入间隔
-            
-            # 提交表单
-            await submit_button.click()
-            await self.page.wait_for_load_state('networkidle', timeout=60000)
-            await asyncio.sleep(5)  # 等待跳转完成
-            
-            return True
-        except Exception as e:
-            logger.error(f"执行登录时出错: {str(e)}")
-            return False
-
-    async def browse_topics(self):
-        """浏览主题页面（模拟用户行为）"""
-        try:
-            logger.info(f"🔍 开始浏览 {self.site_config['name']} 主题")
-            
-            # 随机滚动页面
-            for _ in range(random.randint(3, 5)):
-                scroll_height = random.randint(300, 800)
-                await self.page.evaluate(f"window.scrollBy(0, {scroll_height})")
-                await asyncio.sleep(random.uniform(1.5, 3))
-            
-            # 随机点击1-2个主题
-            topics = await self.page.query_selector_all('a[href*="/t/"]')
-            if topics:
-                select_count = random.randint(1, min(2, len(topics)))
-                selected_topics = random.sample(topics, select_count)
                 
-                for topic in selected_topics:
-                    topic_url = await topic.get_attribute('href')
-                    full_url = urljoin(self.site_config['base_url'], topic_url)
-                    logger.info(f"📄 浏览主题: {full_url}")
-                    
-                    await topic.click()
-                    await self.page.wait_for_load_state('networkidle', timeout=60000)
-                    await asyncio.sleep(random.uniform(3, 5))
-                    
-                    # 在主题页内随机滚动
-                    for _ in range(random.randint(2, 4)):
-                        scroll_height = random.randint(200, 600)
-                        await self.page.evaluate(f"window.scrollBy(0, {scroll_height})")
-                        await asyncio.sleep(random.uniform(1, 2))
-                    
-                    # 返回列表页
-                    await self.page.go_back()
-                    await self.page.wait_for_load_state('networkidle', timeout=60000)
-                    await asyncio.sleep(2)
+            await self.page.go_back(wait_until='networkidle')
+        except Exception:
+            pass
+        
+        logger.warning(f"⚠️ 检测到用户元素但无法验证用户名 {username}，默认认为已登录")
+        return True
+
+    async def optimized_login(self):
+        try:
+            logger.info(f"🔐 开始 {self.site_config['name']} 优化登录流程")
             
-            logger.success(f"✅ {self.site_config['name']} 主题浏览完成")
+            # 清除可能的旧会话
+            await self.page.context.clear_cookies()
+            
+            # 导航到登录页面
+            await self.page.goto(self.site_config['login_url'], wait_until='networkidle', timeout=90000)
+            await asyncio.sleep(5)
+            
+            # 等待登录表单
+            for i in range(5):
+                try:
+                    await self.page.wait_for_selector('#login-account-name', timeout=10000)
+                    await self.page.wait_for_selector('#login-account-password', timeout=10000)
+                    break
+                except:
+                    if i == 4:
+                        logger.error("❌ 登录表单加载超时")
+                        return False
+                    await asyncio.sleep(3)
+            
+            # 填写登录信息
+            username = self.credentials['username']
+            password = self.credentials['password']
+            
+            await self.page.fill('#login-account-name', username)
+            await self.page.fill('#login-account-password', password)
+            await asyncio.sleep(2)
+            
+            # 点击登录按钮
+            login_button_selectors = ['#login-button', 'button[type="submit"]', 'input[type="submit"]']
+            for selector in login_button_selectors:
+                try:
+                    login_btn = await self.page.query_selector(selector)
+                    if login_btn and await login_btn.is_visible():
+                        await login_btn.click()
+                        break
+                except:
+                    continue
+            
+            # 等待登录结果
+            await asyncio.sleep(20)
+            
+            # 检查登录后的页面状态
+            current_url = self.page.url
+            
+            if current_url != self.site_config['login_url']:
+                await asyncio.sleep(5)
+                return await self.enhanced_check_login_status()
+            
+            # 检查错误消息
+            error_selectors = ['.alert-error', '.error', '.flash-error', '.alert.alert-error']
+            for selector in error_selectors:
+                error_elem = await self.page.query_selector(selector)
+                if error_elem:
+                    error_text = await error_elem.inner_text()
+                    logger.error(f"❌ 登录错误: {error_text}")
+                    return False
+            
+            # 如果还在登录页面但没有错误，尝试强制刷新
+            await self.page.goto(self.site_config['base_url'], wait_until='networkidle', timeout=60000)
+            await asyncio.sleep(5)
+            
+            return await self.enhanced_check_login_status()
+                
         except Exception as e:
-            logger.warning(f"浏览主题时出错: {str(e)}，继续执行后续流程")
+            logger.error(f"{self.site_config['name']} 登录过程异常: {e}")
+            return False
+
+    async def clear_caches(self):
+        try:
+            cache_types = ['session_data', 'browser_state', 'cf_cookies', 'final_status']
+            for cache_type in cache_types:
+                file_name = f"{cache_type}_{self.site_config['name']}.json"
+                if os.path.exists(file_name):
+                    os.remove(file_name)
+                    logger.info(f"🗑️ 已清除缓存: {file_name}")
+            
+            self.session_data = {}
+            logger.info(f"✅ {self.site_config['name']} 所有缓存已清除")
+            
+        except Exception as e:
+            logger.error(f"清除缓存失败: {str(e)}")
+
+    async def clear_login_caches_only(self):
+        try:
+            cache_types = ['session_data', 'browser_state', 'final_status']
+            for cache_type in cache_types:
+                file_name = f"{cache_type}_{self.site_config['name']}.json"
+                if os.path.exists(file_name):
+                    os.remove(file_name)
+                    logger.info(f"🗑️ 已清除缓存: {file_name}")
+            
+            self.session_data = {}
+            logger.info(f"✅ {self.site_config['name']} 登录缓存已清除，保留Cloudflare cookies")
+            
+        except Exception as e:
+            logger.error(f"清除登录缓存失败: {str(e)}")
 
     async def save_all_caches(self):
-        """保存所有缓存数据"""
-        if self.cache_saved:
-            logger.info("ℹ️ 缓存已保存，跳过重复保存")
-            return
-        
+        """统一保存所有缓存，确保每次运行都覆盖旧缓存"""
         try:
+            # 保存 Cloudflare cookies
+            await self.save_cf_cookies()
+            
             # 保存浏览器状态
-            storage_state = await self.context.storage_state()
-            UltimateCacheManager.save_site_cache(storage_state, self.site_config['name'], 'browser_state')
+            if self.context:
+                state = await self.context.storage_state()
+                UltimateCacheManager.save_site_cache(state, self.site_config['name'], 'browser_state')
             
-            # 保存Cloudflare cookies
-            cf_cookies = await self.context.cookies()
-            UltimateCacheManager.save_site_cache(cf_cookies, self.site_config['name'], 'cf_cookies')
-            
-            # 保存会话数据
+            # 更新并保存会话数据
             self.session_data.update({
-                'last_login': datetime.now().isoformat(),
-                'is_logged_in': self.is_logged_in,
-                'cf_passed': self.cf_passed
+                'last_success': datetime.now().isoformat(),
+                'login_status': 'success',
+                'retry_count': self.retry_count,
+                'cf_passed': self.cf_passed,
+                'last_updated': datetime.now().isoformat(),
+                'cache_strategy': 'always_overwrite_latest'  # 明确标记覆盖策略
             })
             UltimateCacheManager.save_site_cache(self.session_data, self.site_config['name'], 'session_data')
             
+            logger.info(f"✅ {self.site_config['name']} 所有缓存已保存（覆盖旧缓存）")
             self.cache_saved = True
-            logger.success(f"✅ {self.site_config['name']} 所有缓存已保存")
         except Exception as e:
-            logger.error(f"保存缓存时出错: {str(e)}")
+            logger.error(f"{self.site_config['name']} 保存缓存失败: {str(e)}")
 
-    async def clear_caches(self):
-        """清除所有相关缓存"""
-        try:
-            cache_types = ['browser_state', 'cf_cookies', 'session_data']
-            for cache_type in cache_types:
-                file_name = f"{cache_type}_{self.site_config['name']}.json"
-                if os.path.exists(file_name):
-                    os.remove(file_name)
-                    logger.info(f"🗑️ 已删除缓存 {file_name}")
-            logger.success(f"✅ {self.site_config['name']} 所有缓存已清除")
-        except Exception as e:
-            logger.error(f"清除缓存时出错: {str(e)}")
-
-    async def clear_login_caches_only(self):
-        """只清除登录相关缓存（保留Cloudflare验证）"""
-        try:
-            # 保留cf_cookies，清除其他登录相关缓存
-            cache_types = ['browser_state', 'session_data']
-            for cache_type in cache_types:
-                file_name = f"{cache_type}_{self.site_config['name']}.json"
-                if os.path.exists(file_name):
-                    os.remove(file_name)
-                    logger.info(f"🗑️ 已删除登录相关缓存 {file_name}")
-            logger.success(f"✅ {self.site_config['name']} 登录缓存已清除")
-        except Exception as e:
-            logger.error(f"清除登录缓存时出错: {str(e)}")
-
-    async def save_final_status(self, success: bool):
-        """保存最终执行状态"""
-        status_data = {
-            'site': self.site_config['name'],
+    async def save_final_status(self, success=False):
+        final_status = {
             'success': success,
             'timestamp': datetime.now().isoformat(),
             'retry_count': self.retry_count,
+            'login_status': 'success' if success else 'failed',
             'cf_passed': self.cf_passed,
-            'run_id': os.getenv('GITHUB_RUN_ID', 'local')
+            'message': '任务执行完成' if success else '任务执行失败',
+            'cache_strategy': 'always_overwrite_latest'
         }
-        UltimateCacheManager.save_cache(status_data, self.site_config['final_status_file'])
-        logger.info(f"📊 已保存 {self.site_config['name']} 最终状态: {'成功' if success else '失败'}")
+        UltimateCacheManager.save_site_cache(final_status, self.site_config['name'], 'final_status')
 
-# ======================== 主函数 ========================
+    async def save_cf_cookies(self):
+        try:
+            all_cookies = await self.context.cookies()
+            target_domain = self.site_config['base_url'].replace('https://', '')
+            cf_cookies = [
+                cookie for cookie in all_cookies 
+                if cookie.get('domain', '').endswith(target_domain) and 
+                   (cookie.get('name') == 'cf_clearance' or 'cloudflare' in cookie.get('name', ''))
+            ]
+            
+            if cf_cookies:
+                UltimateCacheManager.save_site_cache(cf_cookies, self.site_config['name'], 'cf_cookies')
+                logger.info(f"✅ {self.site_config['name']} Cloudflare Cookies 已保存: {len(cf_cookies)} 个")
+                
+        except Exception as e:
+            logger.error(f"❌ 保存 {self.site_config['name']} Cloudflare cookies 失败: {e}")
+
+    async def close_context(self):
+        try:
+            if self.context:
+                # 只在关闭时保存一次缓存，确保最终状态被保存
+                if not self.cache_saved and self.is_logged_in:
+                    await self.save_all_caches()
+                await self.context.close()
+                logger.info(f"✅ {self.site_config['name']} 浏览器上下文已关闭")
+        except Exception as e:
+            logger.error(f"关闭上下文失败: {str(e)}")
+
+    async def browse_topics(self):
+        try:
+            logger.info(f"📖 开始 {self.site_config['name']} 主题浏览")
+            
+            # 强化登录验证：在浏览前再次检查登录状态
+            login_verified = await self.enhanced_check_login_status()
+            if not login_verified:
+                logger.error(f"❌ {self.site_config['name']} 浏览前登录验证失败，尝试重新登录")
+                login_success = await self.optimized_login()
+                if not login_success:
+                    logger.error(f"❌ {self.site_config['name']} 重新登录失败，放弃浏览")
+                    return
+            
+            browse_history = self.session_data.get('browse_history', [])
+            
+            await self.page.goto(self.site_config['latest_topics_url'], timeout=60000, wait_until='networkidle')
+            
+            # 尝试多种选择器
+            topic_selectors = ['a.title', '.title a', 'a.topic-title', '.topic-list-item a', 'tr.topic-list-item a.title']
+            topic_links = []
+            
+            for selector in topic_selectors:
+                links = await self.page.query_selector_all(selector)
+                if links:
+                    logger.info(f"✅ 使用选择器 '{selector}' 找到 {len(links)} 个主题链接")
+                    topic_links = links
+                    break
+            
+            if not topic_links:
+                logger.warning(f"{self.site_config['name']} 未找到主题链接")
+                return
+            
+            browse_count = min(random.randint(5, 9), len(topic_links))
+            selected_topics = random.sample(topic_links, browse_count)
+            
+            logger.info(f"📚 {self.site_config['name']} 计划浏览 {browse_count} 个主题")
+            
+            success_count = 0
+            for idx, topic in enumerate(selected_topics, 1):
+                success = await self.browse_single_topic(topic, idx, browse_count, browse_history)
+                if success:
+                    success_count += 1
+                    
+                if idx < browse_count:
+                    # 随机化浏览间隔：2-60秒，模拟人类的随机浏览习惯
+                    delay = random.uniform(2, 60)
+                    logger.info(f"⏳ 主题间延迟 {delay:.1f} 秒")
+                    await asyncio.sleep(delay)
+            
+            self.session_data['browse_history'] = browse_history[-50:]
+            self.session_data['last_browse'] = datetime.now().isoformat()
+            self.session_data['total_browsed'] = self.session_data.get('total_browsed', 0) + success_count
+            
+            # 主题浏览完成后保存一次缓存
+            if not self.cache_saved:
+                await self.save_all_caches()
+            
+            logger.success(f"✅ {self.site_config['name']} 主题浏览完成: 成功 {success_count} 个主题")
+
+        except Exception as e:
+            logger.error(f"{self.site_config['name']} 主题浏览流程失败: {str(e)}")
+
+    async def browse_single_topic(self, topic, topic_idx, total_topics, browse_history):
+        """浏览单个主题并模拟更真实的用户行为"""
+        try:
+            title = (await topic.text_content() or "").strip()[:60]
+            href = await topic.get_attribute('href')
+            
+            if not href:
+                return False
+            
+            topic_url = f"{self.site_config['base_url']}{href}" if href.startswith('/') else href
+            
+            if href in browse_history:
+                return False
+            
+            logger.info(f"🌐 {self.site_config['name']} 浏览主题 {topic_idx}/{total_topics}: {title}")
+            
+            tab = await self.context.new_page()
+            try:
+                # 每次浏览主题前随机切换User-Agent
+                user_agent = random.choice(USER_AGENTS)
+                await tab.set_extra_http_headers({"User-Agent": user_agent})
+                logger.info(f"🔄 切换User-Agent: {user_agent[:50]}...")
+                
+                await tab.goto(topic_url, timeout=45000, wait_until='domcontentloaded')
+                
+                # 新增1：随机鼠标移动（模拟人类操作）
+                await tab.mouse.move(
+                    x=random.randint(100, self.viewport['width']-100),
+                    y=random.randint(100, self.viewport['height']-100),
+                    steps=random.randint(5, 15)  # 平滑移动，非瞬间跳转
+                )
+                await asyncio.sleep(random.uniform(1, 3))
+                
+                # 新增2：随机点击页面空白处（避免点击关键元素）
+                if random.choice([True, False]):
+                    await tab.mouse.click(
+                        x=random.randint(200, self.viewport['width']-200),
+                        y=random.randint(200, self.viewport['height']-200)
+                    )
+                    await asyncio.sleep(random.uniform(0.5, 1.5))
+                
+                # 原有滚动逻辑（保持不变，但延长最短停留时间）
+                total_read_time = random.uniform(30, 180)  # 最短30秒，避免低于网站阈值
+                scroll_interval = random.uniform(2, 8)  # 每次滚动间隔
+                total_scroll_steps = math.ceil(total_read_time / scroll_interval)
+                
+                # 先等待1-3秒再开始滚动
+                await asyncio.sleep(random.uniform(1, 3))
+                
+                # 逐步滚动到页面底部
+                for step in range(total_scroll_steps):
+                    # 计算当前滚动位置 (0.0 到 1.0)
+                    scroll_position = min(step / total_scroll_steps, 1.0)
+                    
+                    # 使用JavaScript滚动到相应位置
+                    await tab.evaluate(f"window.scrollTo(0, document.body.scrollHeight * {scroll_position});")
+                    
+                    # 随机微小停顿，模拟阅读行为
+                    await asyncio.sleep(scroll_interval)
+                
+                # 到达底部后再停留2-5秒
+                await asyncio.sleep(random.uniform(2, 5))
+                
+                browse_history.append(href)
+                return True
+            finally:
+                await tab.close()
+                
+        except Exception as e:
+            logger.error(f"{self.site_config['name']} 浏览单个主题失败: {str(e)}")
+            return False
+
+# ======================== 主执行函数 ========================
 async def main():
-    # 配置日志
-    logger.add(
-        f"automation_{datetime.now().strftime('%Y%m%d')}.log",
-        rotation="1 day",
-        level="INFO",
-        encoding="utf-8"
-    )
-    logger.info("🚀 多站点自动化脚本启动")
-
-    # 获取要运行的站点（从命令行参数或默认值）
-    site_selector = sys.argv[1] if len(sys.argv) > 1 else 'all'
-    logger.info(f"🎯 运行模式: {site_selector}")
-
-    # 筛选要处理的站点
-    target_sites = [site for site in SITES if site_selector == 'all' or site['name'] == site_selector]
-    if not target_sites:
-        logger.error("❌ 未找到匹配的站点配置")
-        return
-
-    # 初始化浏览器
+    logger.info("🚀 LinuxDo多站点自动化脚本启动")
+    
     browser, playwright = await BrowserManager.init_browser()
+    
     try:
-        # 逐个处理站点
-        for site in target_sites:
-            logger.info(f"\n{'='*50}\n📌 开始处理站点: {site['name']}\n{'='*50}")
-            automator = UltimateSiteAutomator(site)
+        results = []
+        
+        for site_config in SITES:
+            logger.info(f"🎯 开始处理站点: {site_config['name']}")
+            
+            automator = UltimateSiteAutomator(site_config)
             success = await automator.run_for_site(browser, playwright)
-            logger.info(f"📊 站点 {site['name']} 处理结果: {'成功' if success else '失败'}\n")
-
+            
+            results.append({
+                'site': site_config['name'],
+                'success': success,
+                'login_status': automator.is_logged_in,
+                'cf_passed': automator.cf_passed,
+                'retry_count': automator.retry_count
+            })
+            
+            # 站点间延迟 - 增加随机性
+            if site_config != SITES[-1]:
+                delay = random.uniform(10, 30)
+                logger.info(f"⏳ 站点间延迟 {delay:.1f} 秒")
+                await asyncio.sleep(delay)
+        
+        # 输出最终结果
+        logger.info("📊 所有站点执行结果:")
+        table_data = []
+        for result in results:
+            status_icon = "✅" if result['success'] else "❌"
+            login_status = "已登录" if result['login_status'] else "未登录"
+            cf_status = "通过" if result['cf_passed'] else "失败"
+            table_data.append([
+                result['site'], 
+                status_icon, 
+                login_status, 
+                cf_status, 
+                result['retry_count']
+            ])
+        
+        print(tabulate(table_data, 
+                      headers=['站点', '状态', '登录', 'Cloudflare', '重试次数'],
+                      tablefmt='grid'))
+        
+        success_count = sum(1 for r in results if r['success'])
+        logger.success(f"🎉 脚本执行完成: {success_count}/{len(results)} 个站点成功")
+        
+    except Exception as e:
+        logger.critical(f"💥 主执行流程异常: {str(e)}")
+        traceback.print_exc()
     finally:
-        # 确保资源释放
         await browser.close()
         await playwright.stop()
-        logger.info("🏁 多站点自动化脚本全部结束")
+        logger.info("🔚 浏览器已关闭，脚本结束")
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except Exception as e:
-        logger.critical(f"脚本致命错误: {str(e)}")
-        traceback.print_exc()
-        sys.exit(1)
+    asyncio.run(main())
