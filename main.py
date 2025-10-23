@@ -4,7 +4,7 @@
 LinuxDo 多站点自动化脚本
 功能：自动登录 Linux.do 和 IDCFlare 论坛，浏览主题，模拟人类行为
 作者：自动化脚本
-版本：4.2
+版本：4.2 - 统计系统优化版
 """
 
 import os
@@ -494,19 +494,129 @@ class BrowserManager:
     @staticmethod
     def get_enhanced_anti_detection_script():
         """
-        获取增强的反检测脚本
+        获取增强的反检测脚本，包含完整的JS环境模拟
         
         Returns:
             str: 反检测JavaScript代码
         """
         return """
-            // 增强的反检测脚本 - 保持指纹一致性
-            Object.defineProperty(navigator, 'webdriver', { 
-                get: () => undefined,
-                configurable: true
+            // 基础反检测
+            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            
+            // 模拟完整的浏览器API
+            // 1. 时间相关API（统计系统常用）
+            const originalDateNow = Date.now;
+            Date.now = function() {
+                return originalDateNow() + Math.floor(Math.random() * 100);
+            };
+            
+            // 2. 性能API模拟
+            if (!window.performance) {
+                window.performance = {
+                    memory: {
+                        usedJSHeapSize: Math.floor(Math.random() * 100000000),
+                        totalJSHeapSize: Math.floor(Math.random() * 200000000),
+                        jsHeapSizeLimit: Math.floor(Math.random() * 400000000)
+                    },
+                    timing: {
+                        navigationStart: originalDateNow() - Math.floor(Math.random() * 5000),
+                        loadEventEnd: originalDateNow() - Math.floor(Math.random() * 3000),
+                        domLoading: originalDateNow() - Math.floor(Math.random() * 4000)
+                    }
+                };
+            }
+            
+            // 3. 请求相关API拦截和模拟
+            const originalFetch = window.fetch;
+            window.fetch = function(...args) {
+                // 拦截统计请求，确保它们被发送
+                const url = args[0];
+                if (typeof url === 'string' && 
+                    (url.includes('analytics') || url.includes('statistics') || 
+                     url.includes('track') || url.includes('count'))) {
+                    // 确保统计请求正常发出
+                    return originalFetch.apply(this, args).catch(() => {
+                        // 即使失败也不影响主流程
+                        return Promise.resolve(new Response(null, {status: 200}));
+                    });
+                }
+                return originalFetch.apply(this, args);
+            };
+            
+            // 4. XMLHttpRequest拦截
+            const originalXHROpen = XMLHttpRequest.prototype.open;
+            const originalXHRSend = XMLHttpRequest.prototype.send;
+            
+            XMLHttpRequest.prototype.open = function(method, url, ...rest) {
+                this._url = url;
+                return originalXHROpen.apply(this, [method, url, ...rest]);
+            };
+            
+            XMLHttpRequest.prototype.send = function(...args) {
+                if (this._url && (this._url.includes('analytics') || 
+                    this._url.includes('statistics') || this._url.includes('count'))) {
+                    // 确保统计请求完成
+                    this.addEventListener('load', () => {
+                        console.log('统计请求完成:', this._url);
+                    });
+                    this.addEventListener('error', () => {
+                        console.log('统计请求失败，但继续执行:', this._url);
+                    });
+                }
+                return originalXHRSend.apply(this, args);
+            };
+            
+            // 5. 页面可见性API（统计系统常用）
+            Object.defineProperty(document, 'hidden', { get: () => false });
+            Object.defineProperty(document, 'visibilityState', { get: () => 'visible' });
+            
+            // 6. 用户行为事件监听器触发
+            document.addEventListener('DOMContentLoaded', () => {
+                // 模拟页面加载完成后的统计初始化
+                setTimeout(() => {
+                    // 触发可能的页面浏览统计
+                    window.dispatchEvent(new Event('pageview'));
+                    if (typeof window.onPageView === 'function') {
+                        window.onPageView();
+                    }
+                }, 1000);
             });
             
-            // 覆盖插件信息
+            // 7. 鼠标移动和点击事件模拟（触发行为统计）
+            let lastMoveTime = 0;
+            document.addEventListener('mousemove', (e) => {
+                const now = Date.now();
+                if (now - lastMoveTime > 1000) { // 每秒最多触发一次
+                    lastMoveTime = now;
+                    // 可能的行为统计
+                    window.dispatchEvent(new CustomEvent('userActivity', {
+                        detail: { type: 'mousemove', x: e.clientX, y: e.clientY }
+                    }));
+                }
+            });
+            
+            document.addEventListener('click', (e) => {
+                window.dispatchEvent(new CustomEvent('userActivity', {
+                    detail: { type: 'click', target: e.target.tagName }
+                }));
+            });
+            
+            // 8. 滚动事件统计
+            let lastScrollTime = 0;
+            window.addEventListener('scroll', () => {
+                const now = Date.now();
+                if (now - lastScrollTime > 500) {
+                    lastScrollTime = now;
+                    window.dispatchEvent(new CustomEvent('scrollActivity', {
+                        detail: { 
+                            scrollY: window.scrollY,
+                            scrollPercent: (window.scrollY / (document.body.scrollHeight - window.innerHeight)) * 100
+                        }
+                    }));
+                }
+            });
+            
+            // 9. 覆盖插件信息
             Object.defineProperty(navigator, 'plugins', { 
                 get: () => [1, 2, 3, 4, 5],
                 configurable: true
@@ -516,7 +626,7 @@ class BrowserManager:
                 get: () => ['zh-CN', 'zh', 'en-US', 'en'] 
             });
             
-            // 屏蔽自动化特征
+            // 10. 屏蔽自动化特征
             window.chrome = { 
                 runtime: {},
                 loadTimes: function() {},
@@ -532,7 +642,7 @@ class BrowserManager:
                 get: () => [4, 8, 12, 16][Math.floor(Math.random() * 4)] 
             });
             
-            // 覆盖权限API
+            // 11. 覆盖权限API
             const originalQuery = navigator.permissions.query;
             navigator.permissions.query = (parameters) => (
                 parameters.name === 'notifications' ?
@@ -540,7 +650,7 @@ class BrowserManager:
                     originalQuery(parameters)
             );
             
-            // 模拟真实的电池状态
+            // 12. 模拟真实的电池状态
             navigator.getBattery = async function() {
                 return {
                     level: 0.7 + Math.random() * 0.3,
@@ -552,11 +662,7 @@ class BrowserManager:
                 };
             };
             
-            // 覆盖日期和时间相关函数，避免被检测到脚本运行时间模式
-            const originalDateNow = Date.now;
-            Date.now = function() {
-                return originalDateNow() + Math.floor(Math.random() * 100) - 50;
-            };
+            console.log('🔧 增强的JS环境模拟已加载');
         """
 
 
@@ -1058,9 +1164,9 @@ class UltimateSiteAutomator:
             logger.error(f"关闭上下文失败: {str(e)}")
 
     async def browse_topics(self):
-        """浏览论坛主题"""
+        """浏览论坛主题 - 增强统计版本"""
         try:
-            logger.info(f"📖 开始 {self.site_config['name']} 主题浏览")
+            logger.info(f"📖 开始 {self.site_config['name']} 主题浏览 (统计优化版)")
             
             # 强化登录验证：在浏览前再次检查登录状态
             login_verified = await self.enhanced_check_login_status()
@@ -1084,10 +1190,10 @@ class UltimateSiteAutomator:
                 return
             
             # 减少浏览数量，增加质量
-            browse_count = min(random.randint(3, 5), len(topic_links))
+            browse_count = min(random.randint(3, 6), len(topic_links))
             selected_topics = random.sample(topic_links, browse_count)
             
-            logger.info(f"📚 {self.site_config['name']} 计划浏览 {browse_count} 个主题")
+            logger.info(f"📚 {self.site_config['name']} 计划浏览 {browse_count} 个主题 (统计优化)")
             
             success_count = 0
             for idx, topic in enumerate(selected_topics, 1):
@@ -1097,7 +1203,7 @@ class UltimateSiteAutomator:
                     
                 # 增加主题间延迟，避免模式化
                 if idx < browse_count:
-                    delay = random.uniform(5, 15)  # 5-15秒延迟
+                    delay = random.uniform(8, 20)
                     logger.info(f"⏳ 主题间延迟 {delay:.1f} 秒")
                     await asyncio.sleep(delay)
             
@@ -1110,7 +1216,7 @@ class UltimateSiteAutomator:
             if not self.cache_saved:
                 await self.save_all_caches()
             
-            logger.success(f"✅ {self.site_config['name']} 主题浏览完成: 成功 {success_count} 个主题")
+            logger.success(f"✅ {self.site_config['name']} 主题浏览完成: 成功 {success_count} 个主题 (统计优化)")
 
         except Exception as e:
             logger.error(f"{self.site_config['name']} 主题浏览流程失败: {str(e)}")
@@ -1151,7 +1257,7 @@ class UltimateSiteAutomator:
 
     async def browse_single_topic(self, topic, topic_idx, total_topics, browse_history):
         """
-        浏览单个主题
+        浏览单个主题 - 增强版，确保JS执行
         
         Args:
             topic: 主题元素
@@ -1178,14 +1284,32 @@ class UltimateSiteAutomator:
             
             tab = await self.context.new_page()
             try:
-                # 移除User-Agent切换，保持指纹一致性
-                await tab.goto(topic_url, timeout=45000, wait_until='domcontentloaded')
+                # 使用更严格的等待条件，确保JS执行
+                await tab.goto(topic_url, timeout=60000, wait_until='networkidle')
                 
-                # 更自然的初始等待
-                await asyncio.sleep(random.uniform(2, 5))
+                # 等待可能的统计JS初始化
+                await asyncio.sleep(3)
                 
-                # 模拟更真实的阅读行为
-                success = await self.simulate_human_reading(tab, title)
+                # 执行额外的JS确保统计代码运行
+                await tab.evaluate("""
+                    // 强制触发可能的统计事件
+                    if (typeof jQuery !== 'undefined') {
+                        jQuery(window).trigger('load');
+                        jQuery(document).trigger('ready');
+                    }
+                    
+                    // 触发自定义事件
+                    window.dispatchEvent(new Event('load'));
+                    document.dispatchEvent(new Event('DOMContentLoaded'));
+                    
+                    // 模拟页面完全加载
+                    if (document.readyState === 'complete') {
+                        window.dispatchEvent(new Event('pageshow'));
+                    }
+                """)
+                
+                # 更真实的阅读行为，确保触发浏览统计
+                success = await self.enhanced_simulate_reading(tab, title)
                 
                 if success:
                     browse_history.append(href)
@@ -1193,15 +1317,17 @@ class UltimateSiteAutomator:
                 return False
                     
             finally:
+                # 关闭前确保所有请求完成
+                await asyncio.sleep(2)
                 await tab.close()
                 
         except Exception as e:
             logger.error(f"{self.site_config['name']} 浏览单个主题失败: {str(e)}")
             return False
 
-    async def simulate_human_reading(self, tab, title):
+    async def enhanced_simulate_reading(self, tab, title):
         """
-        模拟真实的人类阅读行为
+        增强的阅读模拟，专门针对统计系统优化
         
         Args:
             tab: 标签页对象
@@ -1211,146 +1337,143 @@ class UltimateSiteAutomator:
             bool: 模拟成功返回True，否则返回False
         """
         try:
-            # 1. 初始随机观察
-            initial_pause = random.uniform(3, 5)
-            logger.info(f"⏳ 初始观察 {initial_pause:.1f}秒")
-            await asyncio.sleep(initial_pause)
+            # 初始等待，让统计JS初始化
+            await asyncio.sleep(random.uniform(3, 5))
             
-            # 2. 获取页面内容长度，决定阅读时间
-            content_length = await tab.evaluate("""
+            # 获取页面内容并计算合理的阅读时间
+            content_data = await tab.evaluate("""
                 () => {
                     const content = document.querySelector('.topic-post .cooked') || 
                                    document.querySelector('.post-content') ||
+                                   document.querySelector('.post-body') ||
                                    document.body;
-                    return content.textContent.length;
+                    return {
+                        length: content.textContent.length,
+                        wordCount: content.textContent.split(/\\s+/).length,
+                        imageCount: content.querySelectorAll('img').length
+                    };
                 }
             """)
             
-            # 3. 基于内容长度计算合理阅读时间
-            base_read_time = max(30, min(300, content_length / 50))  # 每50字符1秒，最小30秒，最大5分钟
-            read_time_variation = random.uniform(0.7, 1.3)  # ±30% 变化
-            total_read_time = base_read_time * read_time_variation
+            # 基于内容计算阅读时间（更长的停留时间）
+            base_time = max(45, min(400, content_data['length'] / 30))  # 每30字符1秒
+            read_time = base_time * random.uniform(0.8, 1.5)
             
-            logger.info(f"📖 预计阅读时间: {total_read_time:.1f}秒 (内容长度: {content_length}字符)")
+            logger.info(f"📖 增强阅读: {read_time:.1f}秒 (长度:{content_data['length']}, 图片:{content_data['imageCount']})")
             
-            # 4. 分段滚动和停留
-            scroll_steps = random.randint(3, 8)
-            time_per_step = total_read_time / scroll_steps
+            # 分段滚动，每段触发可能的事件
+            scroll_segments = random.randint(5, 12)
+            time_per_segment = read_time / scroll_segments
             
-            for step in range(scroll_steps):
-                # 随机滚动位置
-                scroll_ratio = random.uniform(0.1, 0.95)
-                await tab.evaluate(f"window.scrollTo(0, document.body.scrollHeight * {scroll_ratio});")
+            for segment in range(scroll_segments):
+                # 计算滚动位置
+                scroll_ratio = (segment + 1) / scroll_segments
+                scroll_pos = f"document.body.scrollHeight * {scroll_ratio}"
                 
-                # 随机停留时间
-                stay_time = time_per_step * random.uniform(0.8, 1.2)
-                await asyncio.sleep(stay_time)
+                # 平滑滚动到位置
+                await tab.evaluate(f"""
+                    window.scrollTo({{
+                        top: {scroll_pos},
+                        behavior: 'smooth'
+                    }});
+                """)
                 
-                # 偶尔的随机交互
-                if random.random() < 0.3:  # 30% 概率有额外交互
-                    await self.random_interaction(tab)
+                # 在每段停留期间模拟交互
+                segment_wait = time_per_segment * random.uniform(0.8, 1.2)
+                
+                # 随机触发交互事件
+                if random.random() < 0.01:  # 1%概率有交互
+                    await self.trigger_statistical_events(tab)
+                
+                await asyncio.sleep(segment_wait)
             
-            # 5. 最终滚动到底部并短暂停留
-            await tab.evaluate("window.scrollTo(0, document.body.scrollHeight);")
-            await asyncio.sleep(random.uniform(2, 5))
+            # 最终确保滚动到底部
+            await tab.evaluate("""
+                window.scrollTo({
+                    top: document.body.scrollHeight,
+                    behavior: 'smooth'
+                });
+            """)
+            
+            # 最终停留，确保所有统计完成
+            final_wait = random.uniform(5, 10)
+            logger.info(f"⏳ 最终停留 {final_wait:.1f}秒确保统计完成")
+            await asyncio.sleep(final_wait)
             
             return True
             
         except Exception as e:
-            logger.error(f"模拟阅读行为失败: {str(e)}")
+            logger.error(f"增强阅读模拟失败: {str(e)}")
             return False
 
-    async def random_interaction(self, tab):
+    async def trigger_statistical_events(self, tab):
         """
-        随机交互行为
+        专门触发可能影响统计的事件
         
         Args:
             tab: 标签页对象
         """
         try:
-            actions = [
-                self.simulate_mouse_movement,
-                self.simulate_scroll_behavior,
-                self.simulate_focus_behavior,
-                self.simulate_selection_behavior
+            # 触发多种可能影响统计的事件
+            events_to_trigger = [
+                "window.dispatchEvent(new Event('resize'))",
+                "window.dispatchEvent(new Event('scroll'))",
+                "document.dispatchEvent(new Event('mousemove'))",
+                "document.dispatchEvent(new Event('click'))",
+                "document.dispatchEvent(new Event('focus'))",
+                # 模拟元素可见性变化
+                "if (typeof IntersectionObserver !== 'undefined') { " +
+                "  document.querySelectorAll('*').forEach(el => { " +
+                "    const rect = el.getBoundingClientRect(); " +
+                "    if (rect.top < window.innerHeight && rect.bottom > 0) { " +
+                "      el.dispatchEvent(new Event('visible')); " +
+                "    } " +
+                "  }); " +
+                "}"
             ]
             
-            # 随机选择1-2个交互行为
-            selected_actions = random.sample(actions, random.randint(1, 2))
-            for action in selected_actions:
-                await action(tab)
-                await asyncio.sleep(random.uniform(0.5, 2))
+            for js_code in random.sample(events_to_trigger, random.randint(2, 4)):
+                try:
+                    await tab.evaluate(js_code)
+                    await asyncio.sleep(0.1)
+                except:
+                    pass
+                    
+        except Exception as e:
+            logger.debug(f"触发统计事件失败: {str(e)}")
+
+    async def ensure_statistical_requests(self, tab):
+        """
+        确保统计相关的网络请求被发送和完成
+        
+        Args:
+            tab: 标签页对象
+        """
+        try:
+            # 监听网络请求
+            statistical_requests = []
+            
+            def request_handler(request):
+                url = request.url
+                if any(keyword in url for keyword in ['analytics', 'statistics', 'track', 'count', 'metric', 'log']):
+                    statistical_requests.append(url)
+                    logger.debug(f"📊 检测到统计请求: {url}")
+            
+            tab.on('request', request_handler)
+            
+            # 等待一段时间收集请求
+            await asyncio.sleep(5)
+            
+            # 移除监听器
+            tab.remove_listener('request', request_handler)
+            
+            if statistical_requests:
+                logger.info(f"✅ 检测到 {len(statistical_requests)} 个统计请求")
+            else:
+                logger.warning("⚠️ 未检测到明显的统计请求")
                 
         except Exception as e:
-            logger.debug(f"随机交互执行失败: {str(e)}")
-
-    async def simulate_mouse_movement(self, tab):
-        """
-        模拟鼠标移动
-        
-        Args:
-            tab: 标签页对象
-        """
-        viewport = self.viewport
-        await tab.mouse.move(
-            x=random.randint(100, viewport['width'] - 100),
-            y=random.randint(100, viewport['height'] - 100),
-            steps=random.randint(10, 25)  # 更平滑的移动
-        )
-
-    async def simulate_scroll_behavior(self, tab):
-        """
-        模拟滚动行为
-        
-        Args:
-            tab: 标签页对象
-        """
-        scroll_amount = random.randint(100, 400)
-        scroll_direction = 1 if random.random() > 0.5 else -1
-        await tab.evaluate(f"window.scrollBy(0, {scroll_amount * scroll_direction});")
-
-    async def simulate_focus_behavior(self, tab):
-        """
-        模拟焦点行为
-        
-        Args:
-            tab: 标签页对象
-        """
-        await tab.evaluate("""
-            () => {
-                const elements = document.querySelectorAll('p, div, span');
-                if (elements.length > 0) {
-                    const randomElement = elements[Math.floor(Math.random() * elements.length)];
-                    randomElement.focus();
-                }
-            }
-        """)
-
-    async def simulate_selection_behavior(self, tab):
-        """
-        模拟文本选择行为
-        
-        Args:
-            tab: 标签页对象
-        """
-        await tab.evaluate("""
-            () => {
-                const selection = window.getSelection();
-                selection.removeAllRanges();
-                
-                const elements = document.querySelectorAll('p, div');
-                if (elements.length > 0) {
-                    const element = elements[Math.floor(Math.random() * elements.length)];
-                    if (element.textContent.length > 10) {
-                        const range = document.createRange();
-                        const start = Math.floor(Math.random() * (element.textContent.length - 10));
-                        range.setStart(element.firstChild, start);
-                        range.setEnd(element.firstChild, start + 5);
-                        selection.addRange(range);
-                    }
-                }
-            }
-        """)
+            logger.debug(f"统计请求监控失败: {str(e)}")
 
 
 # ======================== 主执行函数 ========================
@@ -1366,7 +1489,7 @@ async def main():
         level="DEBUG" if args.verbose else "INFO"
     )
     
-    logger.info("🚀 LinuxDo多站点自动化脚本启动")
+    logger.info("🚀 LinuxDo多站点自动化脚本启动 (统计系统优化版)")
     
     # 根据参数过滤站点
     target_sites = SITES
@@ -1444,4 +1567,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
