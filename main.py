@@ -1,3 +1,12 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+LinuxDo 多站点自动化脚本
+功能：自动登录 Linux.do 和 IDCFlare 论坛，浏览主题，模拟人类行为
+作者：自动化脚本
+版本：4.2
+"""
+
 import os
 import sys
 import time
@@ -6,6 +15,7 @@ import asyncio
 import json
 import math
 import traceback
+import argparse
 from datetime import datetime, timedelta
 from urllib.parse import urljoin
 from io import BytesIO
@@ -16,6 +26,7 @@ from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_t
 from tabulate import tabulate
 
 # ======================== 配置常量 ========================
+# 站点认证信息配置
 SITE_CREDENTIALS = {
     'linux_do': {
         'username': os.getenv('LINUXDO_USERNAME'),
@@ -27,8 +38,10 @@ SITE_CREDENTIALS = {
     }
 }
 
+# 无头模式配置
 HEADLESS_MODE = os.getenv('HEADLESS', 'true').lower() == 'true'
 
+# 站点配置列表
 SITES = [
     {
         'name': 'linux_do',
@@ -52,19 +65,19 @@ SITES = [
     }
 ]
 
+# 超时和重试配置
 PAGE_TIMEOUT = 180000
 RETRY_TIMES = 2
 
 # ======================== 反检测配置 ========================
+# 用户代理列表
 USER_AGENTS = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Firefox/127.0',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Safari/605.1.15',
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/126.0.0.0 Safari/537.36'
 ]
 
+# 视口尺寸列表
 VIEWPORT_SIZES = [
     {'width': 1920, 'height': 1080},
     {'width': 1366, 'height': 768},
@@ -73,11 +86,38 @@ VIEWPORT_SIZES = [
     {'width': 1280, 'height': 720}
 ]
 
+
+# ======================== 命令行参数解析 ========================
+def parse_arguments():
+    """
+    解析命令行参数
+    
+    Returns:
+        argparse.Namespace: 解析后的命令行参数
+    """
+    parser = argparse.ArgumentParser(description='LinuxDo 多站点自动化脚本')
+    parser.add_argument('--site', type=str, help='指定运行的站点', 
+                       choices=['linux_do', 'idcflare', 'all'], default='all')
+    parser.add_argument('--verbose', action='store_true', help='详细输出模式')
+    parser.add_argument('--clear-cache', action='store_true', help='清除缓存')
+    return parser.parse_args()
+
+
 # ======================== 终极缓存管理器 ========================
 class UltimateCacheManager:
+    """高级缓存管理类，负责缓存文件的读写和管理"""
+    
     @staticmethod
     def get_file_age_hours(file_path):
-        """获取文件年龄（小时）"""
+        """
+        获取文件年龄（小时）
+        
+        Args:
+            file_path (str): 文件路径
+            
+        Returns:
+            float or None: 文件年龄（小时），如果文件不存在返回None
+        """
         if not os.path.exists(file_path):
             return None
         file_mtime = os.path.getmtime(file_path)
@@ -87,6 +127,15 @@ class UltimateCacheManager:
 
     @staticmethod
     def load_cache(file_name):
+        """
+        从文件加载缓存数据
+        
+        Args:
+            file_name (str): 缓存文件名
+            
+        Returns:
+            any: 缓存数据，如果加载失败返回None
+        """
         if os.path.exists(file_name):
             try:
                 with open(file_name, "r", encoding='utf-8') as f:
@@ -108,12 +157,22 @@ class UltimateCacheManager:
 
     @staticmethod
     def save_cache(data, file_name):
+        """
+        保存数据到缓存文件
+        
+        Args:
+            data (any): 要保存的数据
+            file_name (str): 缓存文件名
+            
+        Returns:
+            bool: 保存成功返回True，否则返回False
+        """
         try:
             # 强制更新文件时间戳，确保覆盖旧缓存
             data_to_save = {
                 'data': data,
                 'cache_timestamp': datetime.now().isoformat(),
-                'cache_version': '4.1',  # 版本更新
+                'cache_version': '4.2',  # 版本更新
                 'file_created': time.time(),
                 'run_id': os.getenv('GITHUB_RUN_ID', 'local')
             }
@@ -134,21 +193,56 @@ class UltimateCacheManager:
             logger.error(f"缓存保存失败 {file_name}: {str(e)}")
             return False
 
-    # 站点特定的缓存方法
     @staticmethod
     def load_site_cache(site_name, cache_type):
+        """
+        加载特定站点的缓存
+        
+        Args:
+            site_name (str): 站点名称
+            cache_type (str): 缓存类型
+            
+        Returns:
+            any: 缓存数据
+        """
         file_name = f"{cache_type}_{site_name}.json"
         return UltimateCacheManager.load_cache(file_name)
 
     @staticmethod
     def save_site_cache(data, site_name, cache_type):
+        """
+        保存特定站点的缓存
+        
+        Args:
+            data (any): 要保存的数据
+            site_name (str): 站点名称
+            cache_type (str): 缓存类型
+            
+        Returns:
+            bool: 保存成功返回True，否则返回False
+        """
         file_name = f"{cache_type}_{site_name}.json"
         return UltimateCacheManager.save_cache(data, file_name)
 
+
 # ======================== Cloudflare处理器 ========================
 class CloudflareHandler:
+    """Cloudflare验证处理类"""
+    
     @staticmethod
     async def handle_cloudflare(page, site_config, max_attempts=8, timeout=180):
+        """
+        处理Cloudflare验证
+        
+        Args:
+            page: Playwright页面对象
+            site_config (dict): 站点配置
+            max_attempts (int): 最大尝试次数
+            timeout (int): 超时时间（秒）
+            
+        Returns:
+            bool: 验证通过返回True，否则返回False
+        """
         domain = site_config['base_url'].replace('https://', '')
         start_time = time.time()
         logger.info(f"🛡️ 开始处理 {domain} Cloudflare验证")
@@ -243,6 +337,15 @@ class CloudflareHandler:
 
     @staticmethod
     async def is_cached_cf_valid(site_name):
+        """
+        检查缓存的Cloudflare cookie是否有效
+        
+        Args:
+            site_name (str): 站点名称
+            
+        Returns:
+            bool: 缓存有效返回True，否则返回False
+        """
         try:
             cf_cookies = UltimateCacheManager.load_site_cache(site_name, 'cf_cookies')
             if not cf_cookies:
@@ -262,6 +365,16 @@ class CloudflareHandler:
 
     @staticmethod
     async def is_cf_clearance_valid(context, domain):
+        """
+        检查cf_clearance cookie是否有效
+        
+        Args:
+            context: Playwright上下文对象
+            domain (str): 域名
+            
+        Returns:
+            bool: cookie有效返回True，否则返回False
+        """
         try:
             cookies = await context.cookies()
             for cookie in cookies:
@@ -273,10 +386,19 @@ class CloudflareHandler:
         except Exception:
             return False
 
+
 # ======================== 浏览器管理器 ========================
 class BrowserManager:
+    """浏览器管理类，负责浏览器的初始化和上下文创建"""
+    
     @staticmethod
     async def init_browser():
+        """
+        初始化浏览器实例
+        
+        Returns:
+            tuple: (browser, playwright) 元组
+        """
         playwright = await async_playwright().start()
         
         user_agent = random.choice(USER_AGENTS)
@@ -306,6 +428,16 @@ class BrowserManager:
 
     @staticmethod
     async def create_context(browser, site_name):
+        """
+        创建浏览器上下文
+        
+        Args:
+            browser: 浏览器实例
+            site_name (str): 站点名称
+            
+        Returns:
+            context: 浏览器上下文对象
+        """
         has_browser_state = UltimateCacheManager.load_site_cache(site_name, 'browser_state') is not None
         has_cf_cookies = UltimateCacheManager.load_site_cache(site_name, 'cf_cookies') is not None
         
@@ -313,8 +445,11 @@ class BrowserManager:
         
         storage_state = UltimateCacheManager.load_site_cache(site_name, 'browser_state')
         
-        user_agent = random.choice(USER_AGENTS)
-        viewport = random.choice(VIEWPORT_SIZES)
+        # 为每个站点固定 User-Agent 和视口，保持指纹一致性
+        user_agent = USER_AGENTS[hash(site_name) % len(USER_AGENTS)]
+        viewport = VIEWPORT_SIZES[hash(site_name) % len(VIEWPORT_SIZES)]
+        
+        logger.info(f"🆔 {site_name} 使用固定指纹 - UA: {user_agent[:50]}..., 视口: {viewport}")
         
         context = await browser.new_context(
             viewport=viewport,
@@ -327,12 +462,19 @@ class BrowserManager:
         )
         
         await BrowserManager.load_caches_into_context(context, site_name)
-        await context.add_init_script(BrowserManager.get_anti_detection_script())
+        await context.add_init_script(BrowserManager.get_enhanced_anti_detection_script())
         
         return context
 
     @staticmethod
     async def load_caches_into_context(context, site_name):
+        """
+        将缓存加载到浏览器上下文中
+        
+        Args:
+            context: 浏览器上下文对象
+            site_name (str): 站点名称
+        """
         try:
             cf_cookies = UltimateCacheManager.load_site_cache(site_name, 'cf_cookies')
             if cf_cookies:
@@ -350,15 +492,53 @@ class BrowserManager:
             logger.error(f"❌ 加载 {site_name} 缓存到上下文时出错: {e}")
 
     @staticmethod
-    def get_anti_detection_script():
+    def get_enhanced_anti_detection_script():
+        """
+        获取增强的反检测脚本
+        
+        Returns:
+            str: 反检测JavaScript代码
+        """
         return """
-            // 增强的反检测脚本
-            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
-            Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh', 'en-US', 'en'] });
-            window.chrome = { runtime: {}, loadTimes: function() {}, csi: function() {}, app: {isInstalled: false} };
-            Object.defineProperty(navigator, 'platform', { get: () => ['Win32', 'MacIntel', 'Linux x86_64'][Math.floor(Math.random() * 3)] });
-            Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => [4, 8, 12, 16][Math.floor(Math.random() * 4)] });
+            // 增强的反检测脚本 - 保持指纹一致性
+            Object.defineProperty(navigator, 'webdriver', { 
+                get: () => undefined,
+                configurable: true
+            });
+            
+            // 覆盖插件信息
+            Object.defineProperty(navigator, 'plugins', { 
+                get: () => [1, 2, 3, 4, 5],
+                configurable: true
+            });
+            
+            Object.defineProperty(navigator, 'languages', { 
+                get: () => ['zh-CN', 'zh', 'en-US', 'en'] 
+            });
+            
+            // 屏蔽自动化特征
+            window.chrome = { 
+                runtime: {},
+                loadTimes: function() {},
+                csi: function() {}, 
+                app: {isInstalled: false}
+            };
+            
+            Object.defineProperty(navigator, 'platform', { 
+                get: () => ['Win32', 'MacIntel', 'Linux x86_64'][Math.floor(Math.random() * 3)] 
+            });
+            
+            Object.defineProperty(navigator, 'hardwareConcurrency', { 
+                get: () => [4, 8, 12, 16][Math.floor(Math.random() * 4)] 
+            });
+            
+            // 覆盖权限API
+            const originalQuery = navigator.permissions.query;
+            navigator.permissions.query = (parameters) => (
+                parameters.name === 'notifications' ?
+                    Promise.resolve({ state: Notification.permission }) :
+                    originalQuery(parameters)
+            );
             
             // 模拟真实的电池状态
             navigator.getBattery = async function() {
@@ -379,9 +559,18 @@ class BrowserManager:
             };
         """
 
+
 # ======================== 终极主自动化类 ========================
 class UltimateSiteAutomator:
+    """站点自动化主类，负责完整的自动化流程"""
+    
     def __init__(self, site_config):
+        """
+        初始化站点自动化器
+        
+        Args:
+            site_config (dict): 站点配置
+        """
         self.site_config = site_config
         self.browser = None
         self.context = None
@@ -394,9 +583,19 @@ class UltimateSiteAutomator:
         self.credentials = SITE_CREDENTIALS.get(site_config['name'], {})
         self.domain = site_config['base_url'].replace('https://', '')
         self.cache_saved = False  # 防止重复保存
-        self.viewport = random.choice(VIEWPORT_SIZES)  # 当前视口大小
+        self.viewport = VIEWPORT_SIZES[hash(site_config['name']) % len(VIEWPORT_SIZES)]  # 固定视口大小
 
     async def run_for_site(self, browser, playwright):
+        """
+        为指定站点运行自动化流程
+        
+        Args:
+            browser: 浏览器实例
+            playwright: Playwright实例
+            
+        Returns:
+            bool: 执行成功返回True，否则返回False
+        """
         self.browser = browser
         self.playwright = playwright
         
@@ -482,6 +681,12 @@ class UltimateSiteAutomator:
             await self.close_context()
 
     async def try_cache_first_approach(self):
+        """
+        尝试缓存优先访问策略
+        
+        Returns:
+            bool: 缓存访问成功返回True，否则返回False
+        """
         try:
             # 检查是否有有效的Cloudflare缓存
             cf_cache_valid = await CloudflareHandler.is_cached_cf_valid(self.site_config['name'])
@@ -507,6 +712,12 @@ class UltimateSiteAutomator:
             return False
 
     async def full_verification_process(self):
+        """
+        执行完整的验证流程
+        
+        Returns:
+            bool: 验证成功返回True，否则返回False
+        """
         try:
             # Cloudflare验证
             await self.page.goto(self.site_config['base_url'], wait_until='networkidle', timeout=120000)
@@ -538,6 +749,12 @@ class UltimateSiteAutomator:
             return False
 
     async def enhanced_check_login_status(self):
+        """
+        增强的登录状态检查
+        
+        Returns:
+            bool: 已登录返回True，否则返回False
+        """
         try:
             current_url = self.page.url
             page_title = await self.page.title()
@@ -602,6 +819,12 @@ class UltimateSiteAutomator:
             return False
 
     async def verify_username(self):
+        """
+        验证用户名是否显示在页面上
+        
+        Returns:
+            bool: 用户名验证成功返回True，否则返回False
+        """
         username = self.credentials['username']
         
         # 方法1: 页面内容检查
@@ -647,10 +870,16 @@ class UltimateSiteAutomator:
         except Exception:
             pass
         
-        logger.warning(f"⚠️ 检测到用户元素但无法验证用户名 {username}，默认认为已登录")
-        return True
+        logger.warning(f"⚠️ 检测到用户元素但无法验证用户名 {username}，默认认为未登录")
+        return False
 
     async def optimized_login(self):
+        """
+        优化的登录流程
+        
+        Returns:
+            bool: 登录成功返回True，否则返回False
+        """
         try:
             logger.info(f"🔐 开始 {self.site_config['name']} 优化登录流程")
             
@@ -722,6 +951,7 @@ class UltimateSiteAutomator:
             return False
 
     async def clear_caches(self):
+        """清除所有缓存文件"""
         try:
             cache_types = ['session_data', 'browser_state', 'cf_cookies', 'final_status']
             for cache_type in cache_types:
@@ -737,6 +967,7 @@ class UltimateSiteAutomator:
             logger.error(f"清除缓存失败: {str(e)}")
 
     async def clear_login_caches_only(self):
+        """仅清除登录相关缓存，保留Cloudflare cookies"""
         try:
             cache_types = ['session_data', 'browser_state', 'final_status']
             for cache_type in cache_types:
@@ -779,6 +1010,12 @@ class UltimateSiteAutomator:
             logger.error(f"{self.site_config['name']} 保存缓存失败: {str(e)}")
 
     async def save_final_status(self, success=False):
+        """
+        保存最终状态
+        
+        Args:
+            success (bool): 是否成功
+        """
         final_status = {
             'success': success,
             'timestamp': datetime.now().isoformat(),
@@ -791,6 +1028,7 @@ class UltimateSiteAutomator:
         UltimateCacheManager.save_site_cache(final_status, self.site_config['name'], 'final_status')
 
     async def save_cf_cookies(self):
+        """保存Cloudflare cookies到缓存"""
         try:
             all_cookies = await self.context.cookies()
             target_domain = self.site_config['base_url'].replace('https://', '')
@@ -808,6 +1046,7 @@ class UltimateSiteAutomator:
             logger.error(f"❌ 保存 {self.site_config['name']} Cloudflare cookies 失败: {e}")
 
     async def close_context(self):
+        """关闭浏览器上下文"""
         try:
             if self.context:
                 # 只在关闭时保存一次缓存，确保最终状态被保存
@@ -819,6 +1058,7 @@ class UltimateSiteAutomator:
             logger.error(f"关闭上下文失败: {str(e)}")
 
     async def browse_topics(self):
+        """浏览论坛主题"""
         try:
             logger.info(f"📖 开始 {self.site_config['name']} 主题浏览")
             
@@ -834,23 +1074,17 @@ class UltimateSiteAutomator:
             browse_history = self.session_data.get('browse_history', [])
             
             await self.page.goto(self.site_config['latest_topics_url'], timeout=60000, wait_until='networkidle')
+            await asyncio.sleep(random.uniform(3, 7))  # 等待页面稳定
             
-            # 尝试多种选择器
-            topic_selectors = ['a.title', '.title a', 'a.topic-title', '.topic-list-item a', 'tr.topic-list-item a.title']
-            topic_links = []
-            
-            for selector in topic_selectors:
-                links = await self.page.query_selector_all(selector)
-                if links:
-                    logger.info(f"✅ 使用选择器 '{selector}' 找到 {len(links)} 个主题链接")
-                    topic_links = links
-                    break
+            # 查找主题链接
+            topic_links = await self.find_topic_links()
             
             if not topic_links:
                 logger.warning(f"{self.site_config['name']} 未找到主题链接")
                 return
             
-            browse_count = min(random.randint(5, 9), len(topic_links))
+            # 减少浏览数量，增加质量
+            browse_count = min(random.randint(3, 5), len(topic_links))
             selected_topics = random.sample(topic_links, browse_count)
             
             logger.info(f"📚 {self.site_config['name']} 计划浏览 {browse_count} 个主题")
@@ -861,13 +1095,14 @@ class UltimateSiteAutomator:
                 if success:
                     success_count += 1
                     
+                # 增加主题间延迟，避免模式化
                 if idx < browse_count:
-                    # 随机化浏览间隔：2-60秒，模拟人类的随机浏览习惯
-                    delay = random.uniform(2, 60)
+                    delay = random.uniform(15, 90)  # 15-90秒延迟
                     logger.info(f"⏳ 主题间延迟 {delay:.1f} 秒")
                     await asyncio.sleep(delay)
             
-            self.session_data['browse_history'] = browse_history[-50:]
+            # 更新会话数据
+            self.session_data['browse_history'] = browse_history[-30:]  # 只保留最近30条
             self.session_data['last_browse'] = datetime.now().isoformat()
             self.session_data['total_browsed'] = self.session_data.get('total_browsed', 0) + success_count
             
@@ -880,8 +1115,53 @@ class UltimateSiteAutomator:
         except Exception as e:
             logger.error(f"{self.site_config['name']} 主题浏览流程失败: {str(e)}")
 
+    async def find_topic_links(self):
+        """
+        查找主题链接
+        
+        Returns:
+            list: 主题链接元素列表
+        """
+        topic_selectors = [
+            'a.title',
+            '.title a', 
+            'a.topic-title',
+            '.topic-list-item a',
+            'tr.topic-list-item a.title',
+            '[data-topic-id] a'
+        ]
+        
+        for selector in topic_selectors:
+            try:
+                links = await self.page.query_selector_all(selector)
+                if links:
+                    valid_links = []
+                    for link in links:
+                        href = await link.get_attribute('href')
+                        if href and not href.startswith(('/user/', '/u/', '/tag/')):
+                            valid_links.append(link)
+                    
+                    if valid_links:
+                        logger.info(f"✅ 使用选择器 '{selector}' 找到 {len(valid_links)} 个有效主题链接")
+                        return valid_links
+            except Exception:
+                continue
+        
+        return []
+
     async def browse_single_topic(self, topic, topic_idx, total_topics, browse_history):
-        """浏览单个主题并模拟更真实的用户行为"""
+        """
+        浏览单个主题
+        
+        Args:
+            topic: 主题元素
+            topic_idx (int): 主题索引
+            total_topics (int): 总主题数
+            browse_history (list): 浏览历史列表
+            
+        Returns:
+            bool: 浏览成功返回True，否则返回False
+        """
         try:
             title = (await topic.text_content() or "").strip()[:60]
             href = await topic.get_attribute('href')
@@ -898,53 +1178,20 @@ class UltimateSiteAutomator:
             
             tab = await self.context.new_page()
             try:
-                # 每次浏览主题前随机切换User-Agent
-                user_agent = random.choice(USER_AGENTS)
-                await tab.set_extra_http_headers({"User-Agent": user_agent})
-                logger.info(f"🔄 切换User-Agent: {user_agent[:50]}...")
-                
+                # 移除User-Agent切换，保持指纹一致性
                 await tab.goto(topic_url, timeout=45000, wait_until='domcontentloaded')
                 
-                # 新增1：随机鼠标移动（模拟人类操作）
-                await tab.mouse.move(
-                    x=random.randint(100, self.viewport['width']-100),
-                    y=random.randint(100, self.viewport['height']-100),
-                    steps=random.randint(5, 15)  # 平滑移动，非瞬间跳转
-                )
-                await asyncio.sleep(random.uniform(1, 3))
-                
-                # 新增2：随机点击页面空白处（避免点击关键元素）
-                if random.choice([True, False]):
-                    await tab.mouse.click(
-                        x=random.randint(200, self.viewport['width']-200),
-                        y=random.randint(200, self.viewport['height']-200)
-                    )
-                    await asyncio.sleep(random.uniform(0.5, 1.5))
-                
-                # 原有滚动逻辑（保持不变，但延长最短停留时间）
-                total_read_time = random.uniform(30, 180)  # 最短30秒，避免低于网站阈值
-                scroll_interval = random.uniform(2, 8)  # 每次滚动间隔
-                total_scroll_steps = math.ceil(total_read_time / scroll_interval)
-                
-                # 先等待1-3秒再开始滚动
-                await asyncio.sleep(random.uniform(1, 3))
-                
-                # 逐步滚动到页面底部
-                for step in range(total_scroll_steps):
-                    # 计算当前滚动位置 (0.0 到 1.0)
-                    scroll_position = min(step / total_scroll_steps, 1.0)
-                    
-                    # 使用JavaScript滚动到相应位置
-                    await tab.evaluate(f"window.scrollTo(0, document.body.scrollHeight * {scroll_position});")
-                    
-                    # 随机微小停顿，模拟阅读行为
-                    await asyncio.sleep(scroll_interval)
-                
-                # 到达底部后再停留2-5秒
+                # 更自然的初始等待
                 await asyncio.sleep(random.uniform(2, 5))
                 
-                browse_history.append(href)
-                return True
+                # 模拟更真实的阅读行为
+                success = await self.simulate_human_reading(tab, title)
+                
+                if success:
+                    browse_history.append(href)
+                    return True
+                return False
+                    
             finally:
                 await tab.close()
                 
@@ -952,16 +1199,199 @@ class UltimateSiteAutomator:
             logger.error(f"{self.site_config['name']} 浏览单个主题失败: {str(e)}")
             return False
 
+    async def simulate_human_reading(self, tab, title):
+        """
+        模拟真实的人类阅读行为
+        
+        Args:
+            tab: 标签页对象
+            title (str): 主题标题
+            
+        Returns:
+            bool: 模拟成功返回True，否则返回False
+        """
+        try:
+            # 1. 初始随机观察
+            initial_pause = random.uniform(3, 8)
+            logger.info(f"⏳ 初始观察 {initial_pause:.1f}秒")
+            await asyncio.sleep(initial_pause)
+            
+            # 2. 获取页面内容长度，决定阅读时间
+            content_length = await tab.evaluate("""
+                () => {
+                    const content = document.querySelector('.topic-post .cooked') || 
+                                   document.querySelector('.post-content') ||
+                                   document.body;
+                    return content.textContent.length;
+                }
+            """)
+            
+            # 3. 基于内容长度计算合理阅读时间
+            base_read_time = max(30, min(300, content_length / 50))  # 每50字符1秒，最小30秒，最大5分钟
+            read_time_variation = random.uniform(0.7, 1.3)  # ±30% 变化
+            total_read_time = base_read_time * read_time_variation
+            
+            logger.info(f"📖 预计阅读时间: {total_read_time:.1f}秒 (内容长度: {content_length}字符)")
+            
+            # 4. 分段滚动和停留
+            scroll_steps = random.randint(3, 8)
+            time_per_step = total_read_time / scroll_steps
+            
+            for step in range(scroll_steps):
+                # 随机滚动位置
+                scroll_ratio = random.uniform(0.1, 0.95)
+                await tab.evaluate(f"window.scrollTo(0, document.body.scrollHeight * {scroll_ratio});")
+                
+                # 随机停留时间
+                stay_time = time_per_step * random.uniform(0.8, 1.2)
+                await asyncio.sleep(stay_time)
+                
+                # 偶尔的随机交互
+                if random.random() < 0.3:  # 30% 概率有额外交互
+                    await self.random_interaction(tab)
+            
+            # 5. 最终滚动到底部并短暂停留
+            await tab.evaluate("window.scrollTo(0, document.body.scrollHeight);")
+            await asyncio.sleep(random.uniform(2, 5))
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"模拟阅读行为失败: {str(e)}")
+            return False
+
+    async def random_interaction(self, tab):
+        """
+        随机交互行为
+        
+        Args:
+            tab: 标签页对象
+        """
+        try:
+            actions = [
+                self.simulate_mouse_movement,
+                self.simulate_scroll_behavior,
+                self.simulate_focus_behavior,
+                self.simulate_selection_behavior
+            ]
+            
+            # 随机选择1-2个交互行为
+            selected_actions = random.sample(actions, random.randint(1, 2))
+            for action in selected_actions:
+                await action(tab)
+                await asyncio.sleep(random.uniform(0.5, 2))
+                
+        except Exception as e:
+            logger.debug(f"随机交互执行失败: {str(e)}")
+
+    async def simulate_mouse_movement(self, tab):
+        """
+        模拟鼠标移动
+        
+        Args:
+            tab: 标签页对象
+        """
+        viewport = self.viewport
+        await tab.mouse.move(
+            x=random.randint(100, viewport['width'] - 100),
+            y=random.randint(100, viewport['height'] - 100),
+            steps=random.randint(10, 25)  # 更平滑的移动
+        )
+
+    async def simulate_scroll_behavior(self, tab):
+        """
+        模拟滚动行为
+        
+        Args:
+            tab: 标签页对象
+        """
+        scroll_amount = random.randint(100, 400)
+        scroll_direction = 1 if random.random() > 0.5 else -1
+        await tab.evaluate(f"window.scrollBy(0, {scroll_amount * scroll_direction});")
+
+    async def simulate_focus_behavior(self, tab):
+        """
+        模拟焦点行为
+        
+        Args:
+            tab: 标签页对象
+        """
+        await tab.evaluate("""
+            () => {
+                const elements = document.querySelectorAll('p, div, span');
+                if (elements.length > 0) {
+                    const randomElement = elements[Math.floor(Math.random() * elements.length)];
+                    randomElement.focus();
+                }
+            }
+        """)
+
+    async def simulate_selection_behavior(self, tab):
+        """
+        模拟文本选择行为
+        
+        Args:
+            tab: 标签页对象
+        """
+        await tab.evaluate("""
+            () => {
+                const selection = window.getSelection();
+                selection.removeAllRanges();
+                
+                const elements = document.querySelectorAll('p, div');
+                if (elements.length > 0) {
+                    const element = elements[Math.floor(Math.random() * elements.length)];
+                    if (element.textContent.length > 10) {
+                        const range = document.createRange();
+                        const start = Math.floor(Math.random() * (element.textContent.length - 10));
+                        range.setStart(element.firstChild, start);
+                        range.setEnd(element.firstChild, start + 5);
+                        selection.addRange(range);
+                    }
+                }
+            }
+        """)
+
+
 # ======================== 主执行函数 ========================
 async def main():
+    """主执行函数"""
+    args = parse_arguments()
+    
+    # 配置日志
+    logger.remove()
+    logger.add(
+        sys.stdout,
+        format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <level>{message}</level>",
+        level="DEBUG" if args.verbose else "INFO"
+    )
+    
     logger.info("🚀 LinuxDo多站点自动化脚本启动")
+    
+    # 根据参数过滤站点
+    target_sites = SITES
+    if args.site != 'all':
+        target_sites = [site for site in SITES if site['name'] == args.site]
+        if not target_sites:
+            logger.error(f"未找到站点: {args.site}")
+            return
+    
+    # 清除缓存逻辑
+    if args.clear_cache:
+        for site_config in target_sites:
+            cache_types = ['session_data', 'browser_state', 'cf_cookies', 'final_status']
+            for cache_type in cache_types:
+                file_name = f"{cache_type}_{site_config['name']}.json"
+                if os.path.exists(file_name):
+                    os.remove(file_name)
+                    logger.info(f"🗑️ 已清除缓存: {file_name}")
     
     browser, playwright = await BrowserManager.init_browser()
     
     try:
         results = []
         
-        for site_config in SITES:
+        for site_config in target_sites:
             logger.info(f"🎯 开始处理站点: {site_config['name']}")
             
             automator = UltimateSiteAutomator(site_config)
@@ -976,7 +1406,7 @@ async def main():
             })
             
             # 站点间延迟 - 增加随机性
-            if site_config != SITES[-1]:
+            if site_config != target_sites[-1]:
                 delay = random.uniform(10, 30)
                 logger.info(f"⏳ 站点间延迟 {delay:.1f} 秒")
                 await asyncio.sleep(delay)
@@ -1010,6 +1440,7 @@ async def main():
         await browser.close()
         await playwright.stop()
         logger.info("🔚 浏览器已关闭，脚本结束")
+
 
 if __name__ == "__main__":
     asyncio.run(main())
