@@ -1097,12 +1097,12 @@ class UltimateSiteAutomator:
                     
                 # 增加主题间延迟，避免模式化
                 if idx < browse_count:
-                    delay = random.uniform(15, 90)  # 15-90秒延迟
+                    delay = random.uniform(5, 15)  # 5-15秒延迟
                     logger.info(f"⏳ 主题间延迟 {delay:.1f} 秒")
                     await asyncio.sleep(delay)
             
             # 更新会话数据
-            self.session_data['browse_history'] = browse_history[-30:]  # 只保留最近30条
+            self.session_data['browse_history'] = browse_history[-80:]  # 只保留最近80条
             self.session_data['last_browse'] = datetime.now().isoformat()
             self.session_data['total_browsed'] = self.session_data.get('total_browsed', 0) + success_count
             
@@ -1212,7 +1212,7 @@ class UltimateSiteAutomator:
         """
         try:
             # 1. 初始随机观察
-            initial_pause = random.uniform(3, 8)
+            initial_pause = random.uniform(3, 5)
             logger.info(f"⏳ 初始观察 {initial_pause:.1f}秒")
             await asyncio.sleep(initial_pause)
             
@@ -1444,3 +1444,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
