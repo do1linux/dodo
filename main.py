@@ -47,7 +47,7 @@ SITES = [
         'name': 'linux_do',
         'base_url': 'https://linux.do',
         'login_url': 'https://linux.do/login',
-        'latest_topics_url': 'https://linux.do/latest',
+        'unread_topics_url': 'https://linux.do/unread',
         'cf_cookies_file': "cf_cookies_linux_do.json",
         'browser_state_file': "browser_state_linux_do.json", 
         'session_file': "session_data_linux_do.json",
@@ -57,7 +57,7 @@ SITES = [
         'name': 'idcflare',
         'base_url': 'https://idcflare.com',
         'login_url': 'https://idcflare.com/login',
-        'latest_topics_url': 'https://idcflare.com/latest',
+        'unread_topics_url': 'https://idcflare.com/unread',
         'cf_cookies_file': "cf_cookies_idcflare.json",
         'browser_state_file': "browser_state_idcflare.json",
         'session_file': "session_data_idcflare.json", 
@@ -252,7 +252,7 @@ class CloudflareHandler:
         if cached_cf_valid:
             logger.success(f"✅ 检测到有效的缓存Cloudflare cookie，尝试直接绕过验证")
             try:
-                await page.goto(site_config['latest_topics_url'], wait_until='networkidle', timeout=60000)
+                await page.goto(site_config['unread_topics_url'], wait_until='networkidle', timeout=60000)
                 await asyncio.sleep(5)
                 
                 page_title = await page.title()
@@ -279,15 +279,15 @@ class CloudflareHandler:
                     if page_title == "请稍候…" or "Checking your browser" in await page.content():
                         logger.info("🔄 Cookie有效但页面卡住，尝试强制解决方案")
                         try:
-                            await page.goto(site_config['latest_topics_url'], wait_until='networkidle', timeout=60000)
+                            await page.goto(site_config['unread_topics_url'], wait_until='networkidle', timeout=60000)
                             await asyncio.sleep(5)
                             
                             new_title = await page.title()
                             if new_title != "请稍候…":
-                                logger.success("✅ 通过访问/latest页面成功绕过卡住的主页")
+                                logger.success("✅ 通过访问/unread页面成功绕过卡住的主页")
                                 return True
                         except Exception:
-                            logger.warning("访问/latest页面失败")
+                            logger.warning("访问/unread页面失败")
                     
                     else:
                         logger.success(f"✅ {domain} 页面已正常加载")
@@ -799,7 +799,7 @@ class UltimateSiteAutomator:
             
             if cf_cache_valid:
                 logger.info(f"✅ 检测到有效的Cloudflare缓存，尝试直接访问")
-                await self.page.goto(self.site_config['latest_topics_url'], wait_until='networkidle', timeout=60000)
+                await self.page.goto(self.site_config['unread_topics_url'], wait_until='networkidle', timeout=60000)
                 await asyncio.sleep(5)
                 
                 login_status = await self.enhanced_check_login_status()
@@ -869,8 +869,8 @@ class UltimateSiteAutomator:
             if page_title == "请稍候…":
                 cf_valid = await CloudflareHandler.is_cf_clearance_valid(self.page.context, self.domain)
                 if cf_valid:
-                    logger.info("🔄 页面卡住但Cloudflare cookie有效，尝试访问/latest页面")
-                    await self.page.goto(self.site_config['latest_topics_url'], wait_until='networkidle', timeout=60000)
+                    logger.info("🔄 页面卡住但Cloudflare cookie有效，尝试访问/unread页面")
+                    await self.page.goto(self.site_config['unread_topics_url'], wait_until='networkidle', timeout=60000)
                     await asyncio.sleep(5)
                     current_url = self.page.url
                     page_title = await self.page.title()
@@ -1106,7 +1106,7 @@ class UltimateSiteAutomator:
                 'retry_count': self.retry_count,
                 'cf_passed': self.cf_passed,
                 'last_updated': datetime.now().isoformat(),
-                'cache_strategy': 'always_overwrite_latest'  # 明确标记覆盖策略
+                'cache_strategy': 'always_overwrite_unread'  # 明确标记覆盖策略
             })
             UltimateCacheManager.save_site_cache(self.session_data, self.site_config['name'], 'session_data')
             
@@ -1129,7 +1129,7 @@ class UltimateSiteAutomator:
             'login_status': 'success' if success else 'failed',
             'cf_passed': self.cf_passed,
             'message': '任务执行完成' if success else '任务执行失败',
-            'cache_strategy': 'always_overwrite_latest'
+            'cache_strategy': 'always_overwrite_unread'
         }
         UltimateCacheManager.save_site_cache(final_status, self.site_config['name'], 'final_status')
 
@@ -1179,7 +1179,7 @@ class UltimateSiteAutomator:
             
             browse_history = self.session_data.get('browse_history', [])
             
-            await self.page.goto(self.site_config['latest_topics_url'], timeout=60000, wait_until='networkidle')
+            await self.page.goto(self.site_config['unread_topics_url'], timeout=60000, wait_until='networkidle')
             await asyncio.sleep(random.uniform(3, 7))  # 等待页面稳定
             
             # 查找主题链接
@@ -1208,7 +1208,7 @@ class UltimateSiteAutomator:
                     await asyncio.sleep(delay)
             
             # 更新会话数据
-            self.session_data['browse_history'] = browse_history[-80:]  # 只保留最近80条
+            self.session_data['browse_history'] = browse_history[-280:]  # 只保留最近80条
             self.session_data['last_browse'] = datetime.now().isoformat()
             self.session_data['total_browsed'] = self.session_data.get('total_browsed', 0) + success_count
             
@@ -1567,4 +1567,5 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
