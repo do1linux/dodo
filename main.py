@@ -47,7 +47,7 @@ SITES = [
         'name': 'linux_do',
         'base_url': 'https://linux.do',
         'login_url': 'https://linux.do/login',
-        'latest_topics_url': 'https://linux.do/unread',
+        'latest_topics_url': 'https://linux.do/latest',
         'cf_cookies_file': "cf_cookies_linux_do.json",
         'browser_state_file': "browser_state_linux_do.json", 
         'session_file': "session_data_linux_do.json",
@@ -1568,4 +1568,5 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
