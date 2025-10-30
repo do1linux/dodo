@@ -61,6 +61,7 @@ jobs:
         LINUXDO_PASSWORD: ${{ secrets.LINUXDO_PASSWORD }}
         IDCFLARE_USERNAME: ${{ secrets.IDCFLARE_USERNAME }}
         IDCFLARE_PASSWORD: ${{ secrets.IDCFLARE_PASSWORD }}
+        HEADLESS: 'true'
         BROWSE_ENABLED: 'true'
       run: |
         echo "🚀 开始执行多站点自动化脚本..."
@@ -74,4 +75,5 @@ jobs:
         path: |
           cache/*.json
           *.log
+          *.png
         retention-days: 7
