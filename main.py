@@ -1,18 +1,20 @@
-"""
-cron: 0 * * * *
-new Env("Linux.Do 签到")
-"""
-
 import os
 import random
 import time
 import functools
 import sys
 import json
+import requests
 from datetime import datetime
 from loguru import logger
 from DrissionPage import ChromiumOptions, Chromium
 from tabulate import tabulate
+from io import BytesIO
+try:
+    from PIL import Image
+    HAS_PIL = True
+except ImportError:
+    HAS_PIL = False
 
 # ======================== 配置常量 ========================
 # 站点认证信息配置
@@ -20,12 +22,11 @@ SITE_CREDENTIALS = {
     'linux_do': {
         'username': os.getenv('LINUXDO_USERNAME'),
         'password': os.getenv('LINUXDO_PASSWORD')
-    },
-    'idcflare': {
-        'username': os.getenv('IDCFLARE_USERNAME'), 
-        'password': os.getenv('IDCFLARE_PASSWORD')
     }
 }
+
+# OCR API配置
+CAPTCHA_OCR_API = os.getenv('OCR_API_KEY')
 
 # 站点配置列表
 SITES = [
@@ -36,14 +37,6 @@ SITES = [
         'latest_topics_url': 'https://linux.do/latest',
         'home_url': 'https://linux.do/',
         'connect_url': 'https://connect.linux.do/'
-    },
-    {
-        'name': 'idcflare',
-        'base_url': 'https://idcflare.com',
-        'login_url': 'https://idcflare.com/login',
-        'latest_topics_url': 'https://idcflare.com/latest', 
-        'home_url': 'https://idcflare.com/',
-        'connect_url': None
     }
 ]
 
@@ -126,7 +119,7 @@ class CacheManager:
     @staticmethod
     def save_session(session_data, site_name):
         """保存会话数据到缓存"""
-        return CacheManager.save_cache(session_data, f"{site_name}_session.json")
+        return CacheManager.save_session(session_data, f"{site_name}_session.json")
 
 # ======================== Cloudflare处理器 ========================
 class CloudflareHandler:
@@ -159,6 +152,129 @@ class CloudflareHandler:
         
         logger.warning("⚠️ Cloudflare处理超时，继续后续流程")
         return True
+
+# ======================== 验证码处理器 ========================
+class CaptchaHandler:
+    """验证码处理类"""
+    
+    @staticmethod
+    def resolve_captcha(page):
+        """验证码解决流程"""
+        logger.warning("⚠️ 检测到验证码要求")
+        
+        # 首先尝试OCR.space API
+        if CAPTCHA_OCR_API:
+            api_result = CaptchaHandler.use_ocr_api(page)
+            if api_result:
+                logger.info(f"OCR API识别到验证码: {api_result}")
+                if CaptchaHandler.input_captcha(page, api_result):
+                    return True
+        
+        # 如果OCR API失败，尝试其他方法
+        logger.error("❌ 验证码解决失败，需要人工干预")
+        return False
+
+    @staticmethod
+    def find_captcha_element(page):
+        """查找验证码元素"""
+        captcha_selectors = [
+            'img.captcha-image',
+            'img.captcha',
+            '#captcha-image',
+            'img[alt*="captcha"]',
+            'img[alt*="验证码"]',
+            '.captcha img',
+            '#challenge-form img'
+        ]
+        
+        for selector in captcha_selectors:
+            try:
+                element = page.ele(selector, timeout=5)
+                if element and element.is_displayed:
+                    logger.info(f"找到验证码元素: {selector}")
+                    return element
+            except Exception:
+                continue
+        
+        logger.warning("未找到可见的验证码元素")
+        return None
+
+    @staticmethod
+    def use_ocr_api(page):
+        """调用OCR.space API"""
+        try:
+            captcha_element = CaptchaHandler.find_captcha_element(page)
+            if not captcha_element:
+                return None
+                
+            # 截图验证码
+            captcha_bytes = captcha_element.screenshot()
+            
+            # 调用OCR API
+            response = requests.post(
+                'https://api.ocr.space/parse/image',
+                files={'image': ('captcha.png', captcha_bytes, 'image/png')},
+                data={
+                    'apikey': CAPTCHA_OCR_API,
+                    'language': 'eng',
+                    'OCREngine': '2',
+                    'scale': 'true',
+                    'isTable': 'false'
+                },
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                if result.get('ParsedResults'):
+                    parsed_text = result['ParsedResults'][0].get('ParsedText', '').strip()
+                    # 清理识别结果
+                    parsed_text = ''.join(c for c in parsed_text if c.isalnum())
+                    return parsed_text if parsed_text else None
+            
+            logger.warning(f"OCR API返回异常: {response.status_code}")
+            return None
+            
+        except Exception as e:
+            logger.debug(f"OCR API调用失败: {str(e)}")
+            return None
+
+    @staticmethod
+    def input_captcha(page, captcha_text):
+        """输入验证码"""
+        try:
+            input_selectors = [
+                'input#login-account-captcha',
+                'input.captcha-input',
+                'input[placeholder*="验证码"]',
+                'input[name="captcha"]',
+                'input[type="text"][name*="captcha"]',
+                '#challenge-form input[type="text"]'
+            ]
+            
+            captcha_input = None
+            for selector in input_selectors:
+                try:
+                    captcha_input = page.ele(selector, timeout=5)
+                    if captcha_input:
+                        break
+                except Exception:
+                    continue
+            
+            if not captcha_input:
+                logger.error("未找到验证码输入框")
+                return False
+                
+            # 清空并输入验证码
+            captcha_input.input('')
+            captcha_input.input(captcha_text)
+            
+            logger.info(f"验证码输入完成: {captcha_text}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"验证码输入失败: {str(e)}")
+            return False
 
 # ======================== 重试装饰器 ========================
 def retry_decorator(retries=3):
@@ -207,195 +323,207 @@ class LinuxDoBrowser:
         self.session_data = CacheManager.load_session(self.site_name)
 
     def strict_check_login_status(self):
-        """严格检查登录状态 - 必须在latest页面验证"""
+        """严格检查登录状态 - 在latest页面验证用户元素"""
         logger.info("🔍 在latest页面严格验证登录状态...")
         
-        # 首先跳转到latest页面
-        self.page.get(self.site_config['latest_topics_url'])
-        time.sleep(5)
+        # 确保在latest页面
+        if not self.page.url.endswith('/latest'):
+            self.page.get(self.site_config['latest_topics_url'])
+            time.sleep(5)
         
         # 处理可能的Cloudflare
         CloudflareHandler.handle_cloudflare(self.page)
         
         try:
-            # 方法1: 检查用户元素
-            user_selectors = [
-                '#current-user',
-                '.current-user', 
+            # 方法1: 检查用户头像元素
+            avatar_selectors = [
                 'img.avatar',
-                '.header-dropdown-toggle'
+                '.user-avatar',
+                '.current-user img',
+                '[class*="avatar"]',
+                'img[src*="avatar"]'
             ]
             
-            for selector in user_selectors:
+            for selector in avatar_selectors:
                 try:
-                    user_element = self.page.ele(selector, timeout=5)
-                    if user_element:
-                        logger.success(f"✅ 找到用户元素: {selector}")
+                    avatar_element = self.page.ele(selector, timeout=3)
+                    if avatar_element and avatar_element.is_displayed:
+                        logger.success(f"✅ 找到用户头像元素: {selector}")
                         return True
                 except:
                     continue
             
-            # 方法2: 检查页面内容中的用户名
-            page_content = self.page.html
-            if self.username and self.username.lower() in page_content.lower():
-                logger.success(f"✅ 在页面内容中找到用户名: {self.username}")
-                return True
+            # 方法2: 检查用户下拉菜单
+            user_menu_selectors = [
+                '#current-user',
+                '.current-user',
+                '.header-dropdown-toggle',
+                '[data-user-menu]',
+                '.user-menu'
+            ]
             
-            # 方法3: 检查登录按钮（反证未登录）
-            login_selectors = ['.login-button', 'button:has-text("登录")', '#login-button']
+            for selector in user_menu_selectors:
+                try:
+                    user_element = self.page.ele(selector, timeout=3)
+                    if user_element and user_element.is_displayed:
+                        logger.success(f"✅ 找到用户菜单元素: {selector}")
+                        return True
+                except:
+                    continue
+            
+            # 方法3: 检查页面内容中的用户名
+            if self.username:
+                page_content = self.page.html
+                if self.username.lower() in page_content.lower():
+                    logger.success(f"✅ 在页面内容中找到用户名: {self.username}")
+                    return True
+            
+            # 方法4: 检查登录按钮（反证未登录）
+            login_selectors = [
+                '.login-button', 
+                'button:has-text("登录")', 
+                '#login-button',
+                'a[href*="/login"]',
+                '.btn-login'
+            ]
+            
             for selector in login_selectors:
                 try:
                     login_btn = self.page.ele(selector, timeout=3)
-                    if login_btn:
+                    if login_btn and login_btn.is_displayed:
                         logger.warning(f"❌ 检测到登录按钮: {selector}")
                         return False
                 except:
                     continue
             
-            logger.warning("⚠️ 无法确定登录状态")
+            logger.warning("⚠️ 无法确定登录状态，假设未登录")
             return False
             
         except Exception as e:
             logger.error(f"登录状态检查失败: {str(e)}")
             return False
 
-    def getTurnstileToken(self):
-        """获取Turnstile token"""
-        self.page.run_js("try { turnstile.reset() } catch(e) { }")
-
-        turnstileResponse = None
-
-        for i in range(0, 5):
-            try:
-                turnstileResponse = self.page.run_js(
-                    "try { return turnstile.getResponse() } catch(e) { return null }"
-                )
-                if turnstileResponse:
-                    return turnstileResponse
-
-                challengeSolution = self.page.ele("@name=cf-turnstile-response")
-                if challengeSolution:
-                    challengeWrapper = challengeSolution.parent()
-                    challengeIframe = challengeWrapper.shadow_root.ele("tag:iframe")
-                    challengeIframeBody = challengeIframe.ele("tag:body").shadow_root
-                    challengeButton = challengeIframeBody.ele("tag:input")
-                    challengeButton.click()
-            except Exception as e:
-                logger.warning(f"处理 Turnstile 时出错: {str(e)}")
-            time.sleep(1)
-        return None
-
-    def login(self):
-        """登录网站"""
-        logger.info("开始登录")
+    def try_cookie_login(self):
+        """尝试使用缓存的cookies登录"""
+        logger.info("🔄 尝试使用缓存cookies登录")
         
-        # 先尝试使用缓存cookies
         cached_cookies = CacheManager.load_cookies(self.site_name)
-        if cached_cookies:
-            logger.info("🔄 尝试使用缓存cookies")
-            try:
-                self.page.set.cookies(cached_cookies)
-                self.page.get(self.site_config['home_url'])
-                time.sleep(5)
-                
-                if self.strict_check_login_status():
-                    logger.success("✅ 使用缓存cookies登录成功")
-                    return True
-            except Exception as e:
-                logger.warning(f"缓存登录失败: {str(e)}")
+        if not cached_cookies:
+            logger.info("❌ 没有找到缓存的cookies")
+            return False
         
-        # 需要重新登录
-        logger.info("🔐 开始重新登录流程")
+        try:
+            # 设置cookies
+            self.page.set.cookies(cached_cookies)
+            
+            # 跳转到latest页面验证登录状态
+            self.page.get(self.site_config['latest_topics_url'])
+            time.sleep(5)
+            
+            # 处理可能的Cloudflare
+            CloudflareHandler.handle_cloudflare(self.page)
+            
+            # 严格验证登录状态
+            if self.strict_check_login_status():
+                logger.success("✅ 使用缓存cookies登录成功")
+                return True
+            else:
+                logger.warning("❌ 缓存cookies已失效")
+                return False
+                
+        except Exception as e:
+            logger.error(f"缓存登录失败: {str(e)}")
+            return False
+
+    def handle_login_form(self):
+        """处理登录表单"""
+        try:
+            # 截图用于调试
+            self.page.get_screenshot(f"login_form_{self.site_name}.png")
+            
+            # 输入用户名和密码
+            username_input = self.page.ele("@id=login-account-name", timeout=10)
+            password_input = self.page.ele("@id=login-account-password", timeout=10)
+            login_button = self.page.ele("@id=login-button", timeout=10)
+            
+            if not all([username_input, password_input, login_button]):
+                logger.error("❌ 找不到登录表单元素")
+                return False
+            
+            # 清空并输入凭据
+            username_input.input('')
+            username_input.input(self.username)
+            
+            password_input.input('')
+            password_input.input(self.password)
+            
+            # 检查是否有验证码
+            if CaptchaHandler.find_captcha_element(self.page):
+                logger.warning("⚠️ 检测到验证码，尝试自动解决")
+                if not CaptchaHandler.resolve_captcha(self.page):
+                    logger.error("❌ 验证码解决失败，无法继续登录")
+                    return False
+            
+            # 点击登录按钮
+            login_button.click()
+            time.sleep(10)
+            
+            # 处理可能的Cloudflare
+            CloudflareHandler.handle_cloudflare(self.page)
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"登录表单处理失败: {str(e)}")
+            return False
+
+    def perform_login(self):
+        """执行登录流程"""
+        logger.info("🔐 开始登录流程")
+        
+        # 导航到登录页面
         self.page.get(self.site_config['login_url'])
         time.sleep(5)
         
         # 处理Cloudflare
         CloudflareHandler.handle_cloudflare(self.page)
         
-        try:
-            # 处理Turnstile验证
-            turnstile_token = self.getTurnstileToken()
-            if turnstile_token:
-                logger.info(f"Turnstile token: {turnstile_token}")
+        # 处理登录表单
+        if not self.handle_login_form():
+            return False
+        
+        # 验证登录是否成功
+        if self.strict_check_login_status():
+            logger.success("✅ 登录成功")
             
-            # 截图用于调试
-            self.page.get_screenshot(f"login_{self.site_name}.png")
+            # 保存cookies和会话
+            cookies = self.page.cookies()
+            if cookies:
+                CacheManager.save_cookies(cookies, self.site_name)
             
-            # 输入用户名和密码
-            self.page.ele("@id=login-account-name").input(self.username)
-            self.page.ele("@id=login-account-password").input(self.password)
-            self.page.ele("@id=login-button").click()
-            time.sleep(10)
+            session_data = {
+                'last_login': datetime.now().isoformat(),
+                'username': self.username,
+                'site': self.site_name
+            }
+            CacheManager.save_session(session_data, self.site_name)
             
-            # 严格验证登录状态
-            if self.strict_check_login_status():
-                logger.info("登录成功")
-                
-                # 保存cookies和会话
-                cookies = self.page.cookies()
-                if cookies:
-                    CacheManager.save_cookies(cookies, self.site_name)
-                
-                session_data = {
-                    'last_login': datetime.now().isoformat(),
-                    'username': self.username,
-                    'site': self.site_name
-                }
-                CacheManager.save_session(session_data, self.site_name)
-                
-                return True
-            else:
-                logger.error("登录失败")
-                return False
-                
-        except Exception as e:
-            logger.error(f"登录过程中出错: {str(e)}")
+            return True
+        else:
+            logger.error("❌ 登录失败")
             return False
 
-    def click_topic(self):
-        """点击浏览主题"""
-        # 确保在latest页面
-        if not self.page.url.endswith('/latest'):
-            self.page.get(self.site_config['latest_topics_url'])
-            time.sleep(5)
+    def ensure_logged_in(self):
+        """确保用户已登录，优先使用cookie"""
+        logger.info("🎯 验证登录状态")
         
-        # 再次验证登录状态
-        if not self.strict_check_login_status():
-            logger.error("❌ 在浏览主题前登录状态验证失败")
-            return False
+        # 首先尝试cookie登录
+        if self.try_cookie_login():
+            return True
         
-        try:
-            topic_list = self.page.ele("@id=list-area").eles(".:title")
-            logger.info(f"发现 {len(topic_list)} 个主题帖，随机选择10个")
-            
-            selected_topics = random.sample(topic_list, min(10, len(topic_list)))
-            success_count = 0
-            
-            for i, topic in enumerate(selected_topics):
-                try:
-                    topic_url = topic.attr("href")
-                    if not topic_url.startswith('http'):
-                        topic_url = self.site_config['base_url'] + topic_url
-                    
-                    logger.info(f"📖 浏览第 {i+1} 个主题: {topic_url}")
-                    
-                    if self.click_one_topic(topic_url):
-                        success_count += 1
-                    
-                    # 随机等待
-                    wait_time = random.uniform(3, 8)
-                    time.sleep(wait_time)
-                    
-                except Exception as e:
-                    logger.error(f"浏览主题失败: {str(e)}")
-                    continue
-            
-            logger.info(f"📊 浏览完成: 成功 {success_count}/{len(selected_topics)} 个主题")
-            return success_count > 0
-            
-        except Exception as e:
-            logger.error(f"获取主题列表失败: {str(e)}")
-            return False
+        # Cookie登录失败，执行完整登录流程
+        logger.info("🔄 Cookie登录失败，开始完整登录流程")
+        return self.perform_login()
 
     @retry_decorator()
     def click_one_topic(self, topic_url):
@@ -405,7 +533,7 @@ class LinuxDoBrowser:
             new_page.get(topic_url)
             time.sleep(3)
             
-            # 随机决定是否点赞
+            # 随机决定是否点赞 (0.3%概率)
             if random.random() < 0.003:  
                 self.click_like(new_page)
             
@@ -421,6 +549,20 @@ class LinuxDoBrowser:
             except:
                 pass
             return False
+
+    def click_like(self, page):
+        """点赞帖子"""
+        try:
+            like_button = page.ele(".discourse-reactions-reaction-button", timeout=5)
+            if like_button and like_button.is_displayed:
+                logger.info("找到未点赞的帖子，准备点赞")
+                like_button.click()
+                logger.info("点赞成功")
+                time.sleep(random.uniform(1, 2))
+            else:
+                logger.info("帖子可能已经点过赞了")
+        except Exception as e:
+            logger.error(f"点赞失败: {str(e)}")
 
     def browse_post(self, page):
         """浏览帖子内容"""
@@ -453,19 +595,56 @@ class LinuxDoBrowser:
             logger.info(f"等待 {wait_time:.2f} 秒...")
             time.sleep(wait_time)
 
-    def click_like(self, page):
-        """点赞帖子"""
+    def click_topic(self):
+        """点击浏览主题"""
+        logger.info("🌐 开始浏览主题")
+        
+        # 确保在latest页面
+        if not self.page.url.endswith('/latest'):
+            self.page.get(self.site_config['latest_topics_url'])
+            time.sleep(5)
+        
         try:
-            like_button = page.ele(".discourse-reactions-reaction-button")
-            if like_button:
-                logger.info("找到未点赞的帖子，准备点赞")
-                like_button.click()
-                logger.info("点赞成功")
-                time.sleep(random.uniform(1, 2))
-            else:
-                logger.info("帖子可能已经点过赞了")
+            # 获取主题列表
+            topic_list = self.page.eles(".:title")
+            if not topic_list:
+                logger.error("❌ 没有找到主题列表")
+                return False
+            
+            logger.info(f"发现 {len(topic_list)} 个主题帖，随机选择10个")
+            
+            # 随机选择主题
+            selected_topics = random.sample(topic_list, min(10, len(topic_list)))
+            success_count = 0
+            
+            for i, topic in enumerate(selected_topics):
+                try:
+                    topic_url = topic.attr("href")
+                    if not topic_url:
+                        continue
+                        
+                    if not topic_url.startswith('http'):
+                        topic_url = self.site_config['base_url'] + topic_url
+                    
+                    logger.info(f"📖 浏览第 {i+1} 个主题: {topic_url}")
+                    
+                    if self.click_one_topic(topic_url):
+                        success_count += 1
+                    
+                    # 随机等待
+                    wait_time = random.uniform(3, 8)
+                    time.sleep(wait_time)
+                    
+                except Exception as e:
+                    logger.error(f"浏览主题失败: {str(e)}")
+                    continue
+            
+            logger.info(f"📊 浏览完成: 成功 {success_count}/{len(selected_topics)} 个主题")
+            return success_count > 0
+            
         except Exception as e:
-            logger.error(f"点赞失败: {str(e)}")
+            logger.error(f"获取主题列表失败: {str(e)}")
+            return False
 
     def print_connect_info(self):
         """打印连接信息（仅限linux.do）"""
@@ -501,18 +680,21 @@ class LinuxDoBrowser:
         logger.info(f"🚀 开始处理站点: {self.site_config['name']}")
         
         try:
-            # 登录
-            if not self.login():
-                logger.error(f"❌ {self.site_config['name']} 登录失败")
+            # 第一步：确保登录状态
+            if not self.ensure_logged_in():
+                logger.error(f"❌ {self.site_config['name']} 登录失败，跳过后续操作")
                 return False
 
-            # 浏览主题
+            # 第二步：浏览主题（仅在登录成功后）
             if BROWSE_ENABLED:
                 logger.info("🌐 开始浏览主题")
-                self.click_topic()
-                logger.info("完成浏览任务")
+                browse_success = self.click_topic()
+                if browse_success:
+                    logger.info("✅ 浏览任务完成")
+                else:
+                    logger.warning("⚠️ 浏览任务部分失败")
 
-            # 打印连接信息
+            # 第三步：打印连接信息
             self.print_connect_info()
             
             logger.success(f"✅ {self.site_config['name']} 处理完成")
