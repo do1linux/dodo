@@ -45,7 +45,7 @@ SITES = [
         'login_url': 'https://idcflare.com/login',
         'latest_topics_url': 'https://idcflare.com/latest', 
         'home_url': 'https://idcflare.com/',
-        'connect_url': None  # idcflare没有connect页面
+        'connect_url': None
     }
 ]
 
@@ -63,14 +63,11 @@ class CacheManager:
         """获取缓存目录"""
         current_dir = os.path.dirname(os.path.abspath(__file__))
         cache_dir = os.path.join(current_dir, "cache")
-        # 确保缓存目录存在
         try:
             os.makedirs(cache_dir, exist_ok=True)
-            # 设置目录权限
             os.chmod(cache_dir, 0o755)
         except Exception as e:
             logger.warning(f"创建缓存目录失败: {e}")
-            # 如果创建缓存目录失败，使用当前目录
             cache_dir = current_dir
         return cache_dir
     
@@ -112,7 +109,6 @@ class CacheManager:
                 return data.get('data', data)
             except Exception as e:
                 logger.warning(f"缓存加载失败 {file_name}: {str(e)}")
-                # 加载失败时删除损坏的缓存文件
                 try:
                     os.remove(file_path)
                     logger.info(f"🗑️ 已删除损坏的缓存文件: {file_name}")
@@ -127,7 +123,6 @@ class CacheManager:
         """保存数据到缓存文件"""
         try:
             file_path = CacheManager.get_cache_file_path(file_name)
-            # 确保目录存在
             os.makedirs(os.path.dirname(file_path), exist_ok=True)
             
             data_to_save = {
@@ -140,7 +135,6 @@ class CacheManager:
             with open(file_path, "w", encoding='utf-8') as f:
                 json.dump(data_to_save, f, ensure_ascii=False, indent=2)
             
-            # 设置文件权限
             os.chmod(file_path, 0o644)
             
             new_age = CacheManager.get_file_age_hours(file_path)
@@ -188,7 +182,6 @@ class CloudflareHandler:
             for cookie in cookies:
                 if cookie.get('name') == 'cf_clearance':
                     expires = cookie.get('expires', 0)
-                    # 检查cookie是否过期
                     if expires == -1 or expires > time.time():
                         return True
             return False
@@ -197,9 +190,7 @@ class CloudflareHandler:
 
     @staticmethod
     def handle_cloudflare(page, home_url, max_attempts=8, timeout=180):
-        """
-        处理Cloudflare验证
-        """
+        """处理Cloudflare验证"""
         start_time = time.time()
         logger.info("🛡️ 开始处理 Cloudflare验证")
         
@@ -210,7 +201,6 @@ class CloudflareHandler:
         if cached_cf_valid:
             logger.success("✅ 检测到有效的缓存Cloudflare cookie")
             try:
-                # 尝试使用缓存cookies访问
                 if cached_cookies:
                     page.set.cookies(cached_cookies)
                     page.get(home_url)
@@ -271,14 +261,13 @@ def retry_decorator(retries=3):
                 try:
                     return func(*args, **kwargs)
                 except Exception as e:
-                    if attempt == retries - 1:  # 最后一次尝试
+                    if attempt == retries - 1:
                         logger.error(f"函数 {func.__name__} 最终执行失败: {str(e)}")
                     logger.warning(
                         f"函数 {func.__name__} 第 {attempt + 1}/{retries} 次尝试失败: {str(e)}"
                     )
                     time.sleep(1)
             return None
-
         return wrapper
     return decorator
 
@@ -290,7 +279,7 @@ class LinuxDoBrowser:
         self.username = credentials['username']
         self.password = credentials['password']
         
-        # 只使用Windows配置
+        # 浏览器配置
         platformIdentifier = "Windows NT 10.0; Win64; x64"
 
         co = (
@@ -317,7 +306,7 @@ class LinuxDoBrowser:
         self.session_data = CacheManager.load_session(self.site_name)
         self.cache_saved = False
         
-        # 立即注入增强的反检测脚本
+        # 注入反检测脚本
         self.inject_enhanced_script()
 
     def inject_enhanced_script(self, page=None):
@@ -326,31 +315,22 @@ class LinuxDoBrowser:
             page = self.page
             
         enhanced_script = """
-        // 增强的反检测脚本
         Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-        
-        // 模拟完整的浏览器环境
         Object.defineProperty(navigator, 'plugins', { 
             get: () => [1, 2, 3, 4, 5],
             configurable: true
         });
-        
         Object.defineProperty(navigator, 'languages', { 
             get: () => ['zh-CN', 'zh', 'en-US', 'en'] 
         });
-        
-        // 屏蔽自动化特征
         window.chrome = { 
             runtime: {},
             loadTimes: function() {},
             csi: function() {}, 
             app: {isInstalled: false}
         };
-        
-        // 页面可见性API
         Object.defineProperty(document, 'hidden', { get: () => false });
         Object.defineProperty(document, 'visibilityState', { get: () => 'visible' });
-        
         console.log('🔧 增强的JS环境模拟已加载');
         """
         
@@ -388,7 +368,6 @@ class LinuxDoBrowser:
             return True
             
         try:
-            # 等待一段时间确保cookies设置完成
             time.sleep(3)
             
             # 保存cookies
@@ -402,7 +381,7 @@ class LinuxDoBrowser:
                     else:
                         logger.warning("⚠️ Cookies缓存保存失败")
                 else:
-                    logger.warning("⚠️ 无法获取cookies，检查浏览器状态")
+                    logger.warning("⚠️ 无法获取cookies")
                     
             except Exception as e:
                 logger.error(f"获取cookies失败: {str(e)}")
@@ -448,90 +427,125 @@ class LinuxDoBrowser:
         except Exception as e:
             logger.error(f"清除缓存失败: {str(e)}")
 
-    def check_login_status(self):
-        """检查登录状态"""
+    def strict_check_login_status(self):
+        """严格检查登录状态 - 必须验证用户名"""
         try:
-            # 检查用户相关元素
-            user_indicators = [
-                '#current-user', '#toggle-current-user', '.header-dropdown-toggle.current-user',
-                'img.avatar', '.user-menu', '[data-user-menu]'
+            logger.info("🔍 开始严格登录状态检查...")
+            
+            # 方法1: 检查用户头像或用户菜单
+            user_selectors = [
+                '#current-user',
+                '.current-user',
+                'img.avatar',
+                '.header-dropdown-toggle',
+                '[data-user-menu]',
+                '.user-menu'
             ]
             
-            for selector in user_indicators:
+            for selector in user_selectors:
                 try:
-                    user_elem = self.page.ele(selector)
-                    if user_elem:
-                        logger.success(f"✅ 检测到用户元素: {selector}")
-                        return self.verify_username()
+                    user_element = self.page.ele(selector, timeout=5)
+                    if user_element:
+                        logger.success(f"✅ 找到用户元素: {selector}")
+                        # 尝试点击用户菜单获取更多信息
+                        if self._click_and_verify_user_menu():
+                            return True
                 except Exception:
                     continue
             
-            # 检查登录按钮
-            login_buttons = [
-                '.login-button', 'button:has-text("登录")', 
-                'button:has-text("Log In")', '.btn.btn-icon-text.login-button'
+            # 方法2: 在页面内容中搜索用户名
+            page_content = self.page.html.lower()
+            if self.username and self.username.lower() in page_content:
+                logger.success(f"✅ 在页面内容中找到用户名: {self.username}")
+                return True
+            
+            # 方法3: 检查是否有登录按钮（反证未登录）
+            login_selectors = [
+                '.login-button',
+                'button:has-text("登录")',
+                'button:has-text("Log In")',
+                '#login-button'
             ]
             
-            for selector in login_buttons:
+            for selector in login_selectors:
                 try:
-                    login_btn = self.page.ele(selector)
-                    if login_btn:
-                        logger.warning(f"❌ 检测到登录按钮: {selector}")
+                    login_btn = self.page.ele(selector, timeout=3)
+                    if login_btn and login_btn.displayed:
+                        logger.warning(f"❌ 检测到登录按钮，确认未登录: {selector}")
                         return False
                 except Exception:
                     continue
             
-            # 如果无法确定状态
-            page_content = self.page.html
-            page_title = self.page.title
-            if page_title and "请稍候" not in page_title and "Checking" not in page_title:
-                if self.username and self.username.lower() in page_content.lower():
-                    logger.success(f"✅ 在页面内容中找到用户名: {self.username}")
-                    return True
-                
-                if len(page_content) > 1000:
-                    logger.success("✅ 页面显示正常内容，可能已登录")
-                    return True
+            # 方法4: 检查URL是否包含登录相关路径
+            current_url = self.page.url.lower()
+            if 'login' in current_url or 'signin' in current_url:
+                logger.warning("❌ 当前在登录页面，确认未登录")
+                return False
             
-            logger.warning(f"⚠️ 登录状态不确定，默认认为未登录。页面标题: {page_title}")
-            return False
+            # 如果所有检查都不确定，尝试访问用户相关页面
+            logger.warning("⚠️ 登录状态不确定，需要进一步验证")
+            return self._verify_by_user_page()
             
         except Exception as e:
-            logger.warning(f"检查登录状态时出错: {str(e)}")
+            logger.error(f"严格登录检查时出错: {str(e)}")
             return False
 
-    def verify_username(self):
-        """验证用户名是否显示在页面上"""
-        # 方法1: 页面内容检查
-        page_content = self.page.html
-        if self.username and self.username.lower() in page_content.lower():
-            logger.success(f"✅ 在页面内容中找到用户名: {self.username}")
-            return True
-        
-        # 方法2: 用户菜单点击
+    def _click_and_verify_user_menu(self):
+        """点击用户菜单并验证用户名"""
         try:
-            user_click_selectors = ['img.avatar', '.current-user', '[data-user-menu]', '.header-dropdown-toggle']
-            for selector in user_click_selectors:
-                user_elem = self.page.ele(selector)
-                if user_elem:
-                    user_elem.click()
-                    time.sleep(2)
-                    
-                    user_menu_content = self.page.html
-                    if self.username and self.username.lower() in user_menu_content.lower():
-                        logger.success(f"✅ 在用户菜单中找到用户名: {self.username}")
-                        # 点击其他地方关闭菜单
+            # 尝试点击用户头像或菜单
+            click_selectors = ['img.avatar', '.current-user', '.header-dropdown-toggle']
+            
+            for selector in click_selectors:
+                try:
+                    user_elem = self.page.ele(selector, timeout=3)
+                    if user_elem:
+                        user_elem.click()
+                        time.sleep(2)
+                        
+                        # 检查下拉菜单内容
+                        menu_content = self.page.html.lower()
+                        if self.username and self.username.lower() in menu_content:
+                            logger.success(f"✅ 在用户菜单中找到用户名: {self.username}")
+                            # 点击其他地方关闭菜单
+                            self.page.ele('body').click()
+                            time.sleep(1)
+                            return True
+                            
+                        # 关闭菜单
                         self.page.ele('body').click()
-                        return True
+                        time.sleep(1)
+                except Exception:
+                    continue
                     
-                    self.page.ele('body').click()
-                    time.sleep(1)
-                    break
-        except Exception:
-            pass
-        
-        logger.warning(f"⚠️ 检测到用户元素但无法验证用户名 {self.username}，默认认为未登录")
-        return False
+            return False
+        except Exception as e:
+            logger.warning(f"点击用户菜单失败: {str(e)}")
+            return False
+
+    def _verify_by_user_page(self):
+        """通过访问用户页面验证登录状态"""
+        try:
+            # 尝试访问用户个人页面
+            if self.site_name == 'linux_do':
+                user_url = f"https://linux.do/u/{self.username}"
+            else:
+                user_url = f"{self.site_config['base_url']}/u/{self.username}"
+                
+            self.page.get(user_url)
+            time.sleep(3)
+            
+            page_content = self.page.html.lower()
+            if self.username and self.username.lower() in page_content:
+                logger.success(f"✅ 在用户页面验证成功: {self.username}")
+                return True
+            else:
+                logger.warning("❌ 用户页面验证失败")
+                return False
+                
+        except Exception as e:
+            logger.warning(f"用户页面验证失败: {str(e)}")
+            return False
 
     def login(self):
         """登录网站"""
@@ -544,39 +558,107 @@ class LinuxDoBrowser:
         # 处理Cloudflare验证
         CloudflareHandler.handle_cloudflare(self.page, self.site_config['home_url'])
         
-        # 检查是否已经登录
-        if self.check_login_status():
-            logger.success("✅ 已登录，跳过登录步骤")
+        # 严格检查是否已经登录
+        if self.strict_check_login_status():
+            logger.success("✅ 严格验证确认已登录，跳过登录步骤")
             return True
         
-        # 访问登录页面
+        # 需要重新登录
+        logger.info("🔐 需要重新登录...")
         self.page.get(self.site_config['login_url'])
-        time.sleep(3)
+        time.sleep(5)
         
         try:
-            # 输入用户名和密码
-            username_input = self.page.ele("@id=login-account-name")
-            password_input = self.page.ele("@id=login-account-password")
-            login_button = self.page.ele("@id=login-button")
+            # 查找登录表单元素
+            username_input = None
+            password_input = None
+            login_button = None
             
-            if username_input and password_input and login_button:
-                username_input.input(self.username)
-                password_input.input(self.password)
-                login_button.click()
-                
-                # 等待登录完成
-                time.sleep(10)
-                
-                # 检查登录是否成功
-                if self.check_login_status():
-                    logger.success("✅ 登录成功")
-                    self.save_all_caches()
-                    return True
-                else:
-                    logger.error("❌ 登录失败")
-                    return False
+            # 尝试多种选择器
+            username_selectors = [
+                '@id=login-account-name',
+                '@name=username',
+                '@name=login',
+                'input[type="text"]',
+                'input[placeholder*="用户名"]',
+                'input[placeholder*="email"]'
+            ]
+            
+            password_selectors = [
+                '@id=login-account-password', 
+                '@name=password',
+                'input[type="password"]',
+                'input[placeholder*="密码"]'
+            ]
+            
+            login_button_selectors = [
+                '@id=login-button',
+                'button[type="submit"]',
+                'button:has-text("登录")',
+                'button:has-text("Log In")',
+                'input[type="submit"]'
+            ]
+            
+            # 查找用户名输入框
+            for selector in username_selectors:
+                try:
+                    username_input = self.page.ele(selector, timeout=3)
+                    if username_input:
+                        logger.info(f"✅ 找到用户名输入框: {selector}")
+                        break
+                except:
+                    continue
+            
+            # 查找密码输入框
+            for selector in password_selectors:
+                try:
+                    password_input = self.page.ele(selector, timeout=3)
+                    if password_input:
+                        logger.info(f"✅ 找到密码输入框: {selector}")
+                        break
+                except:
+                    continue
+            
+            # 查找登录按钮
+            for selector in login_button_selectors:
+                try:
+                    login_button = self.page.ele(selector, timeout=3)
+                    if login_button:
+                        logger.info(f"✅ 找到登录按钮: {selector}")
+                        break
+                except:
+                    continue
+            
+            if not username_input or not password_input or not login_button:
+                logger.error("❌ 找不到完整的登录表单元素")
+                # 截图调试
+                try:
+                    self.page.get_screenshot(f"login_form_{self.site_name}.png")
+                    logger.info(f"📸 已保存登录页面截图: login_form_{self.site_name}.png")
+                except:
+                    pass
+                return False
+            
+            # 输入用户名和密码
+            username_input.input(self.username)
+            time.sleep(1)
+            password_input.input(self.password)
+            time.sleep(1)
+            
+            # 点击登录
+            login_button.click()
+            logger.info("🔄 提交登录表单...")
+            
+            # 等待登录完成
+            time.sleep(10)
+            
+            # 严格验证登录是否成功
+            if self.strict_check_login_status():
+                logger.success("✅ 登录成功")
+                self.save_all_caches()
+                return True
             else:
-                logger.error("❌ 找不到登录表单元素")
+                logger.error("❌ 登录失败 - 严格验证未通过")
                 return False
                 
         except Exception as e:
@@ -584,109 +666,196 @@ class LinuxDoBrowser:
             return False
 
     def click_topic(self):
-        """点击浏览主题"""
+        """点击浏览主题 - 增强版本"""
         try:
-            # 访问最新主题页面
+            logger.info("📚 访问最新主题页面...")
             self.page.get(self.site_config['latest_topics_url'])
             time.sleep(5)
             
-            # 获取主题列表
-            topic_list = self.page.eles("css:.title a")
+            # 多种选择器获取主题列表
+            topic_selectors = [
+                '.title a',           # 标准选择器
+                'a.title',            # 另一种格式
+                '.topic-list-item a', # 主题列表项
+                '[data-topic-id] a',  # 带topic id的
+                '.main-link a',       # 主链接
+                '.raw-topic-link'     # 原始主题链接
+            ]
+            
+            topic_list = []
+            for selector in topic_selectors:
+                try:
+                    topics = self.page.eles(f"css:{selector}")
+                    if topics and len(topics) > 0:
+                        logger.info(f"✅ 使用选择器 '{selector}' 找到 {len(topics)} 个主题")
+                        topic_list.extend(topics)
+                        break
+                except Exception as e:
+                    continue
+            
+            # 如果上面的选择器都没找到，尝试更通用的方法
             if not topic_list:
-                topic_list = self.page.eles("css:a.title")
-                
-            logger.info(f"发现 {len(topic_list)} 个主题帖，随机选择5个进行浏览")
+                logger.info("🔄 尝试通用链接查找...")
+                try:
+                    # 查找所有包含主题的链接
+                    all_links = self.page.eles('tag:a')
+                    for link in all_links:
+                        href = link.attr('href')
+                        if href and '/t/' in href and not href.endswith('/t/'):
+                            topic_list.append(link)
+                    
+                    logger.info(f"✅ 通过通用查找找到 {len(topic_list)} 个主题链接")
+                except Exception as e:
+                    logger.error(f"通用查找失败: {str(e)}")
             
-            # 随机选择5个主题进行浏览
-            selected_topics = random.sample(topic_list, min(5, len(topic_list)))
+            if not topic_list:
+                logger.error("❌ 无法找到任何主题链接")
+                # 保存页面源码用于调试
+                try:
+                    with open(f"page_source_{self.site_name}.html", "w", encoding='utf-8') as f:
+                        f.write(self.page.html)
+                    logger.info(f"📄 已保存页面源码: page_source_{self.site_name}.html")
+                except:
+                    pass
+                return False
             
+            # 去重并限制数量
+            unique_topics = []
+            seen_urls = set()
+            
+            for topic in topic_list:
+                try:
+                    href = topic.attr('href')
+                    if href and href not in seen_urls:
+                        seen_urls.add(href)
+                        unique_topics.append(topic)
+                except:
+                    continue
+            
+            # 随机选择主题进行浏览
+            browse_count = min(8, len(unique_topics))
+            selected_topics = random.sample(unique_topics, browse_count)
+            
+            logger.info(f"🎯 准备浏览 {browse_count} 个主题")
+            
+            successful_browses = 0
             for i, topic in enumerate(selected_topics):
                 try:
+                    topic_title = topic.text.strip()[:50]  # 限制标题长度
                     topic_url = topic.attr('href')
                     if not topic_url.startswith('http'):
                         topic_url = self.site_config['base_url'] + topic_url
                     
-                    logger.info(f"📖 浏览第 {i+1} 个主题: {topic_url}")
-                    self.click_one_topic(topic_url)
+                    logger.info(f"📖 浏览第 {i+1}/{browse_count} 个主题: {topic_title}")
+                    
+                    if self.click_one_topic(topic_url):
+                        successful_browses += 1
                     
                     # 随机等待一段时间再浏览下一个
-                    wait_time = random.uniform(3, 8)
+                    wait_time = random.uniform(4, 8)
+                    logger.info(f"⏳ 等待 {wait_time:.1f} 秒...")
                     time.sleep(wait_time)
                     
                 except Exception as e:
                     logger.error(f"浏览主题时出错: {str(e)}")
                     continue
+            
+            logger.info(f"📊 浏览完成: 成功 {successful_browses}/{browse_count} 个主题")
+            return successful_browses > 0
                     
         except Exception as e:
             logger.error(f"获取主题列表时出错: {str(e)}")
+            return False
 
     @retry_decorator()
     def click_one_topic(self, topic_url):
         """浏览单个主题"""
         new_page = self.browser.new_tab()
         try:
+            logger.info(f"🔗 打开主题: {topic_url}")
             new_page.get(topic_url)
-            logger.info(f"✅ 已打开主题页面: {new_page.title}")
+            time.sleep(3)
+            
+            # 获取页面标题
+            page_title = new_page.title
+            logger.info(f"✅ 已打开主题页面: {page_title}")
             
             # 浏览帖子内容（模拟人类阅读行为）
-            self.browse_post(new_page)
+            browse_success = self.browse_post(new_page)
             
-            # 随机决定是否点赞（30%概率）
-            if random.random() < 0.3:  
+            # 随机决定是否点赞（25%概率）
+            if random.random() < 0.0025:  
                 self.click_like(new_page)
-                
+            
             new_page.close()
-            return True
+            return browse_success
             
         except Exception as e:
             logger.error(f"浏览主题失败: {str(e)}")
-            new_page.close()
+            try:
+                new_page.close()
+            except:
+                pass
             return False
 
     def browse_post(self, page):
         """浏览帖子内容，模拟人类阅读行为"""
         logger.info("👀 开始浏览帖子内容...")
-        prev_url = None
+        
+        total_wait_time = 0
+        max_wait_time = random.uniform(25, 40)  # 总浏览时间25-40秒
         
         # 开始自动滚动，模拟阅读
-        for scroll_count in range(8):  # 减少滚动次数，避免被检测
+        scroll_count = 0
+        while total_wait_time < max_wait_time and scroll_count < 12:
             # 随机滚动距离
-            scroll_distance = random.randint(300, 800)
+            scroll_distance = random.randint(200, 600)
             logger.info(f"📜 向下滚动 {scroll_distance} 像素 (第{scroll_count + 1}次)")
-            page.run_js(f"window.scrollBy(0, {scroll_distance})")
+            
+            try:
+                page.run_js(f"window.scrollBy(0, {scroll_distance})")
+            except Exception as e:
+                logger.warning(f"滚动失败: {str(e)}")
             
             # 随机等待时间，模拟阅读
             wait_time = random.uniform(2, 5)
+            total_wait_time += wait_time
+            
+            logger.info(f"⏳ 等待 {wait_time:.1f} 秒 (累计: {total_wait_time:.1f}秒)")
             time.sleep(wait_time)
             
-            # 随机决定是否继续浏览（85%概率继续）
-            if random.random() > 0.85:
+            scroll_count += 1
+            
+            # 10%概率提前结束浏览
+            if random.random() < 0.1:
                 logger.info("🎲 随机决定停止浏览")
                 break
-                
-            # 检查是否到达页面底部
-            at_bottom = page.run_js(
-                "return (window.innerHeight + window.scrollY) >= document.body.scrollHeight"
-            )
-            if at_bottom:
-                logger.info("⬇️ 已到达页面底部")
-                break
         
-        logger.info("✅ 帖子浏览完成")
+        logger.info(f"✅ 帖子浏览完成，总时长: {total_wait_time:.1f}秒")
+        return True
 
     def click_like(self, page):
         """点赞帖子"""
         try:
-            # 查找点赞按钮
-            like_buttons = page.eles("css:.like-button, .btn-like, [title*='赞'], [title*='like']")
+            # 多种点赞按钮选择器
+            like_selectors = [
+                '.like-button',
+                '.btn-like',
+                '[title*="赞"]',
+                '[title*="like"]',
+                '.post-like-btn',
+                '.d-likes'
+            ]
             
-            for button in like_buttons:
+            for selector in like_selectors:
                 try:
-                    if button and button.displayed:
-                        button.click()
-                        logger.info("👍 点赞成功")
-                        time.sleep(random.uniform(1, 2))
-                        return True
+                    like_buttons = page.eles(f"css:{selector}")
+                    for button in like_buttons:
+                        if button and button.displayed:
+                            button.click()
+                            logger.info("👍 点赞成功")
+                            time.sleep(random.uniform(1, 2))
+                            return True
                 except:
                     continue
                     
@@ -700,21 +869,42 @@ class LinuxDoBrowser:
     def print_connect_info(self):
         """打印连接信息（仅限linux.do）"""
         if self.site_name != 'linux_do' or not self.site_config.get('connect_url'):
+            logger.info("⏭️ 跳过连接信息获取（不适用于此站点）")
             return
             
-        logger.info("获取连接信息")
+        logger.info("🔗 获取连接信息...")
         try:
             page = self.browser.new_tab()
+            page.set.timeout(15)  # 设置较短超时时间
+            
             page.get(self.site_config['connect_url'])
             time.sleep(5)
             
-            # 查找表格
-            table = page.ele("tag:table")
+            # 多种表格选择器
+            table_selectors = [
+                "tag:table",
+                ".table",
+                ".connect-table",
+                "[data-table]"
+            ]
+            
+            table = None
+            for selector in table_selectors:
+                try:
+                    table = page.ele(selector, timeout=5)
+                    if table:
+                        logger.info(f"✅ 找到表格: {selector}")
+                        break
+                except:
+                    continue
+            
             if table:
                 rows = table.eles("tag:tr")
                 info = []
 
-                for row in rows:
+                for i, row in enumerate(rows):
+                    if i == 0:  # 跳过表头
+                        continue
                     cells = row.eles("tag:td")
                     if len(cells) >= 3:
                         project = cells[0].text.strip()
@@ -722,15 +912,23 @@ class LinuxDoBrowser:
                         requirement = cells[2].text.strip()
                         info.append([project, current, requirement])
 
-                print("--------------Connect Info-----------------")
-                print(tabulate(info, headers=["项目", "当前", "要求"], tablefmt="pretty"))
+                if info:
+                    print("--------------Connect Info-----------------")
+                    print(tabulate(info, headers=["项目", "当前", "要求"], tablefmt="pretty"))
+                    logger.success("✅ 连接信息获取成功")
+                else:
+                    logger.warning("⚠️ 表格为空或格式不符")
             else:
-                logger.warning("未找到连接信息表格")
+                logger.warning("⚠️ 未找到连接信息表格")
                 
             page.close()
             
         except Exception as e:
             logger.error(f"获取连接信息失败: {str(e)}")
+            try:
+                page.close()
+            except:
+                pass
 
     def run(self):
         """运行主流程"""
@@ -745,8 +943,11 @@ class LinuxDoBrowser:
             # 浏览主题
             if BROWSE_ENABLED:
                 logger.info("🌐 开始浏览主题")
-                self.click_topic()
-                logger.info("✅ 浏览任务完成")
+                browse_success = self.click_topic()
+                if browse_success:
+                    logger.success("✅ 浏览任务完成")
+                else:
+                    logger.warning("⚠️ 浏览任务部分失败")
             else:
                 logger.info("⏭️ 浏览功能已禁用，跳过")
 
@@ -808,7 +1009,7 @@ def main():
             failed_sites.append(site_name)
         
         # 站点间随机等待
-        if site_config != SITES[-1]:  # 不是最后一个站点
+        if site_config != SITES[-1]:
             wait_time = random.uniform(10, 30)
             logger.info(f"⏳ 等待 {wait_time:.1f} 秒后处理下一个站点...")
             time.sleep(wait_time)
