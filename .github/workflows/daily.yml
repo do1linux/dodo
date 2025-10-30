@@ -2,7 +2,7 @@ name: LinuxDo Daily Check-in
 
 on:
   schedule:
-    - cron: '0 * * * *'  # 每6小时执行一次
+    - cron: '0 */6 * * *'  # 每6小时执行一次
   workflow_dispatch:
 
 jobs:
@@ -44,9 +44,10 @@ jobs:
         env:
           LINUXDO_USERNAME: ${{ secrets.LINUXDO_USERNAME }}
           LINUXDO_PASSWORD: ${{ secrets.LINUXDO_PASSWORD }}
-          BROWSE_ENABLED: ${{ secrets.BROWSE_ENABLED }}
+          BROWSE_ENABLED: "true"  # 强制设置为true
         run: |
           echo "开始执行LinuxDo自动化脚本..."
+          echo "BROWSE_ENABLED: $BROWSE_ENABLED"
           # 创建缓存目录
           mkdir -p cache
           python main.py
