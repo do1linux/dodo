@@ -39,7 +39,13 @@ os.environ.pop("DYLD_LIBRARY_PATH", None)
 
 USERNAME = os.environ.get("LINUXDO_USERNAME")
 PASSWORD = os.environ.get("LINUXDO_PASSWORD")
-BROWSE_ENABLED = os.environ.get("BROWSE_ENABLED", "true").lower() == "true"
+
+# 修复 BROWSE_ENABLED 环境变量处理
+BROWSE_ENABLED = os.environ.get("BROWSE_ENABLED", "true").strip().lower()
+if BROWSE_ENABLED in ['false', '0', 'off', 'no']:
+    BROWSE_ENABLED = False
+else:
+    BROWSE_ENABLED = True
 
 if not USERNAME:
     USERNAME = os.environ.get('USERNAME')
@@ -286,7 +292,7 @@ class LinuxDoBrowser:
             
             # 检查页面内容中的用户名
             page_content = self.page.content()
-            if USERNAME.lower() in page_content.lower():
+            if USERNAME and USERNAME.lower() in page_content.lower():
                 logger.success(f"✅ 在页面内容中找到用户名: {USERNAME}")
                 return True
             
@@ -551,12 +557,15 @@ class LinuxDoBrowser:
 
     def run(self):
         """主运行函数"""
+        logger.info(f"BROWSE_ENABLED: {BROWSE_ENABLED}")
+        
         if not self.login():
             logger.error("登录失败，程序终止")
             self.clear_caches()
             sys.exit(1)
 
         if BROWSE_ENABLED:
+            logger.info("开始执行浏览任务")
             self.click_topic()
             logger.info("✅ 浏览任务完成")
             
@@ -565,6 +574,8 @@ class LinuxDoBrowser:
             self.session_data['total_browsed'] = self.session_data.get('total_browsed', 0) + 1
             if not self.cache_saved:
                 self.save_all_caches()
+        else:
+            logger.info("跳过浏览任务")
 
         self.print_connect_info()
         
@@ -579,7 +590,7 @@ if __name__ == "__main__":
         print("Please set LINUXDO_USERNAME and LINUXDO_PASSWORD environment variables")
         exit(1)
     
-    logger.info("🚀 LinuxDo 自动化脚本启动 (Playwright版)")
+    logger.info("🚀 LinuxDo 自动化脚本启动 (Playwright修复版)")
     
     try:
         browser = LinuxDoBrowser()
