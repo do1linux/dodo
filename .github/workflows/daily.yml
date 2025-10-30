@@ -61,6 +61,7 @@ jobs:
         LINUXDO_PASSWORD: ${{ secrets.LINUXDO_PASSWORD }}
         IDCFLARE_USERNAME: ${{ secrets.IDCFLARE_USERNAME }}
         IDCFLARE_PASSWORD: ${{ secrets.IDCFLARE_PASSWORD }}
+        OCR_API_KEY: ${{ secrets.OCR_API_KEY }}
         HEADLESS: 'true'
         BROWSE_ENABLED: 'true'
       run: |
