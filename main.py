@@ -4,17 +4,10 @@ import time
 import functools
 import sys
 import json
-import requests
 from datetime import datetime
 from loguru import logger
 from DrissionPage import ChromiumOptions, Chromium
 from tabulate import tabulate
-from io import BytesIO
-try:
-    from PIL import Image
-    HAS_PIL = True
-except ImportError:
-    HAS_PIL = False
 
 # ======================== 配置常量 ========================
 # 站点认证信息配置
@@ -24,9 +17,6 @@ SITE_CREDENTIALS = {
         'password': os.getenv('LINUXDO_PASSWORD')
     }
 }
-
-# OCR API配置
-CAPTCHA_OCR_API = os.getenv('OCR_API_KEY')
 
 # 站点配置列表
 SITES = [
@@ -111,15 +101,179 @@ class CacheManager:
         """保存cookies到缓存"""
         return CacheManager.save_cache(cookies, f"{site_name}_cookies.json")
 
+# ======================== 验证检测器 ========================
+class SecurityDetector:
+    """安全验证检测器"""
+    
     @staticmethod
-    def load_session(site_name):
-        """加载会话缓存"""
-        return CacheManager.load_cache(f"{site_name}_session.json") or {}
-
+    def detect_security_challenges(page):
+        """检测登录页面上的安全验证类型"""
+        logger.info("🛡️ 开始检测登录页面的安全验证...")
+        
+        challenges = {
+            'cloudflare_turnstile': False,
+            'google_recaptcha': False,
+            'hcaptcha': False,
+            'cloudflare_protection': False,
+            'traditional_captcha': False,
+            'other_security': False
+        }
+        
+        try:
+            # 获取页面HTML内容
+            page_html = page.html
+            page_url = page.url
+            page_title = page.title
+            
+            logger.info(f"📄 页面标题: {page_title}")
+            logger.info(f"🌐 页面URL: {page_url}")
+            
+            # 检测Cloudflare Turnstile
+            turnstile_indicators = [
+                'challenges.cloudflare.com/cdn-cgi/challenge-platform',
+                'turnstile',
+                'cf-turnstile',
+                'data-sitekey',
+                'data-action'
+            ]
+            
+            for indicator in turnstile_indicators:
+                if indicator in page_html.lower():
+                    challenges['cloudflare_turnstile'] = True
+                    logger.warning(f"🔍 检测到Cloudflare Turnstile: {indicator}")
+                    break
+            
+            # 检测Google reCAPTCHA
+            recaptcha_indicators = [
+                'google.com/recaptcha',
+                'g-recaptcha',
+                'recaptcha/api',
+                'data-sitekey'
+            ]
+            
+            for indicator in recaptcha_indicators:
+                if indicator in page_html.lower():
+                    challenges['google_recaptcha'] = True
+                    logger.warning(f"🔍 检测到Google reCAPTCHA: {indicator}")
+                    break
+            
+            # 检测hCaptcha
+            hcaptcha_indicators = [
+                'hcaptcha.com',
+                'h-captcha',
+                'hcaptcha/api'
+            ]
+            
+            for indicator in hcaptcha_indicators:
+                if indicator in page_html.lower():
+                    challenges['hcaptcha'] = True
+                    logger.warning(f"🔍 检测到hCaptcha: {indicator}")
+                    break
+            
+            # 检测传统Cloudflare保护
+            cloudflare_indicators = [
+                'checking your browser',
+                'ddos protection',
+                'cloudflare',
+                'ray id',
+                'please wait'
+            ]
+            
+            for indicator in cloudflare_indicators:
+                if indicator in page_html.lower() or indicator in page_title.lower():
+                    challenges['cloudflare_protection'] = True
+                    logger.warning(f"🔍 检测到Cloudflare保护: {indicator}")
+                    break
+            
+            # 检测传统验证码
+            captcha_indicators = [
+                'captcha',
+                '验证码',
+                'captcha-image',
+                'input[name="captcha"]'
+            ]
+            
+            for indicator in captcha_indicators:
+                if indicator in page_html.lower():
+                    challenges['traditional_captcha'] = True
+                    logger.warning(f"🔍 检测到传统验证码: {indicator}")
+                    break
+            
+            # 检测其他安全措施
+            other_security_indicators = [
+                'security check',
+                'bot protection',
+                'anti-bot',
+                'rate limiting'
+            ]
+            
+            for indicator in other_security_indicators:
+                if indicator in page_html.lower():
+                    challenges['other_security'] = True
+                    logger.warning(f"🔍 检测到其他安全措施: {indicator}")
+                    break
+            
+            # 检查iframe中的验证服务
+            try:
+                iframes = page.eles('tag:iframe')
+                for iframe in iframes:
+                    src = iframe.attr('src', '')
+                    if src:
+                        if 'challenges.cloudflare.com' in src:
+                            challenges['cloudflare_turnstile'] = True
+                            logger.warning(f"🔍 检测到Cloudflare Turnstile iframe: {src}")
+                        elif 'google.com/recaptcha' in src:
+                            challenges['google_recaptcha'] = True
+                            logger.warning(f"🔍 检测到Google reCAPTCHA iframe: {src}")
+                        elif 'hcaptcha.com' in src:
+                            challenges['hcaptcha'] = True
+                            logger.warning(f"🔍 检测到hCaptcha iframe: {src}")
+            except Exception as e:
+                logger.debug(f"检查iframe时出错: {str(e)}")
+            
+            # 打印检测总结
+            SecurityDetector.print_detection_summary(challenges)
+            
+            return challenges
+            
+        except Exception as e:
+            logger.error(f"安全验证检测失败: {str(e)}")
+            return challenges
+    
     @staticmethod
-    def save_session(session_data, site_name):
-        """保存会话数据到缓存"""
-        return CacheManager.save_session(session_data, f"{site_name}_session.json")
+    def print_detection_summary(challenges):
+        """打印检测结果总结"""
+        logger.info("📊 安全验证检测总结:")
+        
+        detected_challenges = [name for name, detected in challenges.items() if detected]
+        
+        if detected_challenges:
+            logger.warning("⚠️ 检测到的安全验证:")
+            for challenge in detected_challenges:
+                logger.warning(f"   - {challenge.replace('_', ' ').title()}")
+            
+            if any([challenges['cloudflare_turnstile'], challenges['google_recaptcha'], challenges['hcaptcha']]):
+                logger.error("🚨 检测到高级验证码，在无头模式下可能无法自动解决")
+            else:
+                logger.info("✅ 未检测到高级验证码，可以尝试自动登录")
+        else:
+            logger.success("✅ 未检测到明显的安全验证")
+    
+    @staticmethod
+    def can_auto_login(challenges):
+        """判断是否可以自动登录"""
+        # 如果检测到高级验证码，在无头模式下很难自动解决
+        advanced_captchas = [
+            challenges['cloudflare_turnstile'],
+            challenges['google_recaptcha'], 
+            challenges['hcaptcha']
+        ]
+        
+        if any(advanced_captchas) and HEADLESS:
+            logger.error("❌ 检测到高级验证码且在无头模式下，无法自动登录")
+            return False
+        
+        return True
 
 # ======================== Cloudflare处理器 ========================
 class CloudflareHandler:
@@ -152,129 +306,6 @@ class CloudflareHandler:
         
         logger.warning("⚠️ Cloudflare处理超时，继续后续流程")
         return True
-
-# ======================== 验证码处理器 ========================
-class CaptchaHandler:
-    """验证码处理类"""
-    
-    @staticmethod
-    def resolve_captcha(page):
-        """验证码解决流程"""
-        logger.warning("⚠️ 检测到验证码要求")
-        
-        # 首先尝试OCR.space API
-        if CAPTCHA_OCR_API:
-            api_result = CaptchaHandler.use_ocr_api(page)
-            if api_result:
-                logger.info(f"OCR API识别到验证码: {api_result}")
-                if CaptchaHandler.input_captcha(page, api_result):
-                    return True
-        
-        # 如果OCR API失败，尝试其他方法
-        logger.error("❌ 验证码解决失败，需要人工干预")
-        return False
-
-    @staticmethod
-    def find_captcha_element(page):
-        """查找验证码元素"""
-        captcha_selectors = [
-            'img.captcha-image',
-            'img.captcha',
-            '#captcha-image',
-            'img[alt*="captcha"]',
-            'img[alt*="验证码"]',
-            '.captcha img',
-            '#challenge-form img'
-        ]
-        
-        for selector in captcha_selectors:
-            try:
-                element = page.ele(selector, timeout=5)
-                if element and element.is_displayed:
-                    logger.info(f"找到验证码元素: {selector}")
-                    return element
-            except Exception:
-                continue
-        
-        logger.warning("未找到可见的验证码元素")
-        return None
-
-    @staticmethod
-    def use_ocr_api(page):
-        """调用OCR.space API"""
-        try:
-            captcha_element = CaptchaHandler.find_captcha_element(page)
-            if not captcha_element:
-                return None
-                
-            # 截图验证码
-            captcha_bytes = captcha_element.screenshot()
-            
-            # 调用OCR API
-            response = requests.post(
-                'https://api.ocr.space/parse/image',
-                files={'image': ('captcha.png', captcha_bytes, 'image/png')},
-                data={
-                    'apikey': CAPTCHA_OCR_API,
-                    'language': 'eng',
-                    'OCREngine': '2',
-                    'scale': 'true',
-                    'isTable': 'false'
-                },
-                timeout=30
-            )
-            
-            if response.status_code == 200:
-                result = response.json()
-                if result.get('ParsedResults'):
-                    parsed_text = result['ParsedResults'][0].get('ParsedText', '').strip()
-                    # 清理识别结果
-                    parsed_text = ''.join(c for c in parsed_text if c.isalnum())
-                    return parsed_text if parsed_text else None
-            
-            logger.warning(f"OCR API返回异常: {response.status_code}")
-            return None
-            
-        except Exception as e:
-            logger.debug(f"OCR API调用失败: {str(e)}")
-            return None
-
-    @staticmethod
-    def input_captcha(page, captcha_text):
-        """输入验证码"""
-        try:
-            input_selectors = [
-                'input#login-account-captcha',
-                'input.captcha-input',
-                'input[placeholder*="验证码"]',
-                'input[name="captcha"]',
-                'input[type="text"][name*="captcha"]',
-                '#challenge-form input[type="text"]'
-            ]
-            
-            captcha_input = None
-            for selector in input_selectors:
-                try:
-                    captcha_input = page.ele(selector, timeout=5)
-                    if captcha_input:
-                        break
-                except Exception:
-                    continue
-            
-            if not captcha_input:
-                logger.error("未找到验证码输入框")
-                return False
-                
-            # 清空并输入验证码
-            captcha_input.input('')
-            captcha_input.input(captcha_text)
-            
-            logger.info(f"验证码输入完成: {captcha_text}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"验证码输入失败: {str(e)}")
-            return False
 
 # ======================== 重试装饰器 ========================
 def retry_decorator(retries=3):
@@ -318,9 +349,6 @@ class LinuxDoBrowser:
         
         self.browser = Chromium(co)
         self.page = self.browser.new_tab()
-        
-        # 加载会话数据
-        self.session_data = CacheManager.load_session(self.site_name)
 
     def strict_check_login_status(self):
         """严格检查登录状态 - 在latest页面验证用户元素"""
@@ -435,12 +463,30 @@ class LinuxDoBrowser:
             logger.error(f"缓存登录失败: {str(e)}")
             return False
 
-    def handle_login_form(self):
-        """处理登录表单"""
+    def analyze_login_page(self):
+        """分析登录页面，检测安全验证"""
+        logger.info("🔍 分析登录页面...")
+        
+        # 导航到登录页面
+        self.page.get(self.site_config['login_url'])
+        time.sleep(5)
+        
+        # 处理Cloudflare
+        CloudflareHandler.handle_cloudflare(self.page)
+        
+        # 检测安全验证
+        challenges = SecurityDetector.detect_security_challenges(self.page)
+        
+        # 截图保存当前页面状态
+        self.page.get_screenshot(f"login_analysis_{self.site_name}.png")
+        
+        return challenges
+
+    def attempt_auto_login(self, challenges):
+        """尝试自动登录"""
+        logger.info("🔐 尝试自动登录...")
+        
         try:
-            # 截图用于调试
-            self.page.get_screenshot(f"login_form_{self.site_name}.png")
-            
             # 输入用户名和密码
             username_input = self.page.ele("@id=login-account-name", timeout=10)
             password_input = self.page.ele("@id=login-account-password", timeout=10)
@@ -457,13 +503,6 @@ class LinuxDoBrowser:
             password_input.input('')
             password_input.input(self.password)
             
-            # 检查是否有验证码
-            if CaptchaHandler.find_captcha_element(self.page):
-                logger.warning("⚠️ 检测到验证码，尝试自动解决")
-                if not CaptchaHandler.resolve_captcha(self.page):
-                    logger.error("❌ 验证码解决失败，无法继续登录")
-                    return False
-            
             # 点击登录按钮
             login_button.click()
             time.sleep(10)
@@ -471,46 +510,23 @@ class LinuxDoBrowser:
             # 处理可能的Cloudflare
             CloudflareHandler.handle_cloudflare(self.page)
             
-            return True
+            # 验证登录是否成功
+            if self.strict_check_login_status():
+                logger.success("✅ 自动登录成功")
+                
+                # 保存cookies
+                cookies = self.page.cookies()
+                if cookies:
+                    CacheManager.save_cookies(cookies, self.site_name)
+                    logger.info("💾 保存新的cookies")
+                
+                return True
+            else:
+                logger.error("❌ 自动登录失败")
+                return False
             
         except Exception as e:
-            logger.error(f"登录表单处理失败: {str(e)}")
-            return False
-
-    def perform_login(self):
-        """执行登录流程"""
-        logger.info("🔐 开始登录流程")
-        
-        # 导航到登录页面
-        self.page.get(self.site_config['login_url'])
-        time.sleep(5)
-        
-        # 处理Cloudflare
-        CloudflareHandler.handle_cloudflare(self.page)
-        
-        # 处理登录表单
-        if not self.handle_login_form():
-            return False
-        
-        # 验证登录是否成功
-        if self.strict_check_login_status():
-            logger.success("✅ 登录成功")
-            
-            # 保存cookies和会话
-            cookies = self.page.cookies()
-            if cookies:
-                CacheManager.save_cookies(cookies, self.site_name)
-            
-            session_data = {
-                'last_login': datetime.now().isoformat(),
-                'username': self.username,
-                'site': self.site_name
-            }
-            CacheManager.save_session(session_data, self.site_name)
-            
-            return True
-        else:
-            logger.error("❌ 登录失败")
+            logger.error(f"自动登录过程出错: {str(e)}")
             return False
 
     def ensure_logged_in(self):
@@ -521,9 +537,21 @@ class LinuxDoBrowser:
         if self.try_cookie_login():
             return True
         
-        # Cookie登录失败，执行完整登录流程
-        logger.info("🔄 Cookie登录失败，开始完整登录流程")
-        return self.perform_login()
+        # Cookie登录失败，分析登录页面
+        logger.info("🔄 Cookie登录失败，分析登录页面")
+        challenges = self.analyze_login_page()
+        
+        # 判断是否可以自动登录
+        if SecurityDetector.can_auto_login(challenges):
+            logger.info("🟡 尝试自动登录...")
+            if self.attempt_auto_login(challenges):
+                return True
+            else:
+                logger.error("❌ 自动登录失败")
+                return False
+        else:
+            logger.error("❌ 检测到无法自动解决的验证码，登录失败")
+            return False
 
     @retry_decorator()
     def click_one_topic(self, topic_url):
