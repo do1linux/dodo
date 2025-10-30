@@ -1,117 +1,79 @@
-name: LinuxDo Multi-Site Automation
+name: LinuxDo Daily Check-in
 
 on:
-  workflow_dispatch:
-    inputs:
-      site_selector:
-        description: '选择要运行的站点'
-        required: false
-        default: 'all'
-        type: choice
-        options:
-          - all
-          - linux_do
-          - idcflare
   schedule:
-    - cron: '0 * * * *'
+    - cron: '0 */6 * * *'  # 每6小时执行一次
+  workflow_dispatch:
 
 jobs:
-  automate:
-    runs-on: ubuntu-latest
+  run_script:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Install system dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 \
-          libcups2 libdrm2 libxkbcommon0 libxdamage1 libxcomposite1 \
-          libxrandr2 libgbm1 libpango-1.0-0 libcairo2 \
-          libatspi2.0-0 libx11-xcb1 libasound2t64 \
-          tesseract-ocr tesseract-ocr-chi-sim tesseract-ocr-eng \
-          python3-pil python3-pip \
-          libffi8 libx264-164
-
-    - name: Cache Playwright browsers
-      uses: actions/cache@v4
-      id: playwright-cache
-      with:
-        path: ~/.cache/ms-playwright
-        key: ${{ runner.os }}-playwright-${{ hashFiles('requirements.txt') }}
-        restore-keys: |
-          ${{ runner.os }}-playwright-
-
-    # 恢复缓存 - 使用带版本的基础键，允许恢复最近的缓存
-    - name: Restore automation cache
-      uses: actions/cache@v4
-      id: automation-cache
-      with:
-        path: |
-          *.json
-          *.log
-        key: ${{ runner.os }}-automation-cache-v2-${{ github.run_id }}
-        restore-keys: |
-          ${{ runner.os }}-automation-cache-v2-
-          ${{ runner.os }}-automation-cache-
-
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.12'
-
-    - name: Install Python dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        if [ "${{ steps.playwright-cache.outputs.cache-hit }}" != 'true' ]; then
-          python -m playwright install chromium
-        fi
-
-    - name: Run automation script
-      timeout-minutes: 45
-      env:
-        LINUXDO_USERNAME: ${{ secrets.LINUXDO_USERNAME }}
-        LINUXDO_PASSWORD: ${{ secrets.LINUXDO_PASSWORD }}
-        IDCFLARE_USERNAME: ${{ secrets.IDCFLARE_USERNAME }}
-        IDCFLARE_PASSWORD: ${{ secrets.IDCFLARE_PASSWORD }}
-        HEADLESS: 'true'
-      run: |
-        echo "🚀 开始执行多站点自动化脚本..."
-        # 显示当前目录状态
-        echo "📁 运行前目录状态:"
-        ls -la *.json 2>/dev/null || echo "无JSON缓存文件"
+      - name: Checkout code
+        uses: actions/checkout@v4
         
-        # 如果有缓存文件，显示年龄
-        for file in *.json; do
-          if [ -f "$file" ]; then
-            file_age=$(( ($(date +%s) - $(stat -c %Y "$file")) / 3600 ))
-            echo "📄 $file - 年龄: ${file_age} 小时"
-          fi
-        done
-        
-        timeout 3600s python main.py || echo "⏰ 脚本执行完成"
-
-    # 保存缓存 - 总是保存最新状态，不限制成功状态
-    - name: Save automation cache
-      uses: actions/cache@v4
-      with:
-        path: |
-          *.json
-          *.log
-        key: ${{ runner.os }}-automation-cache-v2-${{ github.run_id }}
-
-    - name: Upload results
-      uses: actions/upload-artifact@v4
-      if: always()
-      with:
-        name: automation-results
-        path: |
-          final_status_*.json
-          session_data_*.json
-          cf_cookies_*.json
-          browser_state_*.json
-          *.png
-          *.log
-        retention-days: 7
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget curl gnupg
+          # 安装Playwright依赖
+          npx playwright install-deps
+          
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install playwright loguru tabulate requests
+          playwright install chromium
+          
+      - name: Cache Python packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt', '**/setup.py') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+            
+      - name: Run LinuxDo automation script
+        env:
+          LINUXDO_USERNAME: ${{ secrets.LINUXDO_USERNAME }}
+          LINUXDO_PASSWORD: ${{ secrets.LINUXDO_PASSWORD }}
+          BROWSE_ENABLED: ${{ secrets.BROWSE_ENABLED }}
+        run: |
+          echo "开始执行LinuxDo自动化脚本..."
+          # 创建缓存目录
+          mkdir -p cache
+          python main.py
+          echo "脚本执行完成"
+          
+      - name: Upload cache artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linuxdo-cache
+          path: cache/
+          retention-days: 7
+          
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: error-logs
+          path: |
+            *.log
+            cache/
+          retention-days: 7
+          
+      - name: Cleanup workflow runs
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          retain_days: 7
+          keep_minimum_runs: 5
