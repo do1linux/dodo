@@ -124,193 +124,91 @@ class CacheManager:
         file_path = CacheManager.get_cache_file_path(f"{site_name}_cookies.json")
         return os.path.exists(file_path)
 
-# ======================== 验证检测器 ========================
-class SecurityDetector:
-    """安全验证检测器"""
-    
-    @staticmethod
-    def detect_security_challenges(page):
-        """检测登录页面上的安全验证类型"""
-        logger.info("🛡️ 开始检测登录页面的安全验证...")
-        
-        challenges = {
-            'cloudflare_turnstile': False,
-            'google_recaptcha': False,
-            'hcaptcha': False,
-            'cloudflare_protection': False,
-            'traditional_captcha': False,
-            'other_security': False
-        }
-        
-        try:
-            # 获取页面HTML内容
-            page_html = page.html
-            page_url = page.url
-            page_title = page.title
-            
-            logger.info(f"📄 页面标题: {page_title}")
-            logger.info(f"🌐 页面URL: {page_url}")
-            
-            # 检测Cloudflare Turnstile
-            turnstile_indicators = [
-                'challenges.cloudflare.com/cdn-cgi/challenge-platform',
-                'turnstile',
-                'cf-turnstile',
-                'data-sitekey',
-                'data-action'
-            ]
-            
-            for indicator in turnstile_indicators:
-                if indicator in page_html.lower():
-                    challenges['cloudflare_turnstile'] = True
-                    logger.warning(f"🔍 检测到Cloudflare Turnstile: {indicator}")
-                    break
-            
-            # 检测Google reCAPTCHA
-            recaptcha_indicators = [
-                'google.com/recaptcha',
-                'g-recaptcha',
-                'recaptcha/api',
-                'data-sitekey'
-            ]
-            
-            for indicator in recaptcha_indicators:
-                if indicator in page_html.lower():
-                    challenges['google_recaptcha'] = True
-                    logger.warning(f"🔍 检测到Google reCAPTCHA: {indicator}")
-                    break
-            
-            # 检测hCaptcha
-            hcaptcha_indicators = [
-                'hcaptcha.com',
-                'h-captcha',
-                'hcaptcha/api'
-            ]
-            
-            for indicator in hcaptcha_indicators:
-                if indicator in page_html.lower():
-                    challenges['hcaptcha'] = True
-                    logger.warning(f"🔍 检测到hCaptcha: {indicator}")
-                    break
-            
-            # 检测传统Cloudflare保护
-            cloudflare_indicators = [
-                'checking your browser',
-                'ddos protection',
-                'cloudflare',
-                'ray id',
-                'please wait'
-            ]
-            
-            for indicator in cloudflare_indicators:
-                if indicator in page_html.lower() or indicator in page_title.lower():
-                    challenges['cloudflare_protection'] = True
-                    logger.warning(f"🔍 检测到Cloudflare保护: {indicator}")
-                    break
-            
-            # 检测传统验证码
-            captcha_indicators = [
-                'captcha',
-                '验证码',
-                'captcha-image',
-                'input[name="captcha"]'
-            ]
-            
-            for indicator in captcha_indicators:
-                if indicator in page_html.lower():
-                    challenges['traditional_captcha'] = True
-                    logger.warning(f"🔍 检测到传统验证码: {indicator}")
-                    break
-            
-            # 检测其他安全措施
-            other_security_indicators = [
-                'security check',
-                'bot protection',
-                'anti-bot',
-                'rate limiting'
-            ]
-            
-            for indicator in other_security_indicators:
-                if indicator in page_html.lower():
-                    challenges['other_security'] = True
-                    logger.warning(f"🔍 检测到其他安全措施: {indicator}")
-                    break
-            
-            # 打印检测总结
-            SecurityDetector.print_detection_summary(challenges)
-            
-            return challenges
-            
-        except Exception as e:
-            logger.error(f"安全验证检测失败: {str(e)}")
-            return challenges
-    
-    @staticmethod
-    def print_detection_summary(challenges):
-        """打印检测结果总结"""
-        logger.info("📊 安全验证检测总结:")
-        
-        detected_challenges = [name for name, detected in challenges.items() if detected]
-        
-        if detected_challenges:
-            logger.warning("⚠️ 检测到的安全验证:")
-            for challenge in detected_challenges:
-                logger.warning(f"   - {challenge.replace('_', ' ').title()}")
-            
-            if any([challenges['cloudflare_turnstile'], challenges['google_recaptcha'], challenges['hcaptcha']]):
-                logger.error("🚨 检测到高级验证码，在无头模式下可能无法自动解决")
-            else:
-                logger.info("✅ 未检测到高级验证码，可以尝试自动登录")
-        else:
-            logger.success("✅ 未检测到明显的安全验证")
-    
-    @staticmethod
-    def can_auto_login(challenges):
-        """判断是否可以自动登录"""
-        # 如果检测到高级验证码，在无头模式下很难自动解决
-        advanced_captchas = [
-            challenges['cloudflare_turnstile'],
-            challenges['google_recaptcha'], 
-            challenges['hcaptcha']
-        ]
-        
-        if any(advanced_captchas) and HEADLESS:
-            logger.error("❌ 检测到高级验证码且在无头模式下，无法自动登录")
-            return False
-        
-        return True
-
 # ======================== Cloudflare处理器 ========================
 class CloudflareHandler:
     """Cloudflare验证处理类"""
     
     @staticmethod
-    def handle_cloudflare(page, timeout=120):
-        """处理Cloudflare验证"""
-        logger.info("🛡️ 检查Cloudflare验证...")
-        start_time = time.time()
-        
-        while time.time() - start_time < timeout:
-            try:
-                page_title = page.title
-                current_url = page.url
+    def is_cf_cookie_valid(cookies):
+        """检查Cloudflare cookie是否有效"""
+        try:
+            if not cookies:
+                return False
                 
-                # 检查是否已经通过验证
+            for cookie in cookies:
+                if cookie.get('name') == 'cf_clearance':
+                    expires = cookie.get('expires', 0)
+                    # 检查cookie是否过期
+                    if expires == -1 or expires > time.time():
+                        return True
+            return False
+        except Exception:
+            return False
+
+    @staticmethod
+    def handle_cloudflare(page, max_attempts=8, timeout=180):
+        """处理Cloudflare验证"""
+        start_time = time.time()
+        logger.info("🛡️ 开始处理 Cloudflare验证")
+        
+        # 检查缓存的Cloudflare cookies
+        cached_cookies = CacheManager.load_cookies('linux_do')
+        cached_cf_valid = CloudflareHandler.is_cf_cookie_valid(cached_cookies)
+        
+        if cached_cf_valid:
+            logger.success("✅ 检测到有效的缓存Cloudflare cookie")
+            try:
+                # 尝试使用缓存cookies访问
+                if cached_cookies:
+                    page.set.cookies(cached_cookies)
+                    page.get("https://linux.do/")
+                    time.sleep(5)
+                    
+                    page_title = page.title
+                    if page_title and page_title != "请稍候…" and "Checking" not in page_title:
+                        logger.success("✅ 使用缓存成功绕过Cloudflare验证")
+                        return True
+            except Exception as e:
+                logger.warning(f"使用缓存绕过失败: {str(e)}")
+        
+        # 完整验证流程
+        logger.info("🔄 开始完整Cloudflare验证流程")
+        for attempt in range(max_attempts):
+            try:
+                current_url = page.url
+                page_title = page.title
+                
+                # 检查页面是否已经正常加载
                 if page_title and page_title != "请稍候…" and "Checking" not in page_title:
-                    logger.success("✅ Cloudflare验证已通过")
+                    logger.success("✅ 页面已正常加载，Cloudflare验证通过")
                     return True
                 
                 # 等待验证
-                wait_time = random.uniform(5, 10)
-                logger.info(f"⏳ 等待Cloudflare验证完成 ({wait_time:.1f}秒)")
+                wait_time = random.uniform(8, 15)
+                logger.info(f"⏳ 等待Cloudflare验证完成 ({wait_time:.1f}秒) - 尝试 {attempt + 1}/{max_attempts}")
                 time.sleep(wait_time)
                 
+                # 检查超时
+                if time.time() - start_time > timeout:
+                    logger.warning("⚠️ Cloudflare处理超时")
+                    break
+                    
             except Exception as e:
-                logger.warning(f"Cloudflare检查异常: {str(e)}")
-                time.sleep(5)
+                logger.error(f"Cloudflare处理异常 (尝试 {attempt + 1}): {str(e)}")
+                time.sleep(10)
         
-        logger.warning("⚠️ Cloudflare处理超时，继续后续流程")
-        return True
+        # 最终检查
+        try:
+            page_title = page.title
+            if page_title and page_title != "请稍候…" and "Checking" not in page_title:
+                logger.success("✅ 最终验证: Cloudflare验证通过")
+                return True
+            else:
+                logger.warning("⚠️ 最终验证: Cloudflare验证未完全通过，但继续后续流程")
+                return True
+        except Exception:
+            logger.warning("⚠️ 无法获取页面标题，继续后续流程")
+            return True
 
 # ======================== 重试装饰器 ========================
 def retry_decorator(retries=3):
@@ -329,29 +227,6 @@ def retry_decorator(retries=3):
         return wrapper
     return decorator
 
-# ======================== 智能登录策略 ========================
-class SmartLoginStrategy:
-    """智能登录策略"""
-    
-    @staticmethod
-    def evaluate_login_options(challenges, has_valid_cookies):
-        """评估登录选项"""
-        logger.info("🤔 评估登录策略...")
-        
-        # 策略1: 如果有有效cookie，优先使用
-        if has_valid_cookies:
-            logger.success("🎯 策略1: 使用缓存cookie登录")
-            return "use_cookie"
-        
-        # 策略2: 检查是否可以自动登录
-        if SecurityDetector.can_auto_login(challenges):
-            logger.info("🎯 策略2: 尝试自动登录")
-            return "auto_login"
-        
-        # 策略3: 备用方案
-        logger.warning("🎯 策略3: 备用方案 - 等待cookie缓存")
-        return "fallback"
-
 # ======================== 主浏览器类 ========================
 class LinuxDoBrowser:
     def __init__(self, site_config, credentials):
@@ -362,7 +237,7 @@ class LinuxDoBrowser:
         self.login_attempts = 0
         self.max_login_attempts = 2
         
-        # 浏览器配置
+        # 浏览器配置 - 使用第二个代码中的配置
         platformIdentifier = "Windows NT 10.0; Win64; x64"
 
         co = (
@@ -371,7 +246,12 @@ class LinuxDoBrowser:
             .incognito(True)
             .set_argument("--no-sandbox")
             .set_argument("--disable-blink-features=AutomationControlled")
+            .set_argument("--disable-features=VizDisplayCompositor")
+            .set_argument("--disable-background-timer-throttling")
+            .set_argument("--disable-backgrounding-occluded-windows")
+            .set_argument("--disable-renderer-backgrounding")
             .set_argument("--disable-dev-shm-usage")
+            .set_argument("--lang=zh-CN,zh;q=0.9,en;q=0.8")
         )
         co.set_user_agent(
             f"Mozilla/5.0 ({platformIdentifier}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
@@ -379,223 +259,294 @@ class LinuxDoBrowser:
         
         self.browser = Chromium(co)
         self.page = self.browser.new_tab()
+        
+        # 立即注入增强的反检测脚本
+        self.inject_enhanced_script()
 
-    def strict_check_login_status(self):
-        """严格检查登录状态 - 在latest页面验证用户元素"""
-        logger.info("🔍 在latest页面严格验证登录状态...")
+    def inject_enhanced_script(self, page=None):
+        """注入增强的反检测脚本"""
+        if page is None:
+            page = self.page
+            
+        enhanced_script = """
+        // 增强的反检测脚本
+        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
         
-        # 确保在latest页面
-        if not self.page.url.endswith('/latest'):
-            self.page.get(self.site_config['latest_topics_url'])
-            time.sleep(5)
+        // 模拟完整的浏览器环境
+        Object.defineProperty(navigator, 'plugins', { 
+            get: () => [1, 2, 3, 4, 5],
+            configurable: true
+        });
         
-        # 处理可能的Cloudflare
-        CloudflareHandler.handle_cloudflare(self.page)
+        Object.defineProperty(navigator, 'languages', { 
+            get: () => ['zh-CN', 'zh', 'en-US', 'en'] 
+        });
+        
+        // 屏蔽自动化特征
+        window.chrome = { 
+            runtime: {},
+            loadTimes: function() {},
+            csi: function() {}, 
+            app: {isInstalled: false}
+        };
+        
+        // 页面可见性API
+        Object.defineProperty(document, 'hidden', { get: () => false });
+        Object.defineProperty(document, 'visibilityState', { get: () => 'visible' });
+        
+        console.log('🔧 增强的JS环境模拟已加载');
+        """
         
         try:
-            # 方法1: 检查用户头像元素
-            avatar_selectors = [
-                'img.avatar',
-                '.user-avatar',
-                '.current-user img',
-                '[class*="avatar"]',
-                'img[src*="avatar"]'
-            ]
+            page.run_js(enhanced_script)
+            logger.info("✅ 增强的反检测脚本已注入")
+            return True
+        except Exception as e:
+            logger.warning(f"注入脚本失败: {str(e)}")
+            return False
+
+    def get_all_cookies(self):
+        """获取所有cookies"""
+        try:
+            # 使用page.cookies()
+            cookies = self.page.cookies()
+            if cookies:
+                logger.info(f"✅ 获取到 {len(cookies)} 个cookies")
+                return cookies
             
-            for selector in avatar_selectors:
-                try:
-                    avatar_element = self.page.ele(selector, timeout=3)
-                    if avatar_element and avatar_element.is_displayed:
-                        logger.success(f"✅ 找到用户头像元素: {selector}")
-                        return True
-                except:
-                    continue
+            logger.warning("❌ 无法获取cookies")
+            return None
             
-            # 方法2: 检查用户下拉菜单
-            user_menu_selectors = [
-                '#current-user',
-                '.current-user',
-                '.header-dropdown-toggle',
-                '[data-user-menu]',
-                '.user-menu'
-            ]
+        except Exception as e:
+            logger.error(f"获取cookies时出错: {str(e)}")
+            return None
+
+    def save_cookies_to_cache(self):
+        """保存cookies到缓存"""
+        try:
+            # 等待一段时间确保cookies设置完成
+            time.sleep(3)
             
-            for selector in user_menu_selectors:
-                try:
-                    user_element = self.page.ele(selector, timeout=3)
-                    if user_element and user_element.is_displayed:
-                        logger.success(f"✅ 找到用户菜单元素: {selector}")
-                        return True
-                except:
-                    continue
+            # 保存cookies
+            cookies = self.get_all_cookies()
+            if cookies:
+                logger.info(f"🔍 成功获取到 {len(cookies)} 个cookies")
+                success = CacheManager.save_cookies(cookies, self.site_name)
+                if success:
+                    logger.info("✅ Cookies缓存已保存")
+                else:
+                    logger.warning("⚠️ Cookies缓存保存失败")
+            else:
+                logger.warning("⚠️ 无法获取cookies，检查浏览器状态")
+                    
+            return True
+        except Exception as e:
+            logger.error(f"保存缓存失败: {str(e)}")
+            return False
+
+    def clear_caches(self):
+        """清除所有缓存文件"""
+        try:
+            cache_dir = CacheManager.get_cache_directory()
+            cache_files = [f"{self.site_name}_cookies.json"]
+            for file_name in cache_files:
+                file_path = os.path.join(cache_dir, file_name)
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                    logger.info(f"🗑️ 已清除缓存: {file_name}")
             
-            # 方法3: 检查页面内容中的用户名
-            if self.username:
-                page_content = self.page.html
-                if self.username.lower() in page_content.lower():
-                    logger.success(f"✅ 在页面内容中找到用户名: {self.username}")
+            logger.info("✅ 所有缓存已清除")
+            
+        except Exception as e:
+            logger.error(f"清除缓存失败: {str(e)}")
+
+    def try_cache_first_approach(self):
+        """尝试缓存优先访问策略"""
+        try:
+            # 检查是否有有效的Cloudflare缓存
+            cached_cookies = CacheManager.load_cookies(self.site_name)
+            cached_cf_valid = CloudflareHandler.is_cf_cookie_valid(cached_cookies)
+            
+            if cached_cf_valid:
+                logger.info("✅ 检测到有效的Cloudflare缓存，尝试直接访问")
+                # 设置缓存cookies
+                if cached_cookies:
+                    self.page.set.cookies(cached_cookies)
+                
+                self.page.get(self.site_config['home_url'])
+                time.sleep(5)
+                
+                login_status = self.check_login_status()
+                if login_status:
+                    logger.success("✅ 缓存优先流程成功 - 已登录")
                     return True
-            
-            # 方法4: 检查登录按钮（反证未登录）
-            login_selectors = [
-                '.login-button', 
-                'button:has-text("登录")', 
-                '#login-button',
-                'a[href*="/login"]',
-                '.btn-login'
+                else:
+                    logger.warning("⚠️ Cloudflare缓存有效但未登录，尝试登录")
+                    return False
+            else:
+                logger.info("📭 无有效Cloudflare缓存")
+                return False
+                
+        except Exception as e:
+            logger.error(f"缓存优先流程异常: {str(e)}")
+            return False
+
+    def check_login_status(self):
+        """检查登录状态"""
+        try:
+            # 检查用户相关元素
+            user_indicators = [
+                '#current-user', '#toggle-current-user', '.header-dropdown-toggle.current-user',
+                'img.avatar', '.user-menu', '[data-user-menu]'
             ]
             
-            for selector in login_selectors:
+            for selector in user_indicators:
                 try:
-                    login_btn = self.page.ele(selector, timeout=3)
-                    if login_btn and login_btn.is_displayed:
+                    user_elem = self.page.ele(selector)
+                    if user_elem:
+                        logger.success(f"✅ 检测到用户元素: {selector}")
+                        return self.verify_username()
+                except Exception:
+                    continue
+            
+            # 检查登录按钮
+            login_buttons = [
+                '.login-button', 'button:has-text("登录")', 
+                'button:has-text("Log In")', '.btn.btn-icon-text.login-button'
+            ]
+            
+            for selector in login_buttons:
+                try:
+                    login_btn = self.page.ele(selector)
+                    if login_btn:
                         logger.warning(f"❌ 检测到登录按钮: {selector}")
                         return False
-                except:
+                except Exception:
                     continue
             
-            logger.warning("⚠️ 无法确定登录状态，假设未登录")
-            return False
-            
-        except Exception as e:
-            logger.error(f"登录状态检查失败: {str(e)}")
-            return False
-
-    def try_cookie_login(self):
-        """尝试使用缓存的cookies登录"""
-        logger.info("🔄 尝试使用缓存cookies登录")
-        
-        cached_cookies = CacheManager.load_cookies(self.site_name)
-        if not cached_cookies:
-            logger.info("❌ 没有找到有效的缓存cookies")
-            return False
-        
-        try:
-            # 设置cookies
-            self.page.set.cookies(cached_cookies)
-            
-            # 跳转到latest页面验证登录状态
-            self.page.get(self.site_config['latest_topics_url'])
-            time.sleep(5)
-            
-            # 处理可能的Cloudflare
-            CloudflareHandler.handle_cloudflare(self.page)
-            
-            # 严格验证登录状态
-            if self.strict_check_login_status():
-                logger.success("✅ 使用缓存cookies登录成功")
-                return True
-            else:
-                logger.warning("❌ 缓存cookies已失效")
-                return False
+            # 如果无法确定状态
+            page_content = self.page.html
+            page_title = self.page.title
+            if page_title and "请稍候" not in page_title and "Checking" not in page_title:
+                if self.username and self.username.lower() in page_content.lower():
+                    logger.success(f"✅ 在页面内容中找到用户名: {self.username}")
+                    return True
                 
+                if len(page_content) > 1000:
+                    logger.success("✅ 页面显示正常内容，可能已登录")
+                    return True
+            
+            logger.warning(f"⚠️ 登录状态不确定，默认认为未登录。页面标题: {page_title}")
+            return False
+            
         except Exception as e:
-            logger.error(f"缓存登录失败: {str(e)}")
+            logger.warning(f"检查登录状态时出错: {str(e)}")
             return False
 
-    def analyze_login_page(self):
-        """分析登录页面，检测安全验证"""
-        logger.info("🔍 分析登录页面...")
+    def verify_username(self):
+        """验证用户名是否显示在页面上"""
+        # 方法1: 页面内容检查
+        page_content = self.page.html
+        if self.username and self.username.lower() in page_content.lower():
+            logger.success(f"✅ 在页面内容中找到用户名: {self.username}")
+            return True
         
+        # 方法2: 用户菜单点击
+        try:
+            user_click_selectors = ['img.avatar', '.current-user', '[data-user-menu]', '.header-dropdown-toggle']
+            for selector in user_click_selectors:
+                user_elem = self.page.ele(selector)
+                if user_elem:
+                    user_elem.click()
+                    time.sleep(2)
+                    
+                    user_menu_content = self.page.html
+                    if self.username and self.username.lower() in user_menu_content.lower():
+                        logger.success(f"✅ 在用户菜单中找到用户名: {self.username}")
+                        # 点击其他地方关闭菜单
+                        self.page.ele('body').click()
+                        return True
+                    
+                    self.page.ele('body').click()
+                    time.sleep(1)
+                    break
+        except Exception:
+            pass
+        
+        logger.warning(f"⚠️ 检测到用户元素但无法验证用户名 {self.username}，默认认为未登录")
+        return False
+
+    def login_linuxdo(self):
+        """Linux.do专用登录流程"""
+        logger.info("🔐 开始Linux.do登录流程")
+        
+        # 首先尝试缓存优先访问
+        cache_success = self.try_cache_first_approach()
+        if cache_success:
+            logger.success("✅ 缓存登录成功")
+            self.save_cookies_to_cache()
+            return True
+
         # 导航到登录页面
         self.page.get(self.site_config['login_url'])
-        time.sleep(5)
+        time.sleep(3)
         
-        # 处理Cloudflare
-        CloudflareHandler.handle_cloudflare(self.page)
+        # 重新注入脚本以确保在登录页面生效
+        self.inject_enhanced_script()
         
-        # 检测安全验证
-        challenges = SecurityDetector.detect_security_challenges(self.page)
+        # 处理Cloudflare验证
+        cf_success = CloudflareHandler.handle_cloudflare(self.page)
+        if not cf_success:
+            logger.warning("⚠️ Cloudflare验证可能未完全通过，但继续登录流程")
         
-        # 截图保存当前页面状态
-        self.page.get_screenshot(f"login_analysis_{self.site_name}.png")
-        
-        return challenges
-
-    def attempt_simple_login(self):
-        """尝试简单登录（不处理复杂验证码）"""
-        logger.info("🔐 尝试简单登录...")
-        
+        # 填写登录信息
         try:
-            # 输入用户名和密码
-            username_input = self.page.ele("@id=login-account-name", timeout=10)
-            password_input = self.page.ele("@id=login-account-password", timeout=10)
-            login_button = self.page.ele("@id=login-button", timeout=10)
+            # 等待登录表单加载
+            time.sleep(2)
             
-            if not all([username_input, password_input, login_button]):
+            username_field = self.page.ele("@id=login-account-name")
+            password_field = self.page.ele("@id=login-account-password")
+            login_button = self.page.ele("@id=login-button")
+            
+            if username_field and password_field and login_button:
+                username_field.input(self.username)
+                password_field.input(self.password)
+                
+                # 点击登录按钮
+                login_button.click()
+                time.sleep(10)  # 增加等待时间确保登录完成
+                
+                # 检查登录是否成功
+                login_success = self.check_login_status()
+                if login_success:
+                    logger.success("✅ 登录成功")
+                    # 保存缓存
+                    self.save_cookies_to_cache()
+                    return True
+                else:
+                    logger.error("❌ 登录失败")
+                    # 登录失败时清除可能损坏的缓存
+                    self.clear_caches()
+                    return False
+            else:
                 logger.error("❌ 找不到登录表单元素")
                 return False
-            
-            # 清空并输入凭据
-            username_input.input('')
-            username_input.input(self.username)
-            
-            password_input.input('')
-            password_input.input(self.password)
-            
-            # 点击登录按钮
-            login_button.click()
-            time.sleep(10)
-            
-            # 处理可能的Cloudflare
-            CloudflareHandler.handle_cloudflare(self.page)
-            
-            # 验证登录是否成功
-            if self.strict_check_login_status():
-                logger.success("✅ 简单登录成功")
                 
-                # 保存cookies
-                cookies = self.page.cookies()
-                if cookies:
-                    CacheManager.save_cookies(cookies, self.site_name)
-                    logger.info("💾 保存新的cookies")
-                
-                return True
-            else:
-                logger.error("❌ 简单登录失败")
-                return False
-            
         except Exception as e:
-            logger.error(f"简单登录过程出错: {str(e)}")
+            logger.error(f"❌ 登录过程出错: {str(e)}")
             return False
 
     def ensure_logged_in(self):
-        """确保用户已登录 - 智能策略"""
-        logger.info("🎯 智能登录策略启动")
+        """确保用户已登录 - 简化策略"""
+        logger.info("🎯 开始登录流程")
         
-        # 检查cookies文件是否存在
-        if CacheManager.cookies_exist(self.site_name):
-            logger.info("📦 检测到cookies文件，尝试使用")
-            if self.try_cookie_login():
-                return True
-            else:
-                logger.warning("❌ cookies文件无效，继续其他登录方式")
+        # 直接使用Linux.do专用登录流程
+        if self.site_name == 'linux_do':
+            return self.login_linuxdo()
         else:
-            logger.info("❌ 未找到cookies文件，需要完整登录")
-        
-        # 策略2: 分析登录页面
-        logger.info("🔄 分析登录页面")
-        challenges = self.analyze_login_page()
-        
-        # 评估登录选项
-        strategy = SmartLoginStrategy.evaluate_login_options(
-            challenges, 
-            has_valid_cookies=False
-        )
-        
-        if strategy == "auto_login":
-            # 尝试简单登录
-            if self.attempt_simple_login():
-                return True
-        elif strategy == "fallback":
-            # 备用方案：等待并重试
-            logger.info("⏳ 备用方案：等待后重试...")
-            time.sleep(10)
-            if self.attempt_simple_login():
-                return True
-        
-        logger.error("❌ 所有登录策略均失败")
-        return False
+            # 其他站点的备用登录逻辑
+            logger.warning(f"⚠️ 站点 {self.site_name} 使用备用登录逻辑")
+            return self.login_linuxdo()  # 暂时都使用相同的逻辑
 
     @retry_decorator()
     def click_one_topic(self, topic_url):
@@ -605,8 +556,11 @@ class LinuxDoBrowser:
             new_page.get(topic_url)
             time.sleep(3)
             
-            # 随机决定是否点赞 (0.3%概率)
-            if random.random() < 0.003:  
+            # 注入脚本到新页面
+            self.inject_enhanced_script(new_page)
+            
+            # 随机决定是否点赞 (0.5%概率)
+            if random.random() < 0.005:  
                 self.click_like(new_page)
             
             # 浏览帖子内容
@@ -640,10 +594,10 @@ class LinuxDoBrowser:
         """浏览帖子内容"""
         prev_url = None
         
-        # 开始自动滚动，最多滚动10次
-        for i in range(10):
+        # 开始自动滚动，最多滚动8次
+        for i in range(8):
             # 随机滚动一段距离
-            scroll_distance = random.randint(550, 650)
+            scroll_distance = random.randint(400, 800)
             logger.info(f"向下滚动 {scroll_distance} 像素... (第{i+1}次)")
             page.run_js(f"window.scrollBy(0, {scroll_distance})")
 
@@ -687,10 +641,11 @@ class LinuxDoBrowser:
                 logger.error("❌ 没有找到主题列表")
                 return False
             
-            logger.info(f"发现 {len(topic_list)} 个主题帖，随机选择10个")
+            logger.info(f"发现 {len(topic_list)} 个主题帖，随机选择5-8个")
             
             # 随机选择主题
-            selected_topics = random.sample(topic_list, min(10, len(topic_list)))
+            browse_count = min(random.randint(5, 8), len(topic_list))
+            selected_topics = random.sample(topic_list, browse_count)
             success_count = 0
             
             for i, topic in enumerate(selected_topics):
@@ -708,7 +663,7 @@ class LinuxDoBrowser:
                         success_count += 1
                     
                     # 随机等待
-                    wait_time = random.uniform(3, 8)
+                    wait_time = random.uniform(5, 12)
                     time.sleep(wait_time)
                     
                 except Exception as e:
@@ -833,7 +788,7 @@ def main():
     logger.info(f"❌ 失败站点: {', '.join(failed_sites) if failed_sites else '无'}")
     
     # 如果有成功站点或者只是登录失败但获取了信息，不算完全失败
-    if success_sites or (failed_sites and "获取连接信息失败" not in str(failed_sites)):
+    if success_sites:
         logger.success("🎉 部分任务完成")
         sys.exit(0)
     else:
