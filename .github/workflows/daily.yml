@@ -65,6 +65,13 @@ jobs:
     - name: Create cache directory
       run: mkdir -p cache
 
+    - name: Download previous cookies
+      uses: actions/download-artifact@v4
+      with:
+        name: linux-do-cookies
+        path: cache/
+      continue-on-error: true  # 如果之前没有cookies，继续执行
+
     - name: Run automation script
       timeout-minutes: 45
       env:
@@ -77,7 +84,22 @@ jobs:
         BROWSE_ENABLED: 'true'
       run: |
         echo "🚀 开始执行多站点自动化脚本..."
+        echo "📦 检查cookies文件..."
+        if [ -f "cache/linux_do_cookies.json" ]; then
+          echo "✅ 找到缓存的cookies文件"
+        else
+          echo "❌ 未找到缓存的cookies文件，将进行完整登录"
+        fi
         python main.py
+
+    - name: Upload new cookies
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: linux-do-cookies
+        path: cache/linux_do_cookies.json
+        retention-days: 30
+        overwrite: true  # 覆盖旧的cookies
 
     - name: Upload automation results
       uses: actions/upload-artifact@v4
@@ -89,11 +111,3 @@ jobs:
           *.log
           *.png
         retention-days: 7
-
-    - name: Upload cookies for reuse
-      uses: actions/upload-artifact@v4
-      if: always()
-      with:
-        name: linux-do-cookies
-        path: cache/linux_do_cookies.json
-        retention-days: 30
