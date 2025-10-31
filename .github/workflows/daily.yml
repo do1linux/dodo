@@ -32,6 +32,14 @@ jobs:
           libatspi2.0-0 libx11-xcb1 libasound2t64 \
           python3-pip
 
+    - name: Cache Python dependencies
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
     - name: Cache Playwright browsers
       uses: actions/cache@v4
       id: playwright-cache
@@ -54,6 +62,9 @@ jobs:
           python -m playwright install chromium
         fi
 
+    - name: Create cache directory
+      run: mkdir -p cache
+
     - name: Run automation script
       timeout-minutes: 45
       env:
@@ -68,7 +79,7 @@ jobs:
         echo "🚀 开始执行多站点自动化脚本..."
         python main.py
 
-    - name: Upload results
+    - name: Upload automation results
       uses: actions/upload-artifact@v4
       if: always()
       with:
@@ -78,3 +89,11 @@ jobs:
           *.log
           *.png
         retention-days: 7
+
+    - name: Upload cookies for reuse
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: linux-do-cookies
+        path: cache/linux_do_cookies.json
+        retention-days: 30
