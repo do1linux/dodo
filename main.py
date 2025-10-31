@@ -118,6 +118,12 @@ class CacheManager:
         }
         return CacheManager.save_cache(cache_data, f"{site_name}_cookies.json")
 
+    @staticmethod
+    def cookies_exist(site_name):
+        """检查cookies文件是否存在"""
+        file_path = CacheManager.get_cache_file_path(f"{site_name}_cookies.json")
+        return os.path.exists(file_path)
+
 # ======================== 验证检测器 ========================
 class SecurityDetector:
     """安全验证检测器"""
@@ -557,12 +563,18 @@ class LinuxDoBrowser:
         """确保用户已登录 - 智能策略"""
         logger.info("🎯 智能登录策略启动")
         
-        # 策略1: 优先尝试cookie登录
-        if self.try_cookie_login():
-            return True
+        # 检查cookies文件是否存在
+        if CacheManager.cookies_exist(self.site_name):
+            logger.info("📦 检测到cookies文件，尝试使用")
+            if self.try_cookie_login():
+                return True
+            else:
+                logger.warning("❌ cookies文件无效，继续其他登录方式")
+        else:
+            logger.info("❌ 未找到cookies文件，需要完整登录")
         
         # 策略2: 分析登录页面
-        logger.info("🔄 Cookie登录失败，分析登录页面")
+        logger.info("🔄 分析登录页面")
         challenges = self.analyze_login_page()
         
         # 评估登录选项
