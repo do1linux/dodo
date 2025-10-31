@@ -756,8 +756,110 @@ class LinuxDoBrowser:
             logger.error(f"获取主题列表失败: {str(e)}")
             return False
 
+    def enhanced_get_connect_info(self, page, max_retries=3):
+        """增强的连接信息获取"""
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"🔄 尝试获取连接信息 ({attempt + 1}/{max_retries})")
+                
+                # 刷新页面确保最新状态
+                if attempt > 0:
+                    page.refresh()
+                    page.wait.doc_loaded()
+                    CloudflareHandler.handle_cloudflare(page)
+                
+                # 先确保页面稳定
+                page.wait.doc_loaded()
+                
+                # 处理可能的Cloudflare验证
+                CloudflareHandler.handle_cloudflare(page)
+                
+                # 等待更长时间确保页面完全加载
+                time.sleep(5)
+                
+                # 多种方式查找连接信息表格
+                table_selectors = [
+                    "table",
+                    ".table",
+                    ".connect-table",
+                    ".connection-info",
+                    "[class*='table']",
+                    "[class*='connect']"
+                ]
+                
+                for selector in table_selectors:
+                    try:
+                        table = page.ele(selector, timeout=10)
+                        if table:
+                            logger.info(f"✅ 找到表格元素: {selector}")
+                            
+                            # 提取表格数据
+                            rows = table.eles("tag:tr")
+                            info = []
+                            
+                            for row in rows:
+                                cells = row.eles("tag:td")
+                                if len(cells) >= 3:
+                                    project = cells[0].text.strip()
+                                    current = cells[1].text.strip()
+                                    requirement = cells[2].text.strip()
+                                    info.append([project, current, requirement])
+                            
+                            if info:
+                                return info
+                    except:
+                        continue
+                
+                # 如果找不到标准表格，尝试其他方式获取信息
+                logger.info("🔄 尝试其他方式获取连接信息...")
+                
+                # 方法1: 查找包含连接信息的任何元素
+                connect_selectors = [
+                    ".connect-info",
+                    ".connection-stats",
+                    ".user-stats",
+                    "[class*='connect']",
+                    "[class*='connection']"
+                ]
+                
+                for selector in connect_selectors:
+                    try:
+                        element = page.ele(selector, timeout=5)
+                        if element:
+                            text_content = element.text
+                            if text_content and len(text_content.strip()) > 10:
+                                logger.info(f"✅ 找到连接信息元素: {selector}")
+                                return [["连接信息", text_content[:100] + "...", "详见页面"]]
+                    except:
+                        continue
+                
+                # 方法2: 查找任何包含数字和统计信息的元素
+                stats_elements = page.eles('[class*="stat"]') + page.eles('[class*="count"]')
+                if stats_elements:
+                    stats_info = []
+                    for elem in stats_elements[:5]:  # 取前5个统计元素
+                        try:
+                            text = elem.text.strip()
+                            if text and any(char.isdigit() for char in text):
+                                stats_info.append(["统计信息", text, "-"])
+                        except:
+                            continue
+                    
+                    if stats_info:
+                        return stats_info
+                
+                logger.warning(f"⚠️ 第 {attempt + 1} 次尝试未找到连接信息")
+                time.sleep(3)  # 等待后重试
+                
+            except Exception as e:
+                logger.warning(f"⚠️ 第 {attempt + 1} 次尝试失败: {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(3)
+        
+        return None
+
     def print_connect_info(self):
-        """打印连接信息"""
+        """打印连接信息 - 改进版本"""
         logger.info("获取连接信息")
         try:
             # 首先验证登录状态
@@ -765,67 +867,62 @@ class LinuxDoBrowser:
                 logger.error("❌ 登录状态验证失败，无法获取连接信息")
                 return
             
-            page = self.browser.new_tab()
+            connect_page = self.browser.new_tab()
             connect_url = self.site_config.get('connect_url')
             if not connect_url:
                 logger.warning("⚠️ 该站点没有配置连接信息URL")
-                page.close()
+                connect_page.close()
                 return
                 
-            page.get(connect_url)
+            logger.info(f"🌐 访问连接信息页面: {connect_url}")
+            connect_page.get(connect_url)
             time.sleep(5)
             
             # 处理可能的Cloudflare
-            CloudflareHandler.handle_cloudflare(page)
+            CloudflareHandler.handle_cloudflare(connect_page)
             
-            # 等待页面加载完成
-            time.sleep(3)
+            # 注入反检测脚本
+            self.inject_enhanced_script(connect_page)
             
-            # 尝试多种表格选择器
-            table_selectors = [
-                "tag:table",
-                ".table",
-                ".connect-table",
-                "[class*='table']"
-            ]
+            # 使用增强的连接信息获取
+            connect_info = self.enhanced_get_connect_info(connect_page)
             
-            table_element = None
-            for selector in table_selectors:
-                try:
-                    table_element = page.ele(selector, timeout=10)
-                    if table_element:
-                        logger.info(f"✅ 找到表格元素: {selector}")
-                        break
-                except:
-                    continue
-            
-            if not table_element:
-                logger.error("❌ 未找到连接信息表格")
-                page.close()
-                return
-            
-            rows = table_element.eles("tag:tr")
-            info = []
-
-            for row in rows:
-                cells = row.eles("tag:td")
-                if len(cells) >= 3:
-                    project = cells[0].text.strip()
-                    current = cells[1].text.strip()
-                    requirement = cells[2].text.strip()
-                    info.append([project, current, requirement])
-
-            if info:
-                print(f"-------------- {self.site_name} Connect Info ----------------")
-                print(tabulate(info, headers=["项目", "当前", "要求"], tablefmt="pretty"))
+            if connect_info:
+                print(f"\n{'='*50}")
+                print(f"📊 {self.site_name.upper()} 连接信息")
+                print(f"{'='*50}")
+                print(tabulate(connect_info, headers=["项目", "当前", "要求"], tablefmt="pretty"))
+                print(f"{'='*50}\n")
                 logger.success("✅ 连接信息获取成功")
             else:
-                logger.warning("⚠️ 连接信息表格为空")
-                
-            page.close()
+                # 如果无法获取表格信息，尝试获取页面主要内容
+                try:
+                    main_content = connect_page.ele('tag:main') or connect_page.ele('.container') or connect_page.ele('tag:body')
+                    if main_content:
+                        content_text = main_content.text.strip()
+                        if content_text and len(content_text) > 50:
+                            print(f"\n{'='*50}")
+                            print(f"📊 {self.site_name.upper()} 页面内容")
+                            print(f"{'='*50}")
+                            # 只显示前500个字符避免信息过多
+                            print(content_text[:500] + "..." if len(content_text) > 500 else content_text)
+                            print(f"{'='*50}\n")
+                            logger.info("ℹ️  显示页面主要内容（未找到标准表格）")
+                        else:
+                            logger.warning("⚠️ 页面内容为空或过短")
+                    else:
+                        logger.warning("⚠️ 无法获取页面内容")
+                except Exception as e:
+                    logger.warning(f"⚠️ 获取页面内容失败: {e}")
+            
+            connect_page.close()
             
         except Exception as e:
-            logger.error(f"获取连接信息失败: {str(e)}")
+            logger.error(f"❌ 获取连接信息失败: {str(e)}")
+            try:
+                connect_page.close()
+            except:
+                pass
 
     def run(self):
         """运行主流程"""
