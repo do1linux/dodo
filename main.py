@@ -37,9 +37,18 @@ SITES = [
 
 # 读取账号
 def _get_credential(site: str):
+    # 根据站点名称，从环境变量中获取用户名和密码
+    username_env_var = f"{site.upper().replace('IDCFLARE', 'IDCFLARE')}_{'USERNAME'}"
+    password_env_var = f"{site.upper().replace('IDCFLARE', 'IDCFLARE')}_{'PASSWORD'}"
+    
+    # 获取环境变量的值
+    username = os.getenv(username_env_var)
+    password = os.getenv(password_env_var)
+    
+    # 返回包含用户名和密码的字典
     return {
-        "username": os.getenv(f"{site.upper()}_USERNAME"),
-        "password": os.getenv(f"{site.upper()}_PASSWORD"),
+        "username": username,
+        "password": password,
     }
 
 # -------------------- 缓存工具 --------------------
@@ -315,3 +324,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
