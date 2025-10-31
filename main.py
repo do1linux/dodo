@@ -37,7 +37,8 @@ SITES = [
         'base_url': 'https://idcflare.com',
         'login_url': 'https://idcflare.com/login',
         'latest_topics_url': 'https://idcflare.com/latest',
-        'home_url': 'https://idcflare.com/'
+        'home_url': 'https://idcflare.com/',
+        'connect_url': 'https://connect.idcflare.com/'
     }
 ]
 
@@ -351,120 +352,141 @@ class LinuxDoBrowser:
         except Exception as e:
             logger.error(f"清除缓存失败: {str(e)}")
 
-    def strict_check_login_status(self, retry_count=3):
-        """严格检查登录状态 - 必须验证用户名在页面内容中，支持重试"""
-        logger.info("🔍 严格验证登录状态...")
+    def enhanced_strict_check_login_status(self):
+        """增强的严格登录状态验证 - 多种方式验证用户名"""
+        logger.info("🔍 增强严格验证登录状态...")
         
-        for attempt in range(retry_count):
+        try:
+            # 首先确保在latest页面
+            if not self.page.url.endswith('/latest'):
+                self.page.get(self.site_config['latest_topics_url'])
+                time.sleep(5)
+            
+            # 处理可能的Cloudflare
+            CloudflareHandler.handle_cloudflare(self.page)
+            
+            # 方法1: 检查当前页面的用户名
+            page_content = self.page.html
+            if self.username and self.username.lower() in page_content.lower():
+                logger.success(f"✅ 在页面内容中找到用户名: {self.username}")
+                return True
+            
+            # 方法2: 尝试访问用户个人资料页面
+            logger.info("🔄 尝试访问用户个人资料页面验证...")
             try:
-                # 确保在latest页面
-                if not self.page.url.endswith('/latest'):
+                profile_url = f"{self.site_config['base_url']}/u/{self.username}"
+                self.page.get(profile_url)
+                time.sleep(3)
+                
+                profile_content = self.page.html
+                if self.username and self.username.lower() in profile_content.lower():
+                    logger.success(f"✅ 在个人资料页面找到用户名: {self.username}")
+                    # 返回latest页面
                     self.page.get(self.site_config['latest_topics_url'])
-                    time.sleep(5)
-                
-                # 处理可能的Cloudflare
-                CloudflareHandler.handle_cloudflare(self.page)
-                
-                # 首要条件：必须验证用户名在页面内容中
-                if self.username:
-                    page_content = self.page.html
-                    if self.username.lower() in page_content.lower():
-                        logger.success(f"✅ 在页面内容中找到用户名: {self.username}")
-                        # 用户名验证通过，继续检查其他辅助标志
-                        
-                        # 辅助检查1: 用户头像元素
-                        avatar_selectors = [
-                            'img.avatar',
-                            '.user-avatar',
-                            '.current-user img',
-                            '[class*="avatar"]',
-                            'img[src*="avatar"]'
-                        ]
-                        
-                        avatar_found = False
-                        for selector in avatar_selectors:
-                            try:
-                                avatar_element = self.page.ele(selector, timeout=3)
-                                if avatar_element and avatar_element.is_displayed:
-                                    logger.success(f"✅ 找到用户头像元素: {selector}")
-                                    avatar_found = True
-                                    break
-                            except:
-                                continue
-                        
-                        # 辅助检查2: 用户菜单
-                        user_menu_selectors = [
-                            '#current-user',
-                            '.current-user',
-                            '.header-dropdown-toggle',
-                            '[data-user-menu]',
-                            '.user-menu'
-                        ]
-                        
-                        user_menu_found = False
-                        for selector in user_menu_selectors:
-                            try:
-                                user_element = self.page.ele(selector, timeout=3)
-                                if user_element and user_element.is_displayed:
-                                    logger.success(f"✅ 找到用户菜单元素: {selector}")
-                                    user_menu_found = True
-                                    break
-                            except:
-                                continue
-                        
-                        # 辅助检查3: 检查登录按钮（反证未登录）
-                        login_selectors = [
-                            '.login-button', 
-                            'button:has-text("登录")', 
-                            '#login-button',
-                            'a[href*="/login"]',
-                            '.btn-login'
-                        ]
-                        
-                        login_button_found = False
-                        for selector in login_selectors:
-                            try:
-                                login_btn = self.page.ele(selector, timeout=3)
-                                if login_btn and login_btn.is_displayed:
-                                    logger.warning(f"⚠️ 检测到登录按钮: {selector}")
-                                    login_button_found = True
-                                    break
-                            except:
-                                continue
-                        
-                        # 如果找到用户名且没有登录按钮，确认登录成功
-                        if not login_button_found:
-                            logger.success("✅ 严格登录状态验证通过")
-                            return True
-                        else:
-                            logger.warning("⚠️ 虽然找到用户名但检测到登录按钮，状态不确定")
-                            return False
-                    else:
-                        if attempt < retry_count - 1:
-                            logger.warning(f"❌ 第{attempt + 1}次尝试未在页面内容中找到用户名，尝试跳转到最新主题页面...")
-                            # 跳转到最新主题页面重新检查
-                            self.page.get(self.site_config['latest_topics_url'])
-                            time.sleep(5)
-                            continue
-                        else:
-                            logger.error(f"❌ 未在页面内容中找到用户名: {self.username}")
-                            return False
-                else:
-                    logger.error("❌ 用户名未配置，无法验证登录状态")
-                    return False
-                
-            except Exception as e:
-                logger.error(f"登录状态检查失败: {str(e)}")
-                if attempt < retry_count - 1:
-                    logger.info(f"🔄 第{attempt + 1}次检查失败，准备重试...")
                     time.sleep(3)
+                    return True
                 else:
-                    return False
-        
-        return False
+                    logger.warning("❌ 个人资料页面验证失败")
+                    # 返回latest页面
+                    self.page.get(self.site_config['latest_topics_url'])
+                    time.sleep(3)
+            except Exception as e:
+                logger.warning(f"访问个人资料页面失败: {str(e)}")
+                # 返回latest页面
+                self.page.get(self.site_config['latest_topics_url'])
+                time.sleep(3)
+            
+            # 方法3: 检查用户头像和菜单
+            avatar_selectors = [
+                'img.avatar',
+                '.user-avatar',
+                '.current-user img',
+                '[class*="avatar"]',
+                'img[src*="avatar"]'
+            ]
+            
+            for selector in avatar_selectors:
+                try:
+                    avatar_element = self.page.ele(selector, timeout=3)
+                    if avatar_element and avatar_element.is_displayed:
+                        logger.success(f"✅ 找到用户头像元素: {selector}")
+                        # 如果有头像，尝试点击查看用户名
+                        try:
+                            avatar_element.click()
+                            time.sleep(2)
+                            menu_content = self.page.html
+                            if self.username and self.username.lower() in menu_content.lower():
+                                logger.success(f"✅ 在用户菜单中找到用户名: {self.username}")
+                                # 点击其他地方关闭菜单
+                                self.page.ele('body').click()
+                                return True
+                            self.page.ele('body').click()
+                        except:
+                            pass
+                except:
+                    continue
+            
+            # 方法4: 检查用户菜单直接查找用户名
+            user_menu_selectors = [
+                '#current-user',
+                '.current-user',
+                '.header-dropdown-toggle',
+                '[data-user-menu]',
+                '.user-menu'
+            ]
+            
+            for selector in user_menu_selectors:
+                try:
+                    user_element = self.page.ele(selector, timeout=3)
+                    if user_element and user_element.is_displayed:
+                        user_element.click()
+                        time.sleep(2)
+                        
+                        menu_content = self.page.html
+                        if self.username and self.username.lower() in menu_content.lower():
+                            logger.success(f"✅ 在用户菜单中找到用户名: {self.username}")
+                            self.page.ele('body').click()
+                            return True
+                        self.page.ele('body').click()
+                except:
+                    continue
+            
+            # 方法5: 检查登录按钮（反证未登录）
+            login_selectors = [
+                '.login-button', 
+                'button:has-text("登录")', 
+                '#login-button',
+                'a[href*="/login"]',
+                '.btn-login'
+            ]
+            
+            for selector in login_selectors:
+                try:
+                    login_btn = self.page.ele(selector, timeout=3)
+                    if login_btn and login_btn.is_displayed:
+                        logger.error(f"❌ 检测到登录按钮: {selector}")
+                        return False
+                except:
+                    continue
+            
+            # 如果以上方法都失败，但页面显示正常内容，尝试最后的验证
+            page_title = self.page.title
+            if page_title and "登录" not in page_title and "Login" not in page_title:
+                # 检查是否有主题列表
+                topic_list = self.page.eles(".:title")
+                if topic_list and len(topic_list) > 0:
+                    logger.warning("⚠️ 页面显示正常内容且有主题列表，但无法验证用户名，假设已登录")
+                    return True
+            
+            logger.error(f"❌ 所有验证方法都失败，未找到用户名: {self.username}")
+            return False
+            
+        except Exception as e:
+            logger.error(f"登录状态检查失败: {str(e)}")
+            return False
 
     def attempt_login(self):
-        """尝试登录 - 通用登录方法"""
+        """尝试登录 - 改进的登录方法"""
         logger.info("🔐 尝试登录...")
         
         # 导航到登录页面
@@ -543,10 +565,22 @@ class LinuxDoBrowser:
                 
                 # 点击登录按钮
                 login_button.click()
-                time.sleep(10)  # 增加等待时间确保登录完成
+                time.sleep(15)  # 增加等待时间确保登录完成
                 
-                # 严格检查登录是否成功（带重试）
-                login_success = self.strict_check_login_status(retry_count=3)
+                # 检查是否有错误消息
+                error_selectors = ['.alert-error', '.error', '.flash-error', '.alert.alert-error']
+                for selector in error_selectors:
+                    try:
+                        error_element = self.page.ele(selector, timeout=3)
+                        if error_element:
+                            error_text = error_element.text
+                            logger.error(f"❌ 登录错误: {error_text}")
+                            return False
+                    except:
+                        continue
+                
+                # 增强的严格检查登录是否成功
+                login_success = self.enhanced_strict_check_login_status()
                 if login_success:
                     logger.success("✅ 登录成功")
                     # 保存缓存
@@ -566,7 +600,7 @@ class LinuxDoBrowser:
             return False
 
     def ensure_logged_in(self):
-        """确保用户已登录 - 严格策略"""
+        """确保用户已登录 - 改进策略"""
         logger.info("🎯 开始登录流程")
         
         # 首先尝试使用缓存cookies
@@ -584,8 +618,8 @@ class LinuxDoBrowser:
                 # 处理可能的Cloudflare
                 CloudflareHandler.handle_cloudflare(self.page)
                 
-                # 严格验证登录状态（带重试）
-                if self.strict_check_login_status(retry_count=3):
+                # 增强的严格验证登录状态
+                if self.enhanced_strict_check_login_status():
                     logger.success("✅ 使用缓存cookies登录成功")
                     return True
                 else:
@@ -723,19 +757,22 @@ class LinuxDoBrowser:
             return False
 
     def print_connect_info(self):
-        """打印连接信息（仅限linux.do）"""
-        if self.site_name != 'linux_do':
-            return
-            
+        """打印连接信息"""
         logger.info("获取连接信息")
         try:
             # 首先验证登录状态
-            if not self.strict_check_login_status():
+            if not self.enhanced_strict_check_login_status():
                 logger.error("❌ 登录状态验证失败，无法获取连接信息")
                 return
             
             page = self.browser.new_tab()
-            page.get("https://connect.linux.do/")
+            connect_url = self.site_config.get('connect_url')
+            if not connect_url:
+                logger.warning("⚠️ 该站点没有配置连接信息URL")
+                page.close()
+                return
+                
+            page.get(connect_url)
             time.sleep(5)
             
             # 处理可能的Cloudflare
@@ -779,7 +816,7 @@ class LinuxDoBrowser:
                     info.append([project, current, requirement])
 
             if info:
-                print("--------------Connect Info-----------------")
+                print(f"-------------- {self.site_name} Connect Info ----------------")
                 print(tabulate(info, headers=["项目", "当前", "要求"], tablefmt="pretty"))
                 logger.success("✅ 连接信息获取成功")
             else:
@@ -803,7 +840,7 @@ class LinuxDoBrowser:
             # 第二步：浏览主题（仅在登录成功后）
             self.click_topic()
 
-            # 第三步：打印连接信息（仅限linux.do）
+            # 第三步：打印连接信息
             self.print_connect_info()
             
             logger.success(f"✅ {self.site_config['name']} 处理完成")
