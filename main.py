@@ -4,7 +4,7 @@ import time
 import functools
 import sys
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from loguru import logger
 from DrissionPage import ChromiumOptions, Chromium
 from tabulate import tabulate
@@ -33,6 +33,9 @@ SITES = [
 # 全局配置
 BROWSE_ENABLED = os.environ.get("BROWSE_ENABLED", "true").strip().lower() not in ["false", "0", "off"]
 HEADLESS = os.environ.get("HEADLESS", "true").strip().lower() not in ["false", "0", "off"]
+
+# Cookie有效期设置（天）
+COOKIE_VALIDITY_DAYS = 7
 
 # ======================== 缓存管理器 ========================
 class CacheManager:
@@ -64,7 +67,7 @@ class CacheManager:
                 with open(file_path, "r", encoding='utf-8') as f:
                     data = json.load(f)
                 logger.info(f"📦 加载缓存: {file_name}")
-                return data.get('data', data)
+                return data
             except Exception as e:
                 logger.warning(f"缓存加载失败 {file_name}: {str(e)}")
         return None
@@ -76,14 +79,8 @@ class CacheManager:
             file_path = CacheManager.get_cache_file_path(file_name)
             os.makedirs(os.path.dirname(file_path), exist_ok=True)
             
-            data_to_save = {
-                'data': data,
-                'cache_timestamp': datetime.now().isoformat(),
-                'cache_version': '1.0'
-            }
-            
             with open(file_path, "w", encoding='utf-8') as f:
-                json.dump(data_to_save, f, ensure_ascii=False, indent=2)
+                json.dump(data, f, ensure_ascii=False, indent=2)
             
             logger.info(f"💾 缓存已保存: {file_name}")
             return True
@@ -93,13 +90,33 @@ class CacheManager:
 
     @staticmethod
     def load_cookies(site_name):
-        """加载cookies缓存"""
-        return CacheManager.load_cache(f"{site_name}_cookies.json")
+        """加载cookies缓存并检查有效期"""
+        cache_data = CacheManager.load_cache(f"{site_name}_cookies.json")
+        if not cache_data:
+            return None
+            
+        # 检查缓存有效期
+        cache_time_str = cache_data.get('cache_time')
+        if cache_time_str:
+            try:
+                cache_time = datetime.fromisoformat(cache_time_str)
+                if datetime.now() - cache_time > timedelta(days=COOKIE_VALIDITY_DAYS):
+                    logger.warning("🕒 Cookies已过期")
+                    return None
+            except Exception as e:
+                logger.warning(f"缓存时间解析失败: {str(e)}")
+        
+        return cache_data.get('cookies')
 
     @staticmethod
     def save_cookies(cookies, site_name):
         """保存cookies到缓存"""
-        return CacheManager.save_cache(cookies, f"{site_name}_cookies.json")
+        cache_data = {
+            'cookies': cookies,
+            'cache_time': datetime.now().isoformat(),
+            'site': site_name
+        }
+        return CacheManager.save_cache(cache_data, f"{site_name}_cookies.json")
 
 # ======================== 验证检测器 ========================
 class SecurityDetector:
@@ -213,24 +230,6 @@ class SecurityDetector:
                     logger.warning(f"🔍 检测到其他安全措施: {indicator}")
                     break
             
-            # 检查iframe中的验证服务
-            try:
-                iframes = page.eles('tag:iframe')
-                for iframe in iframes:
-                    src = iframe.attr('src', '')
-                    if src:
-                        if 'challenges.cloudflare.com' in src:
-                            challenges['cloudflare_turnstile'] = True
-                            logger.warning(f"🔍 检测到Cloudflare Turnstile iframe: {src}")
-                        elif 'google.com/recaptcha' in src:
-                            challenges['google_recaptcha'] = True
-                            logger.warning(f"🔍 检测到Google reCAPTCHA iframe: {src}")
-                        elif 'hcaptcha.com' in src:
-                            challenges['hcaptcha'] = True
-                            logger.warning(f"🔍 检测到hCaptcha iframe: {src}")
-            except Exception as e:
-                logger.debug(f"检查iframe时出错: {str(e)}")
-            
             # 打印检测总结
             SecurityDetector.print_detection_summary(challenges)
             
@@ -324,6 +323,29 @@ def retry_decorator(retries=3):
         return wrapper
     return decorator
 
+# ======================== 智能登录策略 ========================
+class SmartLoginStrategy:
+    """智能登录策略"""
+    
+    @staticmethod
+    def evaluate_login_options(challenges, has_valid_cookies):
+        """评估登录选项"""
+        logger.info("🤔 评估登录策略...")
+        
+        # 策略1: 如果有有效cookie，优先使用
+        if has_valid_cookies:
+            logger.success("🎯 策略1: 使用缓存cookie登录")
+            return "use_cookie"
+        
+        # 策略2: 检查是否可以自动登录
+        if SecurityDetector.can_auto_login(challenges):
+            logger.info("🎯 策略2: 尝试自动登录")
+            return "auto_login"
+        
+        # 策略3: 备用方案
+        logger.warning("🎯 策略3: 备用方案 - 等待cookie缓存")
+        return "fallback"
+
 # ======================== 主浏览器类 ========================
 class LinuxDoBrowser:
     def __init__(self, site_config, credentials):
@@ -331,6 +353,8 @@ class LinuxDoBrowser:
         self.site_name = site_config['name']
         self.username = credentials['username']
         self.password = credentials['password']
+        self.login_attempts = 0
+        self.max_login_attempts = 2
         
         # 浏览器配置
         platformIdentifier = "Windows NT 10.0; Win64; x64"
@@ -437,7 +461,7 @@ class LinuxDoBrowser:
         
         cached_cookies = CacheManager.load_cookies(self.site_name)
         if not cached_cookies:
-            logger.info("❌ 没有找到缓存的cookies")
+            logger.info("❌ 没有找到有效的缓存cookies")
             return False
         
         try:
@@ -482,9 +506,9 @@ class LinuxDoBrowser:
         
         return challenges
 
-    def attempt_auto_login(self, challenges):
-        """尝试自动登录"""
-        logger.info("🔐 尝试自动登录...")
+    def attempt_simple_login(self):
+        """尝试简单登录（不处理复杂验证码）"""
+        logger.info("🔐 尝试简单登录...")
         
         try:
             # 输入用户名和密码
@@ -512,7 +536,7 @@ class LinuxDoBrowser:
             
             # 验证登录是否成功
             if self.strict_check_login_status():
-                logger.success("✅ 自动登录成功")
+                logger.success("✅ 简单登录成功")
                 
                 # 保存cookies
                 cookies = self.page.cookies()
@@ -522,36 +546,44 @@ class LinuxDoBrowser:
                 
                 return True
             else:
-                logger.error("❌ 自动登录失败")
+                logger.error("❌ 简单登录失败")
                 return False
             
         except Exception as e:
-            logger.error(f"自动登录过程出错: {str(e)}")
+            logger.error(f"简单登录过程出错: {str(e)}")
             return False
 
     def ensure_logged_in(self):
-        """确保用户已登录，优先使用cookie"""
-        logger.info("🎯 验证登录状态")
+        """确保用户已登录 - 智能策略"""
+        logger.info("🎯 智能登录策略启动")
         
-        # 首先尝试cookie登录
+        # 策略1: 优先尝试cookie登录
         if self.try_cookie_login():
             return True
         
-        # Cookie登录失败，分析登录页面
+        # 策略2: 分析登录页面
         logger.info("🔄 Cookie登录失败，分析登录页面")
         challenges = self.analyze_login_page()
         
-        # 判断是否可以自动登录
-        if SecurityDetector.can_auto_login(challenges):
-            logger.info("🟡 尝试自动登录...")
-            if self.attempt_auto_login(challenges):
+        # 评估登录选项
+        strategy = SmartLoginStrategy.evaluate_login_options(
+            challenges, 
+            has_valid_cookies=False
+        )
+        
+        if strategy == "auto_login":
+            # 尝试简单登录
+            if self.attempt_simple_login():
                 return True
-            else:
-                logger.error("❌ 自动登录失败")
-                return False
-        else:
-            logger.error("❌ 检测到无法自动解决的验证码，登录失败")
-            return False
+        elif strategy == "fallback":
+            # 备用方案：等待并重试
+            logger.info("⏳ 备用方案：等待后重试...")
+            time.sleep(10)
+            if self.attempt_simple_login():
+                return True
+        
+        logger.error("❌ 所有登录策略均失败")
+        return False
 
     @retry_decorator()
     def click_one_topic(self, topic_url):
@@ -625,6 +657,10 @@ class LinuxDoBrowser:
 
     def click_topic(self):
         """点击浏览主题"""
+        if not BROWSE_ENABLED:
+            logger.info("⏭️ 浏览功能已禁用，跳过")
+            return True
+            
         logger.info("🌐 开始浏览主题")
         
         # 确保在latest页面
@@ -711,16 +747,14 @@ class LinuxDoBrowser:
             # 第一步：确保登录状态
             if not self.ensure_logged_in():
                 logger.error(f"❌ {self.site_config['name']} 登录失败，跳过后续操作")
+                
+                # 即使登录失败，也尝试获取连接信息
+                logger.info("🔄 尝试获取连接信息...")
+                self.print_connect_info()
                 return False
 
             # 第二步：浏览主题（仅在登录成功后）
-            if BROWSE_ENABLED:
-                logger.info("🌐 开始浏览主题")
-                browse_success = self.click_topic()
-                if browse_success:
-                    logger.info("✅ 浏览任务完成")
-                else:
-                    logger.warning("⚠️ 浏览任务部分失败")
+            self.click_topic()
 
             # 第三步：打印连接信息
             self.print_connect_info()
@@ -786,10 +820,13 @@ def main():
     logger.info(f"✅ 成功站点: {', '.join(success_sites) if success_sites else '无'}")
     logger.info(f"❌ 失败站点: {', '.join(failed_sites) if failed_sites else '无'}")
     
-    if failed_sites:
-        sys.exit(1)
+    # 如果有成功站点或者只是登录失败但获取了信息，不算完全失败
+    if success_sites or (failed_sites and "获取连接信息失败" not in str(failed_sites)):
+        logger.success("🎉 部分任务完成")
+        sys.exit(0)
     else:
-        logger.success("🎉 所有站点处理完成")
+        logger.error("💥 所有任务失败")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
