@@ -38,8 +38,8 @@ SITES = [
 # 读取账号
 def _get_credential(site: str):
     # 根据站点名称，从环境变量中获取用户名和密码
-    username_env_var = f"{site.upper().replace('IDCFLARE', 'IDCFLARE')}_{'USERNAME'}"
-    password_env_var = f"{site.upper().replace('IDCFLARE', 'IDCFLARE')}_{'PASSWORD'}"
+    username_env_var = f"{site.upper()}_{'USERNAME'}"
+    password_env_var = f"{site.upper()}_{'PASSWORD'}"
     
     # 获取环境变量的值
     username = os.getenv(username_env_var)
@@ -324,4 +324,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
