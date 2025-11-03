@@ -8,10 +8,10 @@ import os
 import random
 import time
 import sys
+import json
 from loguru import logger
 from DrissionPage import ChromiumOptions, Chromium
 from tabulate import tabulate
-import json
 
 # 配置日志
 logger.remove()
@@ -42,7 +42,7 @@ def get_browser():
 
 # 保存 cookie
 def save_cookies(page):
-    cookies = page.get_cookies()
+    cookies = page.cookies()  # ✅ 正确方法
     with open(COOKIE_FILE, "w", encoding="utf-8") as f:
         json.dump(cookies, f)
     logger.info("✅ Cookie 已保存")
@@ -57,11 +57,24 @@ def load_cookies(page):
         return True
     return False
 
-# 检查是否已登录
+# 检查是否已登录（通过检测用户名）
 def is_logged_in(page):
     page.get(HOME_URL)
     time.sleep(3)
-    return page.ele("@id=current-user") is not None
+    user_ele = page.ele("@id=current-user")
+    if not user_ele:
+        return False
+    try:
+        img = user_ele.ele("tag:img")
+        if img and img.attr("alt") == USERNAME:
+            logger.info(f"✅ 检测到已登录用户：{USERNAME}")
+            return True
+        else:
+            logger.warning(f"❓ 头像 alt 不一致：{img.attr('alt')} != {USERNAME}")
+            return False
+    except Exception as e:
+        logger.warning(f"❓ 检测用户信息失败：{e}")
+        return False
 
 # 登录
 def login(page):
