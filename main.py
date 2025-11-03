@@ -386,7 +386,7 @@ class LinuxDoBrowser:
             
             # 模拟用户行为，点击验证区域
             try:
-               turnstile_frame = self.page.ele(".cfturnstile > iframe")
+                turnstile_frame = self.page.ele(".cfturnstile > iframe")
                 if turnstile_frame:
                     self.page.run_js("document.querySelector('.cfturnstile > iframe').contentDocument.body.classList.add('verified')")
                     logger.info("🖱️ 模拟点击 Turnstile 验证区域")
