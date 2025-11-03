@@ -1,7 +1,7 @@
 """
 GitHub Actions 用
 Linux.Do 自动登录 + 模拟人类浏览行为
-作者：AI 重构版（适合不会写代码的用户）
+支持 cookie 缓存 + 自动重试登录 + 覆盖旧缓存
 """
 
 import os
@@ -13,7 +13,7 @@ from loguru import logger
 from DrissionPage import ChromiumOptions, Chromium
 from tabulate import tabulate
 
-# 配置日志
+# 日志
 logger.remove()
 logger.add(sys.stdout, level="INFO")
 
@@ -28,7 +28,7 @@ HOME_URL = "https://linux.do/"
 LOGIN_URL = "https://linux.do/login"
 CONNECT_URL = "https://connect.linux.do/"
 
-# 浏览器初始化
+# 浏览器
 def get_browser():
     co = ChromiumOptions()
     co.headless(HEADLESS)
@@ -42,65 +42,52 @@ def get_browser():
 
 # 保存 cookie
 def save_cookies(page):
-    cookies = page.cookies()  # ✅ 正确方法
     with open(COOKIE_FILE, "w", encoding="utf-8") as f:
-        json.dump(cookies, f)
-    logger.info("✅ Cookie 已保存")
+        json.dump(page.cookies(), f)
+    logger.info("✅ Cookie 已保存并覆盖旧缓存")
 
 # 加载 cookie
 def load_cookies(page):
     if os.path.exists(COOKIE_FILE):
         with open(COOKIE_FILE, "r", encoding="utf-8") as f:
-            cookies = json.load(f)
-        page.set_cookies(cookies)
+            page.set_cookies(json.load(f))
         logger.info("✅ Cookie 已加载")
         return True
     return False
 
-# 检查是否已登录（通过检测用户名）
+# 检测是否登录（通过头像 alt 是否等于用户名）
 def is_logged_in(page):
     page.get(HOME_URL)
     time.sleep(3)
     user_ele = page.ele("@id=current-user")
     if not user_ele:
         return False
-    try:
-        img = user_ele.ele("tag:img")
-        if img and img.attr("alt") == USERNAME:
-            logger.info(f"✅ 检测到已登录用户：{USERNAME}")
+    img = user_ele.ele("tag:img")
+    if img and img.attr("alt") == USERNAME:
+        logger.info(f"✅ 检测到已登录用户：{USERNAME}")
+        return True
+    return False
+
+# 登录（支持重试）
+def login_with_retry(page):
+    for attempt in range(3):
+        logger.info(f"🚀 第 {attempt + 1} 次尝试登录...")
+        page.get(LOGIN_URL)
+        time.sleep(3)
+        page.ele("@id=login-account-name").input(USERNAME, clear=True)
+        time.sleep(random.uniform(1, 2))
+        page.ele("@id=login-account-password").input(PASSWORD, clear=True)
+        time.sleep(random.uniform(1, 2))
+        page.ele("@id=login-button").click()
+        time.sleep(5)
+        if is_logged_in(page):
+            save_cookies(page)
             return True
         else:
-            logger.warning(f"❓ 头像 alt 不一致：{img.attr('alt')} != {USERNAME}")
-            return False
-    except Exception as e:
-        logger.warning(f"❓ 检测用户信息失败：{e}")
-        return False
+            logger.warning(f"❌ 第 {attempt + 1} 次登录失败")
+    return False
 
-# 登录
-def login(page):
-    logger.info("🚀 开始登录...")
-    page.get(LOGIN_URL)
-    time.sleep(3)
-
-    # 输入账号密码
-    page.ele("@id=login-account-name").input(USERNAME, clear=True)
-    time.sleep(random.uniform(1, 2))
-    page.ele("@id=login-account-password").input(PASSWORD, clear=True)
-    time.sleep(random.uniform(1, 2))
-
-    # 点击登录
-    page.ele("@id=login-button").click()
-    time.sleep(5)
-
-    if is_logged_in(page):
-        logger.info("✅ 登录成功")
-        save_cookies(page)
-        return True
-    else:
-        logger.error("❌ 登录失败")
-        return False
-
-# 随机浏览帖子
+# 浏览帖子
 def browse_topics(page):
     page.get(HOME_URL)
     time.sleep(3)
@@ -108,7 +95,6 @@ def browse_topics(page):
     if not topics:
         logger.warning("❌ 没有找到任何帖子")
         return
-
     logger.info(f"📚 发现 {len(topics)} 个帖子，随机浏览 10 个")
     for link in random.sample(topics, min(10, len(topics))):
         url = link.attr("href")
@@ -117,14 +103,10 @@ def browse_topics(page):
         logger.info(f"👀 正在浏览：{url}")
         page.get(url)
         time.sleep(random.uniform(3, 6))
-
-        # 模拟滚动
         for _ in range(random.randint(3, 6)):
             page.run_js(f"window.scrollBy(0, {random.randint(400, 700)})")
             time.sleep(random.uniform(2, 4))
-
-        # 随机点赞
-        if random.random() < 0.003:
+        if random.random() < 0.3:
             like_btn = page.ele(".discourse-reactions-reaction-button")
             if like_btn:
                 like_btn.click()
@@ -133,7 +115,6 @@ def browse_topics(page):
 
 # 打印连接信息
 def print_connect_info(page):
-    logger.info("📊 获取连接信息...")
     page.get(CONNECT_URL)
     time.sleep(3)
     table = page.ele("tag:table")
@@ -155,18 +136,24 @@ def main():
 
     # 尝试用 cookie 登录
     if load_cookies(page) and is_logged_in(page):
-        logger.info("✅ 已使用 Cookie 登录")
+        logger.info("✅ 使用缓存 Cookie 登录成功")
     else:
-        if not login(page):
-            sys.exit(1)
+        logger.info("❌ 缓存无效，重新登录")
+        if not login_with_retry(page):
+            logger.error("❌ 多次登录失败，跳过任务")
+            browser.quit()
+            return
 
     # 浏览帖子
     browse_topics(page)
 
+    # 再次保存 cookie（防止更新）
+    save_cookies(page)
+
     # 打印连接信息
     print_connect_info(page)
 
-    logger.info("✅ 所有任务完成")
+    logger.info("✅ 所有任务完成，最新 Cookie 已保存")
     browser.quit()
 
 if __name__ == "__main__":
