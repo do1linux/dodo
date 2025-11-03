@@ -369,6 +369,27 @@ class LinuxDoBrowser:
         self.page.get_screenshot(path)
         logger.info(f"📸 登录页截图已保存：{path}")
 
+    def handle_turnstile(self):
+        """处理 Turnstile 验证"""
+        logger.info("🔄 尝试处理 Turnstile 验证")
+        for _ in range(5):
+            try:
+                # 尝试获取 Turnstile token
+                token = self.page.run_js("return turnstile.getResponse()")
+                if token:
+                    logger.success(f"✅ Turnstile 验证成功，获取到 token: {token}")
+                    return True
+                else:
+                    logger.warning("❌ Turnstile token 为空，可能验证未完成")
+            except Exception as e:
+                logger.error(f"❌ 获取 Turnstile token 失败: {str(e)}")
+            
+            time.sleep(3)
+        
+        logger.error("❌ Turnstile 验证失败，尝试次数用尽")
+        return False
+
+
     def login_with_retry(self):
         """带重试的登录方法"""
         for attempt in range(1, self.max_login_attempts + 1):
@@ -376,6 +397,12 @@ class LinuxDoBrowser:
             self.page.get(LOGIN_URL)
             time.sleep(5)
             self.print_page_info()
+
+            # 处理 Turnstile 验证
+            if self.detect_turnstile():
+                if not self.handle_turnstile():
+                    self.screenshot_login(f"turnstile_failed_{attempt}")
+                    continue
 
             user_input = self.wait_for_element("@id=login-account-name", 10)
             pass_input = self.wait_for_element("@id=login-account-password", 10)
