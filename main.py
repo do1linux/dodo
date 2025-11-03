@@ -1,7 +1,7 @@
 """
 GitHub Actions 用
-Linux.Do 自动登录 + 模拟人类浏览行为
-支持 cookie 缓存 + 自动重试登录 + 覆盖旧缓存
+Linux.Do 自动登录 + 调试模式
+支持 cookie 缓存、失败截图、打印机器人验证信息
 """
 
 import os
@@ -13,22 +13,18 @@ from loguru import logger
 from DrissionPage import ChromiumOptions, Chromium
 from tabulate import tabulate
 
-# 日志
 logger.remove()
 logger.add(sys.stdout, level="INFO")
 
-# 环境变量
 USERNAME = os.getenv("LINUXDO_USERNAME")
 PASSWORD = os.getenv("LINUXDO_PASSWORD")
 HEADLESS = os.getenv("HEADLESS", "true").lower() == "true"
 COOKIE_FILE = "cache/linux_do_cookies.json"
 
-# 常量
 HOME_URL = "https://linux.do/"
 LOGIN_URL = "https://linux.do/login"
 CONNECT_URL = "https://connect.linux.do/"
 
-# 浏览器
 def get_browser():
     co = ChromiumOptions()
     co.headless(HEADLESS)
@@ -40,13 +36,43 @@ def get_browser():
     )
     return Chromium(co)
 
-# 保存 cookie
+def screenshot_login(page, name):
+    path = f"login_fail_{name}.png"
+    page.get_screenshot(path)
+    logger.info(f"📸 登录页截图已保存：{path}")
+
+def wait_for_element(page, selector, timeout=10):
+    for i in range(timeout):
+        ele = page.ele(selector)
+        if ele:
+            return ele
+        time.sleep(1)
+    return None
+
+def detect_turnstile(page):
+    try:
+        if page.ele("@name=cf-turnstile-response"):
+            logger.warning("🤖 检测到 Turnstile 验证")
+            return True
+    except:
+        pass
+    return False
+
+def print_page_info(page):
+    title = page.title
+    logger.info(f"📄 当前页面标题：{title}")
+    user_input = wait_for_element(page, "@id=login-account-name", 5)
+    pass_input = wait_for_element(page, "@id=login-account-password", 5)
+    turnstile = detect_turnstile(page)
+    logger.info(f"🔍 用户名输入框是否存在：{bool(user_input)}")
+    logger.info(f"🔍 密码输入框是否存在：{bool(pass_input)}")
+    logger.info(f"🔍 Turnstile 是否出现：{turnstile}")
+
 def save_cookies(page):
     with open(COOKIE_FILE, "w", encoding="utf-8") as f:
         json.dump(page.cookies(), f)
     logger.info("✅ Cookie 已保存并覆盖旧缓存")
 
-# 加载 cookie
 def load_cookies(page):
     if os.path.exists(COOKIE_FILE):
         with open(COOKIE_FILE, "r", encoding="utf-8") as f:
@@ -55,7 +81,6 @@ def load_cookies(page):
         return True
     return False
 
-# 检测是否登录（通过头像 alt 是否等于用户名）
 def is_logged_in(page):
     page.get(HOME_URL)
     time.sleep(3)
@@ -68,26 +93,38 @@ def is_logged_in(page):
         return True
     return False
 
-# 登录（支持重试）
 def login_with_retry(page):
-    for attempt in range(3):
-        logger.info(f"🚀 第 {attempt + 1} 次尝试登录...")
+    for attempt in range(1, 4):
+        logger.info(f"🚀 第 {attempt} 次尝试登录...")
         page.get(LOGIN_URL)
-        time.sleep(3)
-        page.ele("@id=login-account-name").input(USERNAME, clear=True)
+        time.sleep(5)
+        print_page_info(page)
+
+        user_input = wait_for_element(page, "@id=login-account-name", 10)
+        pass_input = wait_for_element(page, "@id=login-account-password", 10)
+
+        if not user_input or not pass_input:
+            logger.error("❌ 登录元素未加载完成")
+            screenshot_login(page, attempt)
+            continue
+
+        user_input.input(USERNAME, clear=True)
         time.sleep(random.uniform(1, 2))
-        page.ele("@id=login-account-password").input(PASSWORD, clear=True)
+        pass_input.input(PASSWORD, clear=True)
         time.sleep(random.uniform(1, 2))
+
         page.ele("@id=login-button").click()
         time.sleep(5)
+
         if is_logged_in(page):
             save_cookies(page)
             return True
         else:
-            logger.warning(f"❌ 第 {attempt + 1} 次登录失败")
+            logger.warning(f"❌ 第 {attempt} 次登录失败")
+            screenshot_login(page, attempt)
+
     return False
 
-# 浏览帖子
 def browse_topics(page):
     page.get(HOME_URL)
     time.sleep(3)
@@ -113,7 +150,6 @@ def browse_topics(page):
                 logger.info("👍 点赞成功")
                 time.sleep(1)
 
-# 打印连接信息
 def print_connect_info(page):
     page.get(CONNECT_URL)
     time.sleep(3)
@@ -125,7 +161,6 @@ def print_connect_info(page):
     print("-------------- Connect Info --------------")
     print(tabulate(rows, headers=["项目", "当前", "要求"], tablefmt="pretty"))
 
-# 主函数
 def main():
     if not USERNAME or not PASSWORD:
         logger.error("❌ 请设置 LINUXDO_USERNAME 和 LINUXDO_PASSWORD")
@@ -134,7 +169,6 @@ def main():
     browser = get_browser()
     page = browser.new_tab()
 
-    # 尝试用 cookie 登录
     if load_cookies(page) and is_logged_in(page):
         logger.info("✅ 使用缓存 Cookie 登录成功")
     else:
@@ -144,15 +178,9 @@ def main():
             browser.quit()
             return
 
-    # 浏览帖子
     browse_topics(page)
-
-    # 再次保存 cookie（防止更新）
     save_cookies(page)
-
-    # 打印连接信息
     print_connect_info(page)
-
     logger.info("✅ 所有任务完成，最新 Cookie 已保存")
     browser.quit()
 
