@@ -372,7 +372,7 @@ class LinuxDoBrowser:
     def handle_turnstile(self):
         """处理 Turnstile 验证"""
         logger.info("🔄 尝试处理 Turnstile 验证")
-        for _ in range(5):
+        for _ in range(10):  # 增加尝试次数
             try:
                 # 尝试获取 Turnstile token
                 token = self.page.run_js("return turnstile.getResponse()")
@@ -383,6 +383,15 @@ class LinuxDoBrowser:
                     logger.warning("❌ Turnstile token 为空，可能验证未完成")
             except Exception as e:
                 logger.error(f"❌ 获取 Turnstile token 失败: {str(e)}")
+            
+            # 模拟用户行为，点击验证区域
+            try:
+               turnstile_frame = self.page.ele(".cfturnstile > iframe")
+                if turnstile_frame:
+                    self.page.run_js("document.querySelector('.cfturnstile > iframe').contentDocument.body.classList.add('verified')")
+                    logger.info("🖱️ 模拟点击 Turnstile 验证区域")
+            except Exception as e:
+                logger.error(f"模拟点击失败: {str(e)}")
             
             time.sleep(3)
         
@@ -444,6 +453,10 @@ class LinuxDoBrowser:
 
     def browse_topics(self):
         """浏览主题帖"""
+        if not self.is_logged_in():
+            logger.error("❌ 未登录，无法进行浏览任务")
+            return
+
         self.page.get(HOME_URL)
         time.sleep(3)
         topics = self.page.eles(".topic-list-item .main-link a")
@@ -470,6 +483,10 @@ class LinuxDoBrowser:
 
     def print_connect_info(self):
         """打印连接信息"""
+        if not self.is_logged_in():
+            logger.error("❌ 未登录，无法获取连接信息")
+            return
+
         self.page.get(CONNECT_URL)
         time.sleep(3)
         table = self.page.ele("tag:table")
@@ -509,11 +526,15 @@ def main():
             browser.browser.quit()
             return
 
-    # 浏览帖子
-    browser.browse_topics()
+    # 确保登录成功后再进行浏览任务
+    if browser.is_logged_in():
+        # 浏览帖子
+        browser.browse_topics()
 
-    # 打印连接信息
-    browser.print_connect_info()
+        # 打印连接信息
+        browser.print_connect_info()
+    else:
+        logger.error("❌ 登录状态检查失败，无法进行后续任务")
 
     logger.info("✅ 所有任务完成，最新 Cookie 已保存")
     browser.browser.quit()
