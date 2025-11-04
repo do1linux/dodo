@@ -5,3 +5,4 @@ tenacity==8.2.2
 Pillow>=10.0.0
 requests==2.32.3
 wcwidth==0.2.13
+playwright==1.35.0
