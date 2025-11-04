@@ -1,543 +1,337 @@
 """
-GitHub Actions 用
-Linux.Do 自动登录 + 增强反检测 + Cloudflare 验证处理
-作者：AI 重构版（适合不会写代码的用户）
+================================================================================
+Linux.Do & IDCFlare 多站点自动浏览脚本
+cron: 0 * * * *
+================================================================================
 """
 
 import os
-import random
-import time
 import sys
 import json
-from datetime import datetime, timedelta
+import time
+import random
 import functools
+from datetime import datetime, timedelta
+from pathlib import Path
+
+import requests
 from loguru import logger
 from DrissionPage import ChromiumOptions, Chromium
 from tabulate import tabulate
 
-logger.remove()
-logger.add(sys.stdout, level="INFO")
+# -------------------- 全局配置 --------------------
+HEADLESS = os.getenv("HEADLESS", "true").lower() not in {"false", "0", "off"}
+BROWSE_ENABLED = os.getenv("BROWSE_ENABLED", "true").lower() not in {"false", "0", "off"}
+SITE_SELECTOR = os.getenv("SITE_SELECTOR", "all")  # all / linux_do / idcflare
+COOKIE_VALIDITY_DAYS = 7
 
-# 环境变量
-USERNAME = os.getenv("LINUXDO_USERNAME")
-PASSWORD = os.getenv("LINUXDO_PASSWORD")
-HEADLESS = os.getenv("HEADLESS", "true").lower() == "true"
-COOKIE_FILE = "cache/linux_do_cookies.json"
-COOKIE_VALIDITY_DAYS = 30  # Cookie有效期（天）
+# -------------------- 工具：缓存管理 --------------------
+CACHE_DIR = Path(__file__).with_suffix("") / "cache"
+CACHE_DIR.mkdir(exist_ok=True)
 
-# 常量
-HOME_URL = "https://linux.do/"
-LOGIN_URL = "https://linux.do/login"
-CONNECT_URL = "https://connect.linux.do/"
-SITE_NAME = "linux_do"
 
 class CacheManager:
-    """缓存管理类"""
+    @staticmethod
+    def path(name: str) -> Path:
+        return CACHE_DIR / f"{name}_cookies.json"
 
     @staticmethod
-    def get_cache_directory():
-        """获取缓存目录"""
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        cache_dir = os.path.join(current_dir, "cache")
+    def load(name: str):
+        file = CacheManager.path(name)
+        if not file.exists():
+            return None
         try:
-            os.makedirs(cache_dir, exist_ok=True)
-        except Exception:
-            cache_dir = current_dir
-        return cache_dir
+            data = json.loads(file.read_text(encoding="utf8"))
+            cache_time = datetime.fromisoformat(data["cache_time"])
+            if datetime.now() - cache_time > timedelta(days=COOKIE_VALIDITY_DAYS):
+                logger.warning("🕒 Cookies 已过期")
+                return None
+            logger.info(f"📦 加载 {name} 缓存")
+            return data["cookies"]
+        except Exception as e:
+            logger.warning(f"缓存读取失败: {e}")
+            return None
 
     @staticmethod
-    def get_cache_file_path(file_name):
-        """获取缓存文件的完整路径"""
-        cache_dir = CacheManager.get_cache_directory()
-        return os.path.join(cache_dir, file_name)
-
-    @staticmethod
-    def load_cache(file_name):
-        """从文件加载缓存数据"""
-        file_path = CacheManager.get_cache_file_path(file_name)
-        if os.path.exists(file_path):
-            try:
-                with open(file_path, "r", encoding='utf-8') as f:
-                    data = json.load(f)
-                logger.info(f"📦 加载缓存: {file_name}")
-                return data
-            except Exception as e:
-                logger.warning(f"缓存加载失败 {file_name}: {str(e)}")
-        return None
-
-    @staticmethod
-    def save_cache(data, file_name):
-        """保存数据到缓存文件"""
+    def save(name: str, cookies):
         try:
-            file_path = CacheManager.get_cache_file_path(file_name)
-            os.makedirs(os.path.dirname(file_path), exist_ok=True)
-            
-            with open(file_path, "w", encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-            
-            logger.info(f"💾 缓存已保存: {file_name}")
+            data = {"cookies": cookies, "cache_time": datetime.now().isoformat()}
+            CacheManager.path(name).write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf8")
+            logger.info(f"💾 已保存 {name} cookies")
             return True
         except Exception as e:
-            logger.error(f"缓存保存失败 {file_name}: {str(e)}")
+            logger.error(f"缓存写入失败: {e}")
             return False
 
-    @staticmethod
-    def load_cookies(site_name):
-        """加载cookies缓存并检查有效期"""
-        cache_data = CacheManager.load_cache(f"{site_name}_cookies.json")
-        if not cache_data:
-            return None
-            
-        # 检查缓存有效期
-        cache_time_str = cache_data.get('cache_time')
-        if cache_time_str:
-            try:
-                cache_time = datetime.fromisoformat(cache_time_str)
-                if datetime.now() - cache_time > timedelta(days=COOKIE_VALIDITY_DAYS):
-                    logger.warning("🕒 Cookies已过期")
-                    return None
-            except Exception as e:
-                logger.warning(f"缓存时间解析失败: {str(e)}")
-        
-        return cache_data.get('cookies')
 
-    @staticmethod
-    def save_cookies(cookies, site_name):
-        """保存cookies到缓存"""
-        cache_data = {
-            'cookies': cookies,
-            'cache_time': datetime.now().isoformat(),
-            'site': site_name
-        }
-        return CacheManager.save_cache(cache_data, f"{site_name}_cookies.json")
-
-    @staticmethod
-    def cookies_exist(site_name):
-        """检查cookies文件是否存在"""
-        file_path = CacheManager.get_cache_file_path(f"{site_name}_cookies.json")
-        return os.path.exists(file_path)
-
-class CloudflareHandler:
-    """Cloudflare验证处理类"""
-    
-    @staticmethod
-    def is_cf_cookie_valid(cookies):
-        """检查Cloudflare cookie是否有效"""
-        try:
-            if not cookies:
-                return False
-                
-            for cookie in cookies:
-                if cookie.get('name') == 'cf_clearance':
-                    expires = cookie.get('expires', 0)
-                    # 检查cookie是否过期
-                    if expires == -1 or expires > time.time():
-                        return True
-            return False
-        except Exception:
-            return False
-
-    @staticmethod
-    def handle_cloudflare(page, max_attempts=8, timeout=180):
-        """处理Cloudflare验证"""
-        start_time = time.time()
-        logger.info("🛡️ 开始处理 Cloudflare验证")
-        
-        # 完整验证流程
-        logger.info("🔄 开始完整Cloudflare验证流程")
-        for attempt in range(max_attempts):
-            try:
-                current_url = page.url
-                page_title = page.title
-                
-                # 检查页面是否已经正常加载
-                if page_title and page_title != "请稍候…" and "Checking" not in page_title:
-                    logger.success("✅ 页面已正常加载，Cloudflare验证通过")
-                    return True
-                
-                # 等待验证
-                wait_time = random.uniform(8, 15)
-                logger.info(f"⏳ 等待Cloudflare验证完成 ({wait_time:.1f}秒) - 尝试 {attempt + 1}/{max_attempts}")
-                time.sleep(wait_time)
-                
-                # 检查超时
-                if time.time() - start_time > timeout:
-                    logger.warning("⚠️ Cloudflare处理超时")
-                    break
-                    
-            except Exception as e:
-                logger.error(f"Cloudflare处理异常 (尝试 {attempt + 1}): {str(e)}")
-                time.sleep(10)
-        
-        # 最终检查
-        try:
-            page_title = page.title
-            if page_title and page_title != "请稍候…" and "Checking" not in page_title:
-                logger.success("✅ 最终验证: Cloudflare验证通过")
-                return True
-            else:
-                logger.warning("⚠️ 最终验证: Cloudflare验证未完全通过，但继续后续流程")
-                return True
-        except Exception:
-            logger.warning("⚠️ 无法获取页面标题，继续后续流程")
-            return True
-
-
-def retry_decorator(retries=3):
-    def decorator(func):
+# -------------------- 工具：重试装饰器 --------------------
+def retry(retries: int = 3, delay: int = 2):
+    def deco(func):
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            for attempt in range(retries):
+            for i in range(1, retries + 1):
                 try:
                     return func(*args, **kwargs)
                 except Exception as e:
-                    if attempt == retries - 1:
-                        logger.error(f"函数 {func.__name__} 最终执行失败: {str(e)}")
-                    logger.warning(f"函数 {func.__name__} 第 {attempt + 1}/{retries} 次尝试失败: {str(e)}")
-                    time.sleep(2)
-            return None
+                    logger.warning(f"{func.__name__} 第 {i}/{retries} 次失败: {e}")
+                    if i == retries:
+                        raise
+                    time.sleep(delay)
         return wrapper
-    return decorator
+
+    return deco
 
 
-class LinuxDoBrowser:
-    def __init__(self, site_config, credentials):
-        self.site_config = site_config
-        self.site_name = site_config['name']
-        self.username = credentials['username']
-        self.password = credentials['password']
-        self.login_attempts = 0
-        self.max_login_attempts = 2
-        
-        # 浏览器配置
-        platformIdentifier = "Windows NT 10.0; Win64; x64"
+# -------------------- 站点配置 --------------------
+SITES = [
+    {
+        "name": "linux_do",
+        "base": "https://linux.do",
+        "login": "https://linux.do/login",
+        "latest": "https://linux.do/latest",
+        "connect": "https://connect.linux.do",
+        "user": os.getenv("LINUXDO_USERNAME"),
+        "pass": os.getenv("LINUXDO_PASSWORD"),
+    },
+    {
+        "name": "idcflare",
+        "base": "https://idcflare.com",
+        "login": "https://idcflare.com/login",
+        "latest": "https://idcflare.com/latest",
+        "connect": "https://connect.idcflare.com",
+        "user": os.getenv("IDCFLARE_USERNAME"),
+        "pass": os.getenv("IDCFLARE_PASSWORD"),
+    },
+]
 
+# 过滤需要跑的站点
+if SITE_SELECTOR != "all":
+    SITES = [s for s in SITES if s["name"] == SITE_SELECTOR]
+for s in SITES:
+    if not s["user"] or not s["pass"]:
+        logger.error(f"❌ {s['name']} 用户名或密码未配置")
+        sys.exit(1)
+
+
+# -------------------- 浏览器封装 --------------------
+class AutoBrowser:
+    def __init__(self, site: dict):
+        self.site = site
+        self.name = site["name"]
+        self.user = site["user"]
+        self.passwd = site["pass"]
+        self.page = None
+        self.browser = None
+
+    # ---------- 浏览器启动 ----------
+    def start_browser(self):
         co = (
             ChromiumOptions()
             .headless(HEADLESS)
             .incognito(True)
             .set_argument("--no-sandbox")
             .set_argument("--disable-blink-features=AutomationControlled")
-            .set_argument("--disable-features=VizDisplayCompositor")
-            .set_argument("--disable-background-timer-throttling")
-            .set_argument("--disable-backgrounding-occluded-windows")
-            .set_argument("--disable-renderer-backgrounding")
             .set_argument("--disable-dev-shm-usage")
-            .set_argument("--lang=zh-CN,zh;q=0.9,en;q=0.8")
+            .set_argument("--lang=zh-CN,zh;q=0.9")
         )
         co.set_user_agent(
-            f"Mozilla/5.0 ({platformIdentifier}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
         )
-        
         self.browser = Chromium(co)
         self.page = self.browser.new_tab()
-        
-        # 立即注入增强的反检测脚本
-        self.inject_enhanced_script()
+        self._inject_anti_detect()
 
-    def inject_enhanced_script(self, page=None):
-        """注入增强的反检测脚本"""
-        if page is None:
-            page = self.page
-            
-        enhanced_script = """
-        // 增强的反检测脚本
-        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-        
-        // 模拟完整的浏览器环境
-        Object.defineProperty(navigator, 'plugins', { 
-            get: () => [1, 2, 3, 4, 5],
-            configurable: true
-        });
-        
-        Object.defineProperty(navigator, 'languages', { 
-            get: () => ['zh-CN', 'zh', 'en-US', 'en'] 
-        });
-        
-        // 屏蔽自动化特征
-        window.chrome = { 
-            runtime: {},
-            loadTimes: function() {},
-            csi: function() {}, 
-            app: {isInstalled: false}
-        };
-        
-        // 页面可见性API
-        Object.defineProperty(document, 'hidden', { get: () => false });
-        Object.defineProperty(document, 'visibilityState', { get: () => 'visible' });
-        
-        console.log('🔧 增强的JS环境模拟已加载');
+    def _inject_anti_detect(self):
+        script = """
+        Object.defineProperty(navigator, 'webdriver', {get: ()=> undefined});
+        window.chrome = {runtime:{}, loadTimes(){}, csi(){}, app:{isInstalled:false}};
+        Object.defineProperty(document, 'hidden', {get: ()=> false});
+        Object.defineProperty(document, 'visibilityState', {get: ()=> 'visible'});
         """
-        
-        try:
-            page.run_js(enhanced_script)
-            logger.info("✅ 增强的反检测脚本已注入")
-            return True
-        except Exception as e:
-            logger.warning(f"注入脚本失败: {str(e)}")
-            return False
+        self.page.run_js(script)
+        logger.info("✅ 反检测脚本已注入")
 
-    def get_all_cookies(self):
-        """获取所有cookies"""
-        try:
-            # 使用page.cookies()
-            cookies = self.page.cookies()
-            if cookies:
-                logger.info(f"✅ 获取到 {len(cookies)} 个cookies")
-                return cookies
-            
-            logger.warning("❌ 无法获取cookies")
-            return None
-            
-        except Exception as e:
-            logger.error(f"获取cookies时出错: {str(e)}")
-            return None
+    # ---------- Cookie 复用 ----------
+    def load_cookies_to_browser(self, cookies):
+        self.page.get(self.site["base"])
+        for c in cookies:
+            self.page.set.cookie(c)
+        logger.info("🍪 缓存 Cookie 已写入")
 
-    def save_cookies_to_cache(self):
-        """保存cookies到缓存"""
-        try:
-            # 等待一段时间确保cookies设置完成
-            time.sleep(3)
-            
-            # 保存cookies
-            cookies = self.get_all_cookies()
-            if cookies:
-                logger.info(f"🔍 成功获取到 {len(cookies)} 个cookies")
-                success = CacheManager.save_cookies(cookies, self.site_name)
-                if success:
-                    logger.info("✅ Cookies缓存已保存")
-                else:
-                    logger.warning("⚠️ Cookies缓存保存失败")
-            else:
-                logger.warning("⚠️ 无法获取cookies，检查浏览器状态")
-                    
-            return True
-        except Exception as e:
-            logger.error(f"保存缓存失败: {str(e)}")
-            return False
+    # ---------- 登录 ----------
+    @retry(retries=3, delay=3)
+    def login(self):
+        logger.info(f"🔐 开始登录 {self.name}")
+        self.page.get(self.site["login"])
+        time.sleep(3)
 
-    def clear_caches(self):
-        """清除所有缓存文件"""
-        try:
-            cache_dir = CacheManager.get_cache_directory()
-            cache_files = [f"{self.site_name}_cookies.json"]
-            for file_name in cache_files:
-                file_path = os.path.join(cache_dir, file_name)
-                if os.path.exists(file_path):
-                    os.remove(file_path)
-                    logger.info(f"🗑️ 已清除缓存: {file_name}")
-            
-            logger.info("✅ 所有缓存已清除")
-            
-        except Exception as e:
-            logger.error(f"清除缓存失败: {str(e)}")
+        # 处理 Turnstile
+        self._handle_turnstile()
 
+        # 慢速输入
+        self._human_input(self.page.ele("@id=login-account-name"), self.user)
+        time.sleep(random.uniform(0.8, 1.5))
+        self._human_input(self.page.ele("@id=login-account-password"), self.passwd)
+        time.sleep(random.uniform(0.8, 1.5))
 
-    def wait_for_element(self, selector, timeout=10):
-        """显式等待元素出现"""
-        for i in range(timeout):
-            ele = self.page.ele(selector)
-            if ele:
-                return ele
-            time.sleep(1)
-        return None
+        self.page.ele("@id=login-button").click()
+        time.sleep(5)
 
-    def detect_turnstile(self):
-        """检测是否出现 Turnstile 验证"""
-        try:
-            if self.page.ele("@name=cf-turnstile-response"):
-                logger.warning("🤖 检测到 Turnstile 验证")
-                return True
-        except:
-            pass
-        return False
+        # 必须检测到用户名
+        if not self._verify_login():
+            self.page.get_screenshot(f"{self.name}_login_fail.png")
+            raise Exception("未检测到用户名，登录失败")
+        logger.success("✅ 登录成功")
+        cookies = self.page.cookies()
+        CacheManager.save(self.name, cookies)
+        return True
 
-    def print_page_info(self):
-        """打印页面信息"""
-        title = self.page.title
-        logger.info(f"📄 当前页面标题：{title}")
-        user_input = self.wait_for_element("@id=login-account-name", 5)
-        pass_input = self.wait_for_element("@id=login-account-password", 5)
-        turnstile = self.detect_turnstile()
-        logger.info(f"🔍 用户名输入框是否存在：{bool(user_input)}")
-        logger.info(f"🔍 密码输入框是否存在：{bool(pass_input)}")
-        logger.info(f"🔍 Turnstile 是否出现：{turnstile}")
-
-    def screenshot_login(self, name):
-        """截图保存登录页"""
-        path = f"login_fail_{name}.png"
-        self.page.get_screenshot(path)
-        logger.info(f"📸 登录页截图已保存：{path}")
-
-    def handle_turnstile(self):
-        """处理 Turnstile 验证"""
-        logger.info("🔄 尝试处理 Turnstile 验证")
-        for _ in range(10):  # 增加尝试次数
+    # ---------- Turnstile ----------
+    def _handle_turnstile(self):
+        logger.info("🛡️ 处理 Turnstile")
+        for i in range(8):
+            token = self.page.run_js("return (window.turnstile && turnstile.getResponse()) || null")
+            if token:
+                logger.success("🎫 取得 Turnstile token")
+                return
             try:
-                # 尝试获取 Turnstile token
-                token = self.page.run_js("return turnstile.getResponse()")
-                if token:
-                    logger.success(f"✅ Turnstile 验证成功，获取到 token: {token}")
-                    return True
-                else:
-                    logger.warning("❌ Turnstile token 为空，可能验证未完成")
-            except Exception as e:
-                logger.error(f"❌ 获取 Turnstile token 失败: {str(e)}")
-            
-            # 模拟用户行为，点击验证区域
-            try:
-                turnstile_frame = self.page.ele(".cfturnstile > iframe")
-                if turnstile_frame:
-                    self.page.run_js("document.querySelector('.cfturnstile > iframe').contentDocument.body.classList.add('verified')")
-                    logger.info("🖱️ 模拟点击 Turnstile 验证区域")
-            except Exception as e:
-                logger.error(f"模拟点击失败: {str(e)}")
-            
-            time.sleep(3)
-        
-        logger.error("❌ Turnstile 验证失败，尝试次数用尽")
-        return False
-
-
-    def login_with_retry(self):
-        """带重试的登录方法"""
-        for attempt in range(1, self.max_login_attempts + 1):
-            logger.info(f"🚀 第 {attempt} 次尝试登录...")
-            self.page.get(LOGIN_URL)
-            time.sleep(5)
-            self.print_page_info()
-
-            # 处理 Turnstile 验证
-            if self.detect_turnstile():
-                if not self.handle_turnstile():
-                    self.screenshot_login(f"turnstile_failed_{attempt}")
-                    continue
-
-            user_input = self.wait_for_element("@id=login-account-name", 10)
-            pass_input = self.wait_for_element("@id=login-account-password", 10)
-
-            if not user_input or not pass_input:
-                logger.error("❌ 登录元素未加载完成")
-                self.screenshot_login(attempt)
-                continue
-
-            user_input.input(self.username, clear=True)
-            time.sleep(random.uniform(1, 2))
-            pass_input.input(self.password, clear=True)
+                iframe = self.page("tag:iframe")
+                if iframe:
+                    iframe.ele("tag:input").click()
+                    logger.info("🖱️ 模拟点击 Turnstile 框")
+            except:
+                pass
             time.sleep(random.uniform(1, 2))
 
-            self.page.ele("@id=login-button").click()
-            time.sleep(5)
-
-            if self.is_logged_in():
-                self.save_cookies_to_cache()
-                return True
-            else:
-                logger.warning(f"❌ 第 {attempt} 次登录失败")
-                self.screenshot_login(attempt)
-
-        return False
-
-    def is_logged_in(self):
-        """检测是否登录成功"""
-        self.page.get(HOME_URL)
-        time.sleep(3)
-        user_ele = self.page.ele("@id=current-user")
-        if not user_ele:
-            return False
-        img = user_ele.ele("tag:img")
-        if img and img.attr("alt") == self.username:
-            logger.info(f"✅ 检测到已登录用户：{self.username}")
+    # ---------- 验证登录 ----------
+    def _verify_login(self):
+        html = self.page.html.lower()
+        if self.user.lower() in html:
+            logger.success("✅ 页面源码含用户名")
+            return True
+        # 头像检测
+        avatar = self.page.ele("#current-user img.avatar")
+        if avatar:
+            logger.success("✅ 检测到用户头像")
             return True
         return False
 
-    def browse_topics(self):
-        """浏览主题帖"""
-        if not self.is_logged_in():
-            logger.error("❌ 未登录，无法进行浏览任务")
-            return
+    # ---------- 慢速输入 ----------
+    @staticmethod
+    def _human_input(ele, text: str):
+        ele.clear()
+        for ch in text:
+            ele.input(ch)
+            time.sleep(random.uniform(0.05, 0.15))
 
-        self.page.get(HOME_URL)
+    # ---------- 浏览 ----------
+    def browse(self):
+        logger.info("🚀 开始浏览主题")
+        self.page.get(self.site["latest"])
         time.sleep(3)
-        topics = self.page.eles(".topic-list-item .main-link a")
+
+        topics = self.page.eles(".//a[@class='title raw-link raw-topic-link']", timeout=5)[:15]
         if not topics:
-            logger.warning("❌ 没有找到任何帖子")
+            logger.warning("未找到主题")
             return
-        logger.info(f"📚 发现 {len(topics)} 个帖子，随机浏览 10 个")
-        for link in random.sample(topics, min(10, len(topics))):
-            url = link.attr("href")
-            if not url.startswith("http"):
-                url = "https://linux.do" + url
-            logger.info(f"👀 正在浏览：{url}")
-            self.page.get(url)
-            time.sleep(random.uniform(3, 6))
-            for _ in range(random.randint(3, 6)):
-                self.page.run_js(f"window.scrollBy(0, {random.randint(400, 700)})")
-                time.sleep(random.uniform(2, 4))
-            if random.random() < 0.3:
-                like_btn = self.page.ele(".discourse-reactions-reaction-button")
+        samples = random.sample(topics, min(10, len(topics)))
+        for no, topic in enumerate(samples, 1):
+            logger.info(f"🔍 第{no:02d}个主题")
+            self._browse_one(topic.attr("href"))
+
+    @retry(retries=2, delay=2)
+    def _browse_one(self, url):
+        tab = self.browser.new_tab()
+        tab.get(url)
+        time.sleep(random.uniform(2, 4))
+
+        # 随机点赞 0.3%
+        if random.random() < 0.003:
+            try:
+                like_btn = tab.ele(".discourse-reactions-reaction-button")
                 if like_btn:
                     like_btn.click()
-                    logger.info("👍 点赞成功")
-                    time.sleep(1)
+                    logger.success("👍 随机点赞")
+                    time.sleep(random.uniform(1, 2))
+            except:
+                pass
 
-    def print_connect_info(self):
-        """打印连接信息"""
-        if not self.is_logged_in():
-            logger.error("❌ 未登录，无法获取连接信息")
-            return
+        # 随机滚动
+        for _ in range(random.randint(5, 10)):
+            if random.random() < 0.03:
+                logger.info("🛑 随机退出浏览")
+                break
+            dist = random.randint(550, 650)
+            tab.run_js(f"window.scrollBy(0,{dist})")
+            logger.info(f"⬇️ 滚动 {dist}px")
+            time.sleep(random.uniform(2, 4))
 
-        self.page.get(CONNECT_URL)
-        time.sleep(3)
-        table = self.page.ele("tag:table")
-        if not table:
-            logger.warning("❌ 没有找到连接信息表格")
-            return
-        rows = [[td.text.strip() for td in tr.eles("tag:td")] for tr in table.eles("tag:tr") if tr.eles("tag:td")]
-        print("-------------- Connect Info --------------")
-        print(tabulate(rows, headers=["项目", "当前", "要求"], tablefmt="pretty"))
+        tab.close()
+
+    # ---------- Connect 信息 ----------
+    def print_connect(self):
+        try:
+            self.page.get(self.site["connect"])
+            time.sleep(3)
+            rows = []
+            for tr in self.page.eles("tag:table tag:tr")[1:]:
+                tds = tr.eles("tag:td")
+                if len(tds) >= 3:
+                    rows.append([td.text for td in tds[:3]])
+            if rows:
+                print("-------------- Connect Info -----------------")
+                print(tabulate(rows, headers=["项目", "当前", "要求"], tablefmt="pretty"))
+        except Exception as e:
+            logger.warning(f"获取 Connect 信息失败: {e}")
+
+    # ---------- 主入口 ----------
+    def run(self):
+        try:
+            self.start_browser()
+            cookies = CacheManager.load(self.name)
+            if cookies:
+                self.load_cookies_to_browser(cookies)
+                self.page.get(self.site["latest"])
+                time.sleep(3)
+                if self._verify_login():
+                    logger.info("🎉 缓存登录有效，跳过登录")
+                else:
+                    logger.info("🔄 缓存失效，重新登录")
+                    self.login()
+            else:
+                self.login()
+
+            if BROWSE_ENABLED:
+                self.browse()
+            self.print_connect()
+            logger.success(f"{self.name} 全流程完成")
+        except Exception as e:
+            logger.error(f"{self.name} 运行失败: {e}")
+            self.page.get_screenshot(f"{self.name}_error.png")
+            raise
+        finally:
+            self.browser.quit()
 
 
+# -------------------- 主程序 --------------------
 def main():
-    if not USERNAME or not PASSWORD:
-        logger.error("❌ 请设置 LINUXDO_USERNAME 和 LINUXDO_PASSWORD")
-        sys.exit(1)
+    logger.add(
+        "run.log",
+        rotation="10 MB",
+        retention="7 days",
+        level="DEBUG",
+        encoding="utf8",
+    )
+    logger.info("===== 多站点自动浏览开始 =====")
+    for site in SITES:
+        try:
+            AutoBrowser(site).run()
+        except Exception as e:
+            logger.error(f"{site['name']} 站点异常: {e}")
+            continue
+    logger.info("===== 全部站点执行完毕 =====")
 
-    site_config = {"name": SITE_NAME}
-    credentials = {"username": USERNAME, "password": PASSWORD}
-
-    browser = LinuxDoBrowser(site_config, credentials)
-    page = browser.page
-
-    # 尝试加载缓存的 cookies
-    if CacheManager.cookies_exist(SITE_NAME):
-        cookies = CacheManager.load_cookies(SITE_NAME)
-        if cookies:
-            page.set_cookies(cookies)
-            logger.info("✅ Cookie 已加载")
-
-    # 检查是否已登录
-    if browser.is_logged_in():
-        logger.info("✅ 使用缓存 Cookie 登录成功")
-    else:
-        logger.info("❌ 缓存无效，重新登录")
-        if not browser.login_with_retry():
-            logger.error("❌ 多次登录失败，跳过任务")
-            browser.browser.quit()
-            return
-
-    # 确保登录成功后再进行浏览任务
-    if browser.is_logged_in():
-        # 浏览帖子
-        browser.browse_topics()
-
-        # 打印连接信息
-        browser.print_connect_info()
-    else:
-        logger.error("❌ 登录状态检查失败，无法进行后续任务")
-
-    logger.info("✅ 所有任务完成，最新 Cookie 已保存")
-    browser.browser.quit()
 
 if __name__ == "__main__":
     main()
