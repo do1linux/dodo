@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-LinuxDo 多站点自动化脚本 - 最终修复版
-版本：9.0 - 主题选择器修复版
+LinuxDo 多站点自动化脚本 - Ubuntu 24.04 兼容版
+版本：10.0 - Ubuntu 24.04 兼容版
 """
 
 import os
@@ -60,9 +60,9 @@ RETRY_TIMES = 2
 MAX_TOPICS_TO_BROWSE = 3
 
 USER_AGENTS = [
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'
 ]
 
 VIEWPORT_SIZES = [
@@ -115,7 +115,6 @@ class CacheManager:
 class CloudflareHandler:
     @staticmethod
     async def wait_for_cloudflare(page, timeout=30):
-        """等待Cloudflare验证通过"""
         logger.info("⏳ 等待Cloudflare验证...")
         start_time = time.time()
         
@@ -167,6 +166,11 @@ class BrowserManager:
             '--no-first-run',
             '--no-default-browser-check',
             '--disable-default-apps',
+            '--disable-translate',
+            '--disable-extensions',
+            '--disable-sync',
+            '--disable-web-security',
+            '--disable-features=TranslateUI',
         ]
 
         browser = await playwright.chromium.launch(
@@ -174,7 +178,7 @@ class BrowserManager:
             args=browser_args
         )
         
-        logger.info("🚀 浏览器已启动")
+        logger.info("🚀 浏览器已启动 (Ubuntu 24.04 兼容配置)")
         return browser, playwright
 
     @staticmethod
@@ -457,7 +461,7 @@ class SiteAutomator:
             await self.page.goto(self.site_config['latest_topics_url'], timeout=60000)
             await asyncio.sleep(3)
             
-            # 修复主题选择器 - 使用更多可能的选择器
+            # 多种主题选择器
             topic_selectors = [
                 'a.title',
                 '.topic-list-item a',
@@ -479,7 +483,6 @@ class SiteAutomator:
             
             if not topic_links:
                 logger.warning("⚠️ 未找到主题链接，尝试备用选择器")
-                # 备用选择器
                 backup_selectors = ['a[href*="/t/"]', '.topic-list-body a']
                 for selector in backup_selectors:
                     links = await self.page.query_selector_all(selector)
@@ -493,7 +496,7 @@ class SiteAutomator:
                 logger.warning("⚠️ 未找到任何主题链接")
                 return
             
-            # 过滤出真正的主题链接
+            # 过滤有效主题链接
             valid_topic_links = []
             for link in topic_links:
                 href = await link.get_attribute('href')
@@ -537,13 +540,11 @@ class SiteAutomator:
             await new_page.goto(topic_url, timeout=60000)
             await asyncio.sleep(2)
             
-            # 等待Cloudflare验证通过
             await CloudflareHandler.wait_for_cloudflare(new_page, timeout=15)
             
             page_title = await new_page.title()
             logger.info(f"📄 浏览: {page_title}")
             
-            # 如果页面还是Cloudflare验证，跳过详细浏览
             if "请稍候" in page_title or "Checking" in page_title:
                 logger.warning("⚠️ 主题页面仍在Cloudflare验证，跳过详细浏览")
                 await new_page.close()
@@ -557,7 +558,6 @@ class SiteAutomator:
                 wait_time = random.uniform(2, 4)
                 await asyncio.sleep(wait_time)
                 
-                # 随机点赞（概率较低）
                 if random.random() < 0.1:
                     await self.try_like_post(new_page)
             
@@ -652,7 +652,7 @@ async def main():
         level="DEBUG" if args.verbose else "INFO"
     )
     
-    logger.info("🚀 LinuxDo自动化脚本启动 (最终修复版)")
+    logger.info("🚀 LinuxDo自动化脚本启动 (Ubuntu 24.04 兼容版)")
     
     target_sites = SITES if args.site == 'all' else [s for s in SITES if s['name'] == args.site]
     
