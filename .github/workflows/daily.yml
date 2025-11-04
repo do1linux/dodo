@@ -20,7 +20,7 @@ env:
 
 jobs:
   automate:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-22.04  # 使用 Ubuntu 22.04 避免包兼容性问题
     timeout-minutes: 30
     
     steps:
@@ -47,16 +47,7 @@ jobs:
           libxss1 \
           libasound2 \
           libatspi2.0-0 \
-          libcups2 \
-          wget \
-          gnupg
-
-    - name: Install Google Chrome
-      run: |
-        wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
-        echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
-        sudo apt-get update
-        sudo apt-get install -y google-chrome-stable
+          libcups2
 
     - name: Cache Python dependencies
       uses: actions/cache@v3
@@ -86,14 +77,6 @@ jobs:
         IDCFLARE_PASSWORD: ${{ secrets.IDCFLARE_PASSWORD }}
         HEADLESS: 'true'
       run: |
-        echo "🚀 开始执行 LinuxDo 多站点自动化脚本..."
-        echo "📦 检查会话缓存..."
-        if ls *.json 1> /dev/null 2>&1; then
-          echo "✅ 找到缓存的会话文件"
-          ls -la *.json
-        else
-          echo "❌ 未找到缓存文件，将进行完整登录"
-        fi
         python main.py --site ${{ github.event.inputs.site_selector || 'all' }}
 
     - name: Upload session data
