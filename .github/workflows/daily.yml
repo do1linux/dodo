@@ -105,9 +105,10 @@ jobs:
       uses: actions/upload-artifact@v4
       if: always()
       with:
-        name: automation-results
+        name: linux-do-cookies
         path: |
           cache/*.json
+          *.json
           *.log
           *.png
         retention-days: 7
