@@ -26,7 +26,7 @@ SITE_SELECTOR = os.getenv("SITE_SELECTOR", "all")  # all / linux_do / idcflare
 COOKIE_VALIDITY_DAYS = 7
 
 # -------------------- 工具：缓存管理 --------------------
-CACHE_DIR = Path(__file__).with_suffix("") / "cache"
+CACHE_DIR = Path("cache")
 CACHE_DIR.mkdir(exist_ok=True)
 
 
@@ -335,3 +335,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
