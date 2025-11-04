@@ -20,7 +20,7 @@ env:
 
 jobs:
   automate:
-    runs-on: ubuntu-22.04  # 使用 Ubuntu 22.04 避免包兼容性问题
+    runs-on: ubuntu-22.04
     timeout-minutes: 30
     
     steps:
@@ -47,18 +47,30 @@ jobs:
           libxss1 \
           libasound2 \
           libatspi2.0-0 \
-          libcups2
+          libcups2 \
+          libx11-xcb1 \
+          libxcb-dri3-0 \
+          libdrm2 \
+          libxtst6
 
     - name: Install Python dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip list  # 验证安装结果
+        pip install DrissionPage==4.1.0.18
+        pip install loguru==0.7.2
+        pip install Pillow>=10.0.0
+        pip install requests==2.32.3
+        # 创建 requirements.txt 中列出的依赖
+        pip list
 
-    - name: Install Playwright browsers
+    - name: Install Chromium for DrissionPage
       run: |
-        python -m playwright install chromium
-        python -m playwright install-deps
+        python -c "
+        from DrissionPage import ChromiumOptions
+        co = ChromiumOptions()
+        co.auto_port()
+        print('Chromium 初始化完成')
+        "
 
     - name: Download previous session data
       uses: actions/download-artifact@v4
@@ -73,9 +85,12 @@ jobs:
         LINUXDO_PASSWORD: ${{ secrets.LINUXDO_PASSWORD }}
         IDCFLARE_USERNAME: ${{ secrets.IDCFLARE_USERNAME }}
         IDCFLARE_PASSWORD: ${{ secrets.IDCFLARE_PASSWORD }}
+        GITHUB_ACTIONS: 'true'
         HEADLESS: 'true'
       run: |
-        python main.py --site ${{ github.event.inputs.site_selector || 'all' }}
+        echo "开始执行自动化脚本..."
+        python main.py
+        echo "脚本执行完成"
 
     - name: Upload session data
       uses: actions/upload-artifact@v4
@@ -83,6 +98,20 @@ jobs:
       with:
         name: linuxdo-session-data
         path: |
-          *.json
+          browser_state_*.json
+          cf_cookies_*.json
         retention-days: 7
         overwrite: true
+
+    - name: Notify on failure
+      if: failure()
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const { owner, repo } = context.repo;
+          github.rest.issues.create({
+            owner,
+            repo,
+            title: 'LinuxDo 自动化执行失败',
+            body: 'LinuxDo 多站点自动化脚本执行失败，请检查日志。'
+          });
