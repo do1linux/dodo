@@ -20,7 +20,7 @@ env:
 
 jobs:
   automate:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04  # 使用 Ubuntu 22.04 避免包兼容性问题
     timeout-minutes: 30
     
     steps:
@@ -45,7 +45,9 @@ jobs:
           libxrandr2 \
           libgbm1 \
           libxss1 \
-          libasound2
+          libasound2 \
+          libatspi2.0-0 \
+          libcups2
 
     - name: Cache Python dependencies
       uses: actions/cache@v3
