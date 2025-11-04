@@ -105,9 +105,10 @@ jobs:
       uses: actions/upload-artifact@v4
       if: always()
       with:
-        name: linux-do-cookies
+        name: session-data
         path: |
           *.json
           *.log
           *.png
         retention-days: 7
+        overwrite: true
