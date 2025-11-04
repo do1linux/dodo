@@ -135,54 +135,8 @@ class CacheManager:
         file_path = CacheManager.get_cache_file_path(f"{site_name}_cookies.json")
         return os.path.exists(file_path)
 
-# ======================== Cloudflare处理器 ========================
-class CloudflareHandler:
-    """Cloudflare验证处理类"""
-    
-    @staticmethod
-    def handle_cloudflare(page, max_attempts=8, timeout=180):
-        """处理Cloudflare验证"""
-        start_time = time.time()
-        logger.info("🛡️ 开始处理 Cloudflare验证")
-        
-        for attempt in range(max_attempts):
-            try:
-                page_title = page.title
-                
-                # 检查页面是否已经正常加载
-                if page_title and page_title != "请稍候…" and "Checking" not in page_title:
-                    logger.success("✅ 页面已正常加载，Cloudflare验证通过")
-                    return True
-                
-                # 等待验证
-                wait_time = random.uniform(8, 15)
-                logger.info(f"⏳ 等待Cloudflare验证完成 ({wait_time:.1f}秒) - 尝试 {attempt + 1}/{max_attempts}")
-                time.sleep(wait_time)
-                
-                # 检查超时
-                if time.time() - start_time > timeout:
-                    logger.warning("⚠️ Cloudflare处理超时")
-                    break
-                    
-            except Exception as e:
-                logger.error(f"Cloudflare处理异常 (尝试 {attempt + 1}): {str(e)}")
-                time.sleep(10)
-        
-        # 最终检查
-        try:
-            page_title = page.title
-            if page_title and page_title != "请稍候…" and "Checking" not in page_title:
-                logger.success("✅ 最终验证: Cloudflare验证通过")
-                return True
-            else:
-                logger.warning("⚠️ 最终验证: Cloudflare验证未完全通过，但继续后续流程")
-                return True
-        except Exception:
-            logger.warning("⚠️ 无法获取页面标题，继续后续流程")
-            return True
-
 # ======================== 重试装饰器 ========================
-def retry_decorator(retries=3):
+def retry_decorator(retries=3, delay=2):
     def decorator(func):
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
@@ -194,133 +148,20 @@ def retry_decorator(retries=3):
                         logger.error(f"函数 {func.__name__} 最终执行失败: {str(e)}")
                         raise
                     logger.warning(f"函数 {func.__name__} 第 {attempt + 1}/{retries} 次尝试失败: {str(e)}")
-                    time.sleep(2)
+                    time.sleep(delay)
             return None
         return wrapper
     return decorator
 
-# ======================== 登录验证器 ========================
-class LoginValidator:
-    """登录验证类"""
+# ======================== 直接操作浏览器类 ========================
+class DirectBrowser:
+    """直接操作浏览器，避免复杂的元素操作"""
     
-    @staticmethod
-    def enhanced_strict_check_login_status(page, username, site_config):
-        """增强的严格登录状态验证"""
-        logger.info("🔍 增强严格验证登录状态...")
-        
-        try:
-            # 首先确保在latest页面
-            if not page.url.endswith('/latest'):
-                page.get(site_config['latest_topics_url'])
-                time.sleep(3)
-            
-            # 方法1: 检查当前页面的用户名
-            page_content = page.html.lower()
-            if username and username.lower() in page_content:
-                logger.success(f"✅ 在页面内容中找到用户名: {username}")
-                return True
-            
-            # 方法2: 检查用户相关元素
-            user_indicators = [
-                f'.username[data-username*="{username}"]',
-                f'[data-current-user*="{username}"]',
-                '.current-user',
-                '.header-user',
-                '.user-menu'
-            ]
-            
-            for selector in user_indicators:
-                try:
-                    if page(selector, timeout=2):
-                        logger.success(f"✅ 找到用户指示器: {selector}")
-                        return True
-                except:
-                    continue
-            
-            # 方法3: 检查登录按钮（反证未登录）
-            login_selectors = [
-                '.login-button', 
-                '#login-button',
-                'a[href*="/login"]'
-            ]
-            
-            for selector in login_selectors:
-                try:
-                    login_btn = page(selector, timeout=2)
-                    if login_btn:
-                        logger.error(f"❌ 检测到登录按钮: {selector}")
-                        return False
-                except:
-                    continue
-            
-            # 如果以上方法都失败，但页面显示正常内容，尝试最后的验证
-            page_title = page.title
-            if page_title and "登录" not in page_title and "Login" not in page_title:
-                # 检查是否有主题列表
-                topic_list = page.eles('.title.raw-link.raw-topic-link')
-                if topic_list and len(topic_list) > 0:
-                    logger.warning("⚠️ 页面显示正常内容且有主题列表，但无法验证用户名，假设已登录")
-                    return True
-            
-            logger.error(f"❌ 所有验证方法都失败，未找到用户名: {username}")
-            return False
-            
-        except Exception as e:
-            logger.error(f"登录状态检查失败: {str(e)}")
-            return False
-
-# ======================== 安全元素操作器 ========================
-class SafeElementOperator:
-    """安全的元素操作类，避免JavaScript错误"""
-    
-    @staticmethod
-    def safe_clear(element):
-        """安全清空输入框"""
-        try:
-            # 先尝试使用JavaScript清空
-            element.run_js('this.value = ""')
-            time.sleep(0.5)
-            # 再尝试标准的clear方法
-            element.clear()
-            return True
-        except Exception as e:
-            logger.warning(f"安全清空输入框时遇到问题: {e}")
-            # 如果都不行，使用备用方法
-            try:
-                element.focus()
-                element.run_js('''
-                    this.select();
-                    document.execCommand("delete");
-                ''')
-                return True
-            except Exception as e2:
-                logger.error(f"所有清空方法都失败: {e2}")
-                return False
-    
-    @staticmethod
-    def safe_click(element):
-        """安全点击元素"""
-        try:
-            element.click()
-            return True
-        except Exception as e:
-            logger.warning(f"标准点击失败，尝试JavaScript点击: {e}")
-            try:
-                element.run_js('this.click()')
-                return True
-            except Exception as e2:
-                logger.error(f"所有点击方法都失败: {e2}")
-                return False
-
-# ======================== 主浏览器类 ========================
-class LinuxDoBrowser:
     def __init__(self, site_config):
         self.site_config = site_config
         self.site_name = site_config['name']
         self.username = site_config['username']
         self.password = site_config['password']
-        self.login_attempts = 0
-        self.max_login_attempts = 2
         
         # 初始化浏览器
         self._setup_browser()
@@ -335,6 +176,7 @@ class LinuxDoBrowser:
             .set_argument("--disable-blink-features=AutomationControlled")
             .set_argument("--disable-dev-shm-usage")
             .set_argument("--disable-gpu")
+            .set_argument("--remote-debugging-port=9222")
         )
         co.set_user_agent(
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -344,26 +186,20 @@ class LinuxDoBrowser:
         self.page = self.browser.new_tab()
         
         # 注入反检测脚本
-        self.inject_enhanced_script()
+        self._inject_anti_detection()
 
-    def inject_enhanced_script(self, page=None):
-        """注入增强的反检测脚本"""
-        if page is None:
-            page = self.page
-            
-        enhanced_script = """
+    def _inject_anti_detection(self):
+        """注入反检测脚本"""
+        script = """
         Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
         Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
         Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh', 'en'] });
         """
-        
         try:
-            page.run_js(enhanced_script)
+            self.page.run_js(script)
             logger.info("✅ 反检测脚本已注入")
-            return True
         except Exception as e:
             logger.warning(f"注入脚本失败: {str(e)}")
-            return False
 
     def get_all_cookies(self):
         """获取所有cookies"""
@@ -394,7 +230,70 @@ class LinuxDoBrowser:
             logger.error(f"保存缓存失败: {str(e)}")
             return False
 
-    @retry_decorator(retries=2)
+    def wait_for_cloudflare(self, timeout=30):
+        """等待Cloudflare验证通过"""
+        logger.info("🛡️ 等待Cloudflare验证...")
+        start_time = time.time()
+        
+        while time.time() - start_time < timeout:
+            try:
+                title = self.page.title
+                if title and "Checking" not in title and "请稍候" not in title:
+                    logger.success("✅ Cloudflare验证通过")
+                    return True
+                time.sleep(2)
+            except Exception as e:
+                logger.warning(f"检查页面标题时出错: {e}")
+                time.sleep(2)
+        
+        logger.warning("⚠️ Cloudflare等待超时，继续执行")
+        return True
+
+    def check_login_status(self):
+        """检查登录状态"""
+        logger.info("🔍 检查登录状态...")
+        
+        try:
+            # 检查页面中是否包含用户名
+            page_html = self.page.html.lower()
+            if self.username.lower() in page_html:
+                logger.success(f"✅ 登录成功 - 找到用户名: {self.username}")
+                return True
+            
+            # 检查是否有用户相关的元素
+            user_selectors = [
+                '.current-user',
+                '.user-menu',
+                '.header-user',
+                '[data-current-user]'
+            ]
+            
+            for selector in user_selectors:
+                try:
+                    if self.page(selector, timeout=2):
+                        logger.success(f"✅ 找到用户元素: {selector}")
+                        return True
+                except:
+                    continue
+            
+            # 检查是否有登录按钮（反证未登录）
+            login_selectors = ['.login-button', '#login-button', 'a[href*="/login"]']
+            for selector in login_selectors:
+                try:
+                    if self.page(selector, timeout=2):
+                        logger.error(f"❌ 检测到登录按钮: {selector}")
+                        return False
+                except:
+                    continue
+            
+            logger.warning("⚠️ 无法确定登录状态")
+            return False
+            
+        except Exception as e:
+            logger.error(f"检查登录状态失败: {e}")
+            return False
+
+    @retry_decorator(retries=2, delay=3)
     def attempt_login_with_cookies(self):
         """尝试使用缓存的cookies登录"""
         logger.info(f"🔐 尝试使用缓存cookies登录 {self.site_name}")
@@ -408,6 +307,7 @@ class LinuxDoBrowser:
             self.page.get(self.site_config['base_url'])
             time.sleep(3)
             
+            # 设置cookies
             for cookie in cached_cookies:
                 self.page.set.cookie(cookie)
             
@@ -415,7 +315,7 @@ class LinuxDoBrowser:
             self.page.get(self.site_config['latest_topics_url'])
             time.sleep(5)
             
-            if LoginValidator.enhanced_strict_check_login_status(self.page, self.username, self.site_config):
+            if self.check_login_status():
                 logger.success("🎉 缓存cookies登录成功")
                 return True
             else:
@@ -426,188 +326,205 @@ class LinuxDoBrowser:
             logger.error(f"缓存登录失败: {str(e)}")
             return False
 
-    @retry_decorator(retries=2)
     def perform_full_login(self):
-        """执行完整登录流程"""
+        """执行完整登录流程 - 使用JavaScript直接操作"""
         logger.info("🔐 开始完整登录流程...")
         
-        # 导航到登录页面
-        self.page.get(self.site_config['login_url'])
-        time.sleep(5)
-        
-        # 重新注入脚本
-        self.inject_enhanced_script()
-        
-        # 处理Cloudflare验证
-        CloudflareHandler.handle_cloudflare(self.page)
-        
-        # 查找并填写登录表单
-        if not self._fill_login_form():
-            return False
-        
-        # 提交登录
-        if not self._submit_login():
-            return False
-        
-        # 等待登录完成
-        time.sleep(5)
-        
-        # 验证登录成功
-        if LoginValidator.enhanced_strict_check_login_status(self.page, self.username, self.site_config):
-            logger.success("✅ 登录成功")
-            
-            # 保存cookies
-            self.save_cookies_to_cache()
-            return True
-        else:
-            logger.error("❌ 登录验证失败")
-            return False
-
-    def _fill_login_form(self):
-        """填写登录表单 - 修复版本"""
         try:
-            logger.info("🔍 查找登录表单元素...")
+            # 导航到登录页面
+            self.page.get(self.site_config['login_url'])
+            time.sleep(5)
             
-            # 等待页面稳定
-            time.sleep(3)
+            # 等待Cloudflare
+            self.wait_for_cloudflare()
             
-            # 查找用户名输入框 - 更宽松的选择器
-            username_selectors = [
-                'input[name="username"]',
-                'input[name="user"]',
-                'input[type="text"]',
-                '#username',
-                '#user',
-                '#login-account-name',
-                'input[placeholder*="用户名"]',
-                'input[placeholder*="name"]',
-                'input[placeholder*="user"]'
-            ]
+            # 重新注入脚本
+            self._inject_anti_detection()
             
-            username_field = None
-            for selector in username_selectors:
-                try:
-                    username_field = self.page(selector, timeout=5)
-                    if username_field:
-                        logger.info(f"✅ 找到用户名输入框: {selector}")
-                        break
-                except:
-                    continue
-            
-            if not username_field:
-                logger.error("❌ 未找到用户名输入框")
-                # 截图调试
-                self.page.get_screenshot(f"{self.site_name}_username_not_found.png")
+            # 使用JavaScript直接查找并填写表单
+            if not self._fill_form_with_js():
                 return False
             
-            # 安全地清空并输入用户名
-            if not SafeElementOperator.safe_clear(username_field):
-                logger.error("❌ 无法清空用户名输入框")
+            # 提交登录
+            if not self._submit_login_with_js():
                 return False
+            
+            # 等待登录完成
+            time.sleep(5)
+            
+            # 验证登录成功
+            if self.check_login_status():
+                logger.success("✅ 登录成功")
                 
-            self._human_type(username_field, self.username)
-            time.sleep(random.uniform(1, 2))
-            
-            # 查找密码输入框
-            password_selectors = [
-                'input[type="password"]',
-                'input[name="password"]',
-                '#password',
-                '#login-account-password',
-                'input[placeholder*="密码"]',
-                'input[placeholder*="password"]'
-            ]
-            
-            password_field = None
-            for selector in password_selectors:
-                try:
-                    password_field = self.page(selector, timeout=5)
-                    if password_field:
-                        logger.info(f"✅ 找到密码输入框: {selector}")
-                        break
-                except:
-                    continue
-            
-            if not password_field:
-                logger.error("❌ 未找到密码输入框")
-                return False
-            
-            # 安全地清空并输入密码
-            if not SafeElementOperator.safe_clear(password_field):
-                logger.error("❌ 无法清空密码输入框")
-                return False
-                
-            self._human_type(password_field, self.password)
-            time.sleep(random.uniform(1, 2))
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ 填写登录表单失败: {e}")
-            # 截图保存错误状态
-            self.page.get_screenshot(f"{self.site_name}_login_form_error.png")
-            return False
-
-    def _human_type(self, element, text):
-        """模拟人类输入 - 修复版本"""
-        try:
-            for char in text:
-                # 使用更安全的输入方式
-                element.run_js(f'this.value += "{char}"')
-                time.sleep(random.uniform(0.05, 0.15))
-            return True
-        except Exception as e:
-            logger.warning(f"JavaScript输入失败，尝试备用方法: {e}")
-            # 备用方法：直接设置值
-            try:
-                element.run_js(f'this.value = "{text}"')
-                return True
-            except Exception as e2:
-                logger.error(f"所有输入方法都失败: {e2}")
-                return False
-
-    def _submit_login(self):
-        """提交登录表单 - 修复版本"""
-        try:
-            # 查找登录按钮
-            login_button_selectors = [
-                'button[type="submit"]',
-                'input[type="submit"]',
-                '.login-button',
-                '#login-button',
-                'button:contains("登录")',
-                'button:contains("Sign in")',
-                'button:contains("Log in")'
-            ]
-            
-            login_button = None
-            for selector in login_button_selectors:
-                try:
-                    login_button = self.page(selector, timeout=5)
-                    if login_button:
-                        logger.info(f"✅ 找到登录按钮: {selector}")
-                        break
-                except:
-                    continue
-            
-            if not login_button:
-                logger.error("❌ 未找到登录按钮")
-                return False
-            
-            # 安全点击
-            if SafeElementOperator.safe_click(login_button):
-                logger.info("✅ 登录按钮点击成功")
+                # 保存cookies
+                self.save_cookies_to_cache()
                 return True
             else:
-                logger.error("❌ 登录按钮点击失败")
+                logger.error("❌ 登录验证失败")
+                # 截图调试
+                self.page.get_screenshot(f"{self.site_name}_login_failed.png")
                 return False
-            
+                
         except Exception as e:
-            logger.error(f"❌ 提交登录失败: {e}")
+            logger.error(f"登录流程异常: {e}")
+            self.page.get_screenshot(f"{self.site_name}_login_error.png")
+            return False
+
+    def _fill_form_with_js(self):
+        """使用JavaScript直接填写表单"""
+        logger.info("🔄 使用JavaScript填写登录表单...")
+        
+        try:
+            # 首先尝试找到所有可能的输入框
+            username_found = False
+            password_found = False
+            
+            # 用户名输入框选择器
+            username_selectors = [
+                '#user', '#username', 'input[name="username"]', 'input[name="user"]',
+                'input[type="text"]', 'input[placeholder*="user"]', 'input[placeholder*="name"]'
+            ]
+            
+            # 密码输入框选择器  
+            password_selectors = [
+                '#password', 'input[type="password"]', 'input[name="password"]',
+                'input[placeholder*="password"]', 'input[placeholder*="密码"]'
+            ]
+            
+            # 使用JavaScript直接设置值
+            js_script = """
+            // 查找用户名输入框
+            var usernameSelectors = %s;
+            var usernameField = null;
+            for (var i = 0; i < usernameSelectors.length; i++) {
+                var field = document.querySelector(usernameSelectors[i]);
+                if (field && (field.type === 'text' || field.type === 'email' || !field.type)) {
+                    usernameField = field;
+                    break;
+                }
+            }
+            
+            // 查找密码输入框
+            var passwordSelectors = %s;
+            var passwordField = null;
+            for (var i = 0; i < passwordSelectors.length; i++) {
+                var field = document.querySelector(passwordSelectors[i]);
+                if (field && field.type === 'password') {
+                    passwordField = field;
+                    break;
+                }
+            }
+            
+            // 设置值
+            if (usernameField) {
+                usernameField.value = '%s';
+                usernameField.dispatchEvent(new Event('input', {bubbles: true}));
+                usernameField.dispatchEvent(new Event('change', {bubbles: true}));
+            }
+            
+            if (passwordField) {
+                passwordField.value = '%s';
+                passwordField.dispatchEvent(new Event('input', {bubbles: true}));
+                passwordField.dispatchEvent(new Event('change', {bubbles: true}));
+            }
+            
+            // 返回结果
+            return {
+                usernameFound: !!usernameField,
+                passwordFound: !!passwordField,
+                usernameSelector: usernameField ? usernameSelectors.find(s => document.querySelector(s) === usernameField) : null,
+                passwordSelector: passwordField ? passwordSelectors.find(s => document.querySelector(s) === passwordField) : null
+            };
+            """ % (username_selectors, password_selectors, self.username, self.password)
+            
+            result = self.page.run_js(js_script)
+            
+            if result:
+                if result.get('usernameFound'):
+                    logger.info(f"✅ 找到用户名输入框: {result.get('usernameSelector')}")
+                    username_found = True
+                else:
+                    logger.error("❌ 未找到用户名输入框")
+                
+                if result.get('passwordFound'):
+                    logger.info(f"✅ 找到密码输入框: {result.get('passwordSelector')}")
+                    password_found = True
+                else:
+                    logger.error("❌ 未找到密码输入框")
+                
+                return username_found and password_found
+            else:
+                logger.error("❌ JavaScript执行失败")
+                return False
+                
+        except Exception as e:
+            logger.error(f"JavaScript填写表单失败: {e}")
+            return False
+
+    def _submit_login_with_js(self):
+        """使用JavaScript提交登录表单"""
+        logger.info("🔄 使用JavaScript提交登录...")
+        
+        try:
+            # 查找并点击登录按钮
+            login_selectors = [
+                '#login-button', '.login-button', 'button[type="submit"]', 
+                'input[type="submit"]', 'button:contains("登录")', 
+                'button:contains("Sign in")', 'button:contains("Log in")'
+            ]
+            
+            js_script = """
+            var loginSelectors = %s;
+            var loginButton = null;
+            
+            for (var i = 0; i < loginSelectors.length; i++) {
+                if (loginSelectors[i].includes('contains')) {
+                    // 处理文本包含选择器
+                    var text = loginSelectors[i].split('"')[1];
+                    var buttons = document.querySelectorAll('button');
+                    for (var j = 0; j < buttons.length; j++) {
+                        if (buttons[j].textContent.includes(text)) {
+                            loginButton = buttons[j];
+                            break;
+                        }
+                    }
+                } else {
+                    loginButton = document.querySelector(loginSelectors[i]);
+                }
+                if (loginButton) break;
+            }
+            
+            if (loginButton) {
+                loginButton.click();
+                return {success: true, selector: loginSelectors[i]};
+            } else {
+                // 如果找不到按钮，尝试提交表单
+                var forms = document.querySelectorAll('form');
+                for (var k = 0; k < forms.length; k++) {
+                    if (forms[k].querySelector('input[type="password"]')) {
+                        forms[k].submit();
+                        return {success: true, method: 'form_submit'};
+                    }
+                }
+                return {success: false};
+            }
+            """ % login_selectors
+            
+            result = self.page.run_js(js_script)
+            
+            if result and result.get('success'):
+                logger.info(f"✅ 登录提交成功 - {result.get('selector', result.get('method', '未知'))}")
+                return True
+            else:
+                logger.error("❌ 找不到登录按钮或表单")
+                return False
+                
+        except Exception as e:
+            logger.error(f"JavaScript提交登录失败: {e}")
             return False
 
     def browse_topics(self):
-        """浏览主题模拟用户行为"""
+        """浏览主题"""
         if not BROWSE_ENABLED:
             logger.info("⏭️ 浏览功能已禁用，跳过")
             return
@@ -618,31 +535,30 @@ class LinuxDoBrowser:
             self.page.get(self.site_config['latest_topics_url'])
             time.sleep(3)
             
-            # 查找主题链接
-            theme_links = self.page.eles('.title.raw-link.raw-topic-link')[:15]
-            if not theme_links:
+            # 使用JavaScript获取主题链接
+            js_script = """
+            var links = Array.from(document.querySelectorAll('.title.raw-link.raw-topic-link'));
+            return links.slice(0, 10).map(link => link.href);
+            """
+            
+            theme_urls = self.page.run_js(js_script)
+            
+            if not theme_urls or len(theme_urls) == 0:
                 logger.warning("📭 未找到主题链接")
                 return
             
-            logger.info(f"🔗 找到 {len(theme_links)} 个主题链接")
+            logger.info(f"🔗 找到 {len(theme_urls)} 个主题链接")
             
-            # 随机选择主题浏览
-            selected_themes = random.sample(theme_links, min(5, len(theme_links)))  # 减少数量避免超时
-            logger.info(f"🎯 选择浏览 {len(selected_themes)} 个主题")
+            # 随机选择几个主题浏览
+            selected_urls = random.sample(theme_urls, min(3, len(theme_urls)))
             
-            for i, link in enumerate(selected_themes, 1):
+            for i, url in enumerate(selected_urls, 1):
                 try:
-                    theme_url = link.attr("href")
-                    if not theme_url.startswith('http'):
-                        theme_url = urljoin(self.site_config['base_url'], theme_url)
+                    logger.info(f"📖 浏览第{i}/{len(selected_urls)}个主题")
+                    self._browse_single_theme(url)
                     
-                    logger.info(f"📖 浏览第{i}/{len(selected_themes)}个主题")
-                    self._browse_single_theme(theme_url)
-                    
-                    # 主题间随机间隔
-                    if i < len(selected_themes):
-                        interval = random.uniform(3, 8)  # 减少间隔时间
-                        time.sleep(interval)
+                    if i < len(selected_urls):
+                        time.sleep(random.uniform(2, 5))
                 except Exception as e:
                     logger.warning(f"浏览主题 {i} 失败: {e}")
                     continue
@@ -652,32 +568,22 @@ class LinuxDoBrowser:
         except Exception as e:
             logger.error(f"❌ 浏览主题失败: {e}")
 
-    @retry_decorator(retries=2)
     def _browse_single_theme(self, url):
         """浏览单个主题"""
         tab = self.browser.new_tab()
         try:
             tab.get(url)
-            time.sleep(random.uniform(2, 4))
+            time.sleep(random.uniform(3, 6))
             
             # 模拟阅读行为
-            read_time = random.randint(5, 12)  # 减少阅读时间
-            scroll_actions = random.randint(2, 5)  # 减少滚动次数
-            
+            read_time = random.randint(5, 10)
             start_time = time.time()
-            actions_completed = 0
             
-            while time.time() - start_time < read_time and actions_completed < scroll_actions:
+            while time.time() - start_time < read_time:
                 # 随机滚动
                 scroll_distance = random.randint(200, 500)
                 tab.run_js(f"window.scrollBy(0, {scroll_distance})")
-                actions_completed += 1
-                
-                # 随机停留
-                stay_time = random.uniform(1, 2)
-                time.sleep(stay_time)
-            
-            time.sleep(1)
+                time.sleep(random.uniform(1, 2))
             
         finally:
             tab.close()
@@ -689,20 +595,28 @@ class LinuxDoBrowser:
             self.page.get(self.site_config['connect_url'])
             time.sleep(3)
             
-            # 查找表格数据
-            rows = []
-            try:
-                tables = self.page.eles('table')
-                for table in tables:
-                    for tr in table.eles('tr')[1:]:  # 跳过表头
-                        tds = tr.eles('td')[:3]
-                        if len(tds) >= 3:
-                            row_data = [td.text.strip() for td in tds]
-                            rows.append(row_data)
-            except:
-                pass
+            # 使用JavaScript获取表格数据
+            js_script = """
+            var rows = [];
+            var tables = document.querySelectorAll('table');
             
-            if rows:
+            tables.forEach(table => {
+                var tableRows = table.querySelectorAll('tr');
+                for (var i = 1; i < tableRows.length; i++) {
+                    var cells = tableRows[i].querySelectorAll('td');
+                    if (cells.length >= 3) {
+                        var rowData = Array.from(cells).slice(0, 3).map(cell => cell.textContent.trim());
+                        rows.push(rowData);
+                    }
+                }
+            });
+            
+            return rows;
+            """
+            
+            rows = self.page.run_js(js_script)
+            
+            if rows and len(rows) > 0:
                 logger.info("📋 连接信息表格:")
                 print(tabulate(rows, headers=["项目", "当前", "要求"], tablefmt="pretty"))
                 print("-" * 50)
@@ -732,7 +646,7 @@ class LinuxDoBrowser:
                 if not self.perform_full_login():
                     raise Exception("完整登录失败")
             
-            # 2. 浏览主题（模拟用户行为）
+            # 2. 浏览主题
             self.browse_topics()
             
             # 3. 获取连接信息
@@ -793,7 +707,7 @@ def main():
     success_count = 0
     for site in SITES:
         try:
-            browser = LinuxDoBrowser(site)
+            browser = DirectBrowser(site)
             if browser.run():
                 success_count += 1
         except Exception as e:
