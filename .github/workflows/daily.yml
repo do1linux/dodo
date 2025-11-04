@@ -17,7 +17,6 @@ on:
 
 env:
   PYTHON_VERSION: '3.11'
-  NODE_VERSION: '18'
 
 jobs:
   automate:
@@ -108,12 +107,3 @@ jobs:
           *.json
         retention-days: 7
         overwrite: true
-
-    - name: Upload logs
-      uses: actions/upload-artifact@v4
-      if: always()
-      with:
-        name: automation-logs
-        path: |
-          *.log
-        retention-days: 3
