@@ -10,9 +10,7 @@ from urllib.parse import urljoin
 from loguru import logger
 from tabulate import tabulate
 from DrissionPage import ChromiumPage, ChromiumOptions
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 # ======================== 配置常量 ========================
 SITE_CREDENTIALS = {
@@ -27,6 +25,7 @@ SITE_CREDENTIALS = {
 }
 
 IS_GITHUB_ACTIONS = os.getenv('GITHUB_ACTIONS') == 'true'
+HEADLESS_MODE = True if IS_GITHUB_ACTIONS else False
 
 SITES = [
     {
@@ -55,12 +54,6 @@ USER_AGENTS = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
     'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'
-]
-
-VIEWPORT_SIZES = [
-    {'width': 1920, 'height': 1080},
-    {'width': 1366, 'height': 768},
-    {'width': 1536, 'height': 864}
 ]
 
 def parse_arguments():
@@ -282,9 +275,9 @@ class BrowserManager:
         for arg in browser_args:
             co.set_argument(arg)
         
-        # 设置视口大小
-        viewport = random.choice(VIEWPORT_SIZES)
-        co.set_argument(f'--window-size={viewport["width"]},{viewport["height"]}')
+        # 设置无头模式（在GitHub Actions中启用）
+        if HEADLESS_MODE:
+            co.headless()
         
         # 创建浏览器实例
         browser = ChromiumPage(addr_driver_opts=co)
@@ -337,23 +330,20 @@ class SiteAutomator:
         finally:
             self.cleanup()
 
+    @retry(stop=stop_after_attempt(RETRY_TIMES), wait=wait_fixed(10))
     def smart_login_approach(self):
-        for attempt in range(RETRY_TIMES):
-            logger.info(f"🔄 登录尝试 {attempt + 1}/{RETRY_TIMES}")
+        logger.info("🔄 登录尝试...")
+        
+        try:
+            if self.try_direct_access():
+                return True
             
-            try:
-                if self.try_direct_access():
-                    return True
+            if self.full_login_process():
+                return True
                 
-                if self.full_login_process():
-                    return True
-                    
-            except Exception as e:
-                logger.error(f"登录尝试 {attempt + 1} 失败: {str(e)}")
-            
-            if attempt < RETRY_TIMES - 1:
-                self.clear_cache()
-                time.sleep(10 * (attempt + 1))
+        except Exception as e:
+            logger.error(f"登录尝试失败: {str(e)}")
+            raise e
         
         return False
 
