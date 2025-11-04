@@ -24,7 +24,7 @@ jobs:
     timeout-minutes: 30
     
     steps:
-    -: name Checkout repository
+    - name: Checkout repository
       uses: actions/checkout@v4
 
     - name: Setup Python
@@ -54,12 +54,18 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         pip list  # 验证安装结果
-        which python  # 调试命令，确认 Python 环境路径
 
     - name: Install Playwright browsers
       run: |
         python -m playwright install chromium
         python -m playwright install-deps
+
+    - name: Download previous session data
+      uses: actions/download-artifact@v4
+      with:
+        name: linuxdo-session-data
+        path: ./
+      continue-on-error: true
 
     - name: Run automation script
       env:
