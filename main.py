@@ -40,7 +40,7 @@ SITES = [
         'latest_topics_url': 'https://idcflare.com/latest',
         'connect_url': 'https://connect.idcflare.com/',
         'cf_cookies_file': "cf_cookies_idcflare.json",
-        'browser_state_file': "browser_state_idcflare.json",
+        'browser_state_file": "browser_state_idcflare.json",
     }
 ]
 
@@ -49,13 +49,9 @@ RETRY_TIMES = 3
 MAX_TOPICS_TO_BROWSE = 5
 
 USER_AGENTS = [
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'
-]
-
-VIEWPORT_SIZES = [
-    {'width': 1920, 'height': 1080},
-    {'width': 1366, 'height': 768},
-    {'width': 1536, 'height': 864}
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'
 ]
 
 class CacheManager:
@@ -143,45 +139,6 @@ class CloudflareHandler:
         logger.warning("Cloudflare 等待超时，继续执行")
         return False
 
-    @staticmethod
-    def handle_turnstile_challenge(page):
-        """处理 Turnstile 验证"""
-        try:
-            logger.info("检测到 Turnstile 验证，尝试自动处理...")
-            
-            # 检查是否有 Turnstile iframe
-            turnstile_iframes = page.eles('iframe[src*="challenges.cloudflare.com"], iframe[src*="turnstile"]')
-            if turnstile_iframes:
-                logger.info("发现 Turnstile iframe")
-                
-                # 尝试点击验证框
-                checkboxes = page.eles('.cf-turnstile, [data-sitekey], .challenge-form')
-                for checkbox in checkboxes:
-                    if checkbox and checkbox.is_displayed:
-                        try:
-                            checkbox.click()
-                            logger.info("已点击验证框")
-                            time.sleep(5)
-                            break
-                        except Exception as e:
-                            logger.debug(f"点击验证框失败: {str(e)}")
-            
-            # 等待验证完成
-            for i in range(30):
-                time.sleep(2)
-                # 检查验证是否完成
-                page_html = page.html
-                if 'cf-turnstile-response' in page_html:
-                    logger.success("Turnstile 验证可能已完成")
-                    return True
-                    
-            logger.warning("Turnstile 验证处理超时")
-            return False
-            
-        except Exception as e:
-            logger.error(f"处理 Turnstile 验证失败: {str(e)}")
-            return False
-
 class SiteAutomator:
     def __init__(self, site_config):
         self.site_config = site_config
@@ -191,8 +148,10 @@ class SiteAutomator:
         self.csrf_token = None
         
     def setup_browser(self):
-        """设置浏览器配置 - 使用正确的 DrissionPage API"""
+        """设置浏览器配置 - 专门为 GitHub Actions 环境优化"""
         try:
+            logger.info("初始化浏览器...")
+            
             # 创建配置对象
             co = ChromiumOptions()
             
@@ -200,32 +159,23 @@ class SiteAutomator:
             user_agent = random.choice(USER_AGENTS)
             co.set_user_agent(user_agent)
             
-            # 设置视口大小
-            viewport = random.choice(VIEWPORT_SIZES)
-            co.set_argument(f"--window-size={viewport['width']},{viewport['height']}")
-            
-            # 其他配置
-            co.set_argument("--disable-blink-features=AutomationControlled")
-            co.set_argument("--disable-dev-shm-usage")
-            co.set_argument("--no-sandbox")
-            co.set_argument("--disable-web-security")
-            co.set_argument("--allow-running-insecure-content")
-            co.set_argument("--disable-gpu")
+            # 在 GitHub Actions 环境中必须的配置
+            co.add_argument('--no-sandbox')
+            co.add_argument('--disable-dev-shm-usage')
+            co.add_argument('--disable-gpu')
+            co.add_argument('--disable-web-security')
+            co.add_argument('--allow-running-insecure-content')
+            co.add_argument('--disable-blink-features=AutomationControlled')
+            co.add_argument('--disable-extensions')
             
             if HEADLESS_MODE:
-                co.set_argument("--headless")
+                co.add_argument('--headless=new')
             
-            # 使用正确的 API 初始化浏览器
-            # 首先尝试使用配置对象
-            try:
-                self.page = ChromiumPage(addr_driver_opts=co)
-            except TypeError:
-                # 如果上面的方式不行，尝试备用方式
-                logger.info("使用备用浏览器初始化方式...")
-                self.page = ChromiumPage()
-                # 手动设置选项
-                for arg in co.arguments:
-                    self.page.set.browser_option(arg)
+            # 设置远程调试端口
+            co.set_local_port(9222)
+            
+            # 使用正确的参数名
+            self.page = ChromiumPage(addr_or_opts=co)
             
             # 设置超时
             self.page.set.timeouts(base=PAGE_TIMEOUT)
@@ -235,23 +185,53 @@ class SiteAutomator:
             
         except Exception as e:
             logger.error(f"浏览器初始化失败: {str(e)}")
-            # 尝试最简单的初始化方式
-            return self.setup_browser_simple()
+            # 尝试备用方案
+            return self.setup_browser_fallback()
     
+    def setup_browser_fallback(self):
+        """备用浏览器初始化方案"""
+        try:
+            logger.info("尝试备用浏览器初始化...")
+            
+            # 使用字典配置
+            opts = {
+                '--no-sandbox': None,
+                '--disable-dev-shm-usage': None,
+                '--disable-gpu': None,
+                '--disable-web-security': None,
+                '--allow-running-insecure-content': None,
+                '--disable-blink-features=AutomationControlled': None,
+                '--disable-extensions': None
+            }
+            
+            if HEADLESS_MODE:
+                opts['--headless'] = 'new'
+            
+            # 设置用户代理
+            user_agent = random.choice(USER_AGENTS)
+            opts['--user-agent'] = user_agent
+            
+            self.page = ChromiumPage(addr_or_opts=opts)
+            self.page.set.timeouts(base=PAGE_TIMEOUT)
+            
+            logger.info(f"备用浏览器初始化成功: {user_agent}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"备用浏览器初始化也失败: {str(e)}")
+            # 最后尝试最简单的初始化
+            return self.setup_browser_simple()
+
     def setup_browser_simple(self):
         """最简单的浏览器初始化方式"""
         try:
             logger.info("尝试最简单的浏览器初始化...")
             
-            # 直接创建页面，不设置任何选项
+            # 直接创建页面，使用默认配置
             self.page = ChromiumPage()
             self.page.set.timeouts(base=PAGE_TIMEOUT)
             
-            # 设置用户代理
-            user_agent = random.choice(USER_AGENTS)
-            self.page.set.user_agent(user_agent)
-            
-            logger.info(f"简单浏览器初始化成功: {user_agent}")
+            logger.info("简单浏览器初始化成功")
             return True
             
         except Exception as e:
@@ -359,10 +339,6 @@ class SiteAutomator:
             if not CloudflareHandler.wait_for_cloudflare(self.page):
                 logger.warning("Cloudflare 验证可能未完全通过，继续尝试...")
             
-            # 检查并处理 Turnstile 验证
-            if self.detect_turnstile_challenge():
-                CloudflareHandler.handle_turnstile_challenge(self.page)
-            
             # 分析登录页面状态
             self.analyze_login_page()
             
@@ -386,21 +362,6 @@ class SiteAutomator:
             
         except Exception as e:
             logger.error(f"登录流程异常: {str(e)}")
-            return False
-
-    def detect_turnstile_challenge(self):
-        """检测 Turnstile 验证"""
-        try:
-            page_html = self.page.html
-            turnstile_indicators = [
-                'cf-turnstile' in page_html,
-                'challenges.cloudflare.com' in page_html,
-                'turnstile' in page_html.lower(),
-                'cloudflare challenge' in page_html.lower()
-            ]
-            return any(turnstile_indicators)
-        except Exception as e:
-            logger.debug(f"检测 Turnstile 验证失败: {str(e)}")
             return False
 
     def analyze_login_page(self):
@@ -478,12 +439,6 @@ class SiteAutomator:
                         logger.success(f"找到登录表单: {selector}")
                         return True
                 
-                # 检查是否有错误或验证页面
-                if self.detect_turnstile_challenge():
-                    logger.info("检测到验证页面，等待处理...")
-                    time.sleep(5)
-                    continue
-                    
                 time.sleep(2)
                 
             except Exception as e:
@@ -584,7 +539,18 @@ class SiteAutomator:
                 'input[type="submit"]'
             ]
             
-            # 先尝试通过文本查找
+            # 先尝试通过选择器查找
+            for selector in login_buttons:
+                button = self.page.ele(selector)
+                if button and button.is_displayed:
+                    logger.info(f"找到登录按钮: {selector}")
+                    time.sleep(random.uniform(0.5, 1.5))
+                    button.click()
+                    logger.info("已点击登录按钮")
+                    time.sleep(8)
+                    return True
+            
+            # 然后尝试通过文本查找
             button_texts = ['登录', 'Log In', 'Sign In', 'Login']
             for text in button_texts:
                 buttons = self.page.eles(f'button:contains("{text}")')
@@ -597,17 +563,6 @@ class SiteAutomator:
                             logger.info("已点击登录按钮")
                             time.sleep(8)
                             return True
-            
-            # 然后尝试通过选择器查找
-            for selector in login_buttons:
-                button = self.page.ele(selector)
-                if button and button.is_displayed:
-                    logger.info(f"找到登录按钮: {selector}")
-                    time.sleep(random.uniform(0.5, 1.5))
-                    button.click()
-                    logger.info("已点击登录按钮")
-                    time.sleep(8)
-                    return True
             
             logger.error("未找到登录按钮")
             return False
@@ -778,10 +733,6 @@ class SiteAutomator:
             scroll_distance = random.randint(300, 600)
             self.page.run_js(f"window.scrollBy(0, {scroll_distance})")
             time.sleep(random.uniform(0.8, 1.5))
-            
-            # 随机鼠标移动
-            if random.random() > 0.7:
-                self.random_mouse_movement()
 
     def quick_scroll_reading(self):
         """快速滚动浏览模式"""
@@ -806,10 +757,6 @@ class SiteAutomator:
             # 模拟阅读时间
             read_time = random.uniform(2, 4)
             time.sleep(read_time)
-            
-            # 随机高概率的鼠标移动
-            if random.random() > 0.3:
-                self.random_mouse_movement()
 
     def scroll_to_bottom(self):
         """滚动到页面底部"""
@@ -819,19 +766,6 @@ class SiteAutomator:
             logger.debug("已滚动到页面底部")
         except Exception as e:
             logger.debug(f"滚动到底部失败: {str(e)}")
-
-    def random_mouse_movement(self):
-        """随机鼠标移动"""
-        try:
-            # 随机移动鼠标到页面中的不同元素
-            all_links = self.page.eles('a')
-            if all_links:
-                random_link = random.choice(all_links)
-                if random_link and random_link.is_displayed:
-                    random_link.hover()
-                    time.sleep(random.uniform(0.1, 0.3))
-        except Exception:
-            pass
 
     def print_connect_info(self):
         """打印连接信息"""
