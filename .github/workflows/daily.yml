@@ -60,24 +60,12 @@ jobs:
         pip install Pillow>=10.0.0
         pip install requests==2.32.3
 
-    - name: Install Chromium
-      run: |
-        python -c "
-        from DrissionPage import ChromiumPage
-        try:
-            page = ChromiumPage()
-            print('Chromium 安装成功')
-            page.quit()
-        except Exception as e:
-            print(f'Chromium 安装测试失败: {e}')
-        "
-
-    - name: Download previous session data
+    - name: Download previous session data (if exists)
       uses: actions/download-artifact@v4
       with:
         name: linuxdo-session-data
         path: ./
-      continue-on-error: true
+      continue-on-error: true  # 首次运行时没有缓存是正常的
 
     - name: Run automation script
       env:
@@ -94,7 +82,7 @@ jobs:
 
     - name: Upload session data
       uses: actions/upload-artifact@v4
-      if: always()
+      if: always()  # 即使脚本失败也上传缓存
       with:
         name: linuxdo-session-data
         path: |
