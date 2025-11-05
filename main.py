@@ -49,8 +49,10 @@ RETRY_TIMES = 3
 MAX_TOPICS_TO_BROWSE = 5
 
 USER_AGENTS = [
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'
-    ]
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'
+]
 
 class CacheManager:
     @staticmethod
@@ -146,7 +148,7 @@ class SiteAutomator:
         self.csrf_token = None
         
     def setup_browser(self):
-        """设置浏览器配置 - 专门为 GitHub Actions 环境优化"""
+        """设置浏览器配置 - 使用正确的 DrissionPage API"""
         try:
             logger.info("初始化浏览器...")
             
@@ -158,16 +160,17 @@ class SiteAutomator:
             co.set_user_agent(user_agent)
             
             # 在 GitHub Actions 环境中必须的配置
-            co.add_argument('--no-sandbox')
-            co.add_argument('--disable-dev-shm-usage')
-            co.add_argument('--disable-gpu')
-            co.add_argument('--disable-web-security')
-            co.add_argument('--allow-running-insecure-content')
-            co.add_argument('--disable-blink-features=AutomationControlled')
-            co.add_argument('--disable-extensions')
+            # 使用正确的 API 方法
+            co.set_argument('--no-sandbox')
+            co.set_argument('--disable-dev-shm-usage')
+            co.set_argument('--disable-gpu')
+            co.set_argument('--disable-web-security')
+            co.set_argument('--allow-running-insecure-content')
+            co.set_argument('--disable-blink-features=AutomationControlled')
+            co.set_argument('--disable-extensions')
             
             if HEADLESS_MODE:
-                co.add_argument('--headless=new')
+                co.set_argument('--headless=new')
             
             # 设置远程调试端口
             co.set_local_port(9222)
@@ -187,29 +190,36 @@ class SiteAutomator:
             return self.setup_browser_fallback()
     
     def setup_browser_fallback(self):
-        """备用浏览器初始化方案"""
+        """备用浏览器初始化方案 - 使用字符串参数"""
         try:
             logger.info("尝试备用浏览器初始化...")
             
-            # 使用字典配置
-            opts = {
-                '--no-sandbox': None,
-                '--disable-dev-shm-usage': None,
-                '--disable-gpu': None,
-                '--disable-web-security': None,
-                '--allow-running-insecure-content': None,
-                '--disable-blink-features=AutomationControlled': None,
-                '--disable-extensions': None
-            }
+            # 构建参数字符串
+            args = []
+            args.append('--no-sandbox')
+            args.append('--disable-dev-shm-usage')
+            args.append('--disable-gpu')
+            args.append('--disable-web-security')
+            args.append('--allow-running-insecure-content')
+            args.append('--disable-blink-features=AutomationControlled')
+            args.append('--disable-extensions')
             
             if HEADLESS_MODE:
-                opts['--headless'] = 'new'
+                args.append('--headless=new')
+            
+            # 将参数列表转换为字符串
+            args_str = ' '.join(args)
             
             # 设置用户代理
             user_agent = random.choice(USER_AGENTS)
-            opts['--user-agent'] = user_agent
             
-            self.page = ChromiumPage(addr_or_opts=opts)
+            # 使用参数字符串初始化
+            self.page = ChromiumPage(addr_or_opts=args_str)
+            
+            # 设置用户代理
+            self.page.set.user_agent(user_agent)
+            
+            # 设置超时
             self.page.set.timeouts(base=PAGE_TIMEOUT)
             
             logger.info(f"备用浏览器初始化成功: {user_agent}")
