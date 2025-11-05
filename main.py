@@ -1,5 +1,5 @@
 from DrissionPage import ChromiumPage, ChromiumOptions
-from logursion import logger
+from loguru import logger
 import random
 import json
 import os
@@ -968,3 +968,4 @@ def main():
 if __name__ == "__main__":
     success = main()
     exit(0 if success else 1)
+
