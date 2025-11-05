@@ -11,7 +11,6 @@ on:
         options:
           - all
           - linux_do
-          - idcflare
   schedule:
     - cron: '0 */6 * * *'  # 每6小时运行一次
 
@@ -36,13 +35,32 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y \
-          chromium-browser \
-          chromium-chromedriver
+          libnss3 \
+          libatk-bridge2.0-0 \
+          libdrm2 \
+          libxkbcommon0 \
+          libxcomposite1 \
+          libxdamage1 \
+          libxrandr2 \
+          libgbm1 \
+          libxss1 \
+          libasound2 \
+          libatspi2.0-0 \
+          libcups2 \
+          libx11-xcb1
 
     - name: Install Python dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install -r requirements.txt
+        pip install DrissionPage==4.1.0.18
+        pip install playwright==1.35.0
+        pip install loguru==0.7.2
+        pip install Pillow>=10.0.0
+        pip install requests==2.32.3
+
+    - name: Install Playwright browsers
+      run: |
+        python -m playwright install
 
     - name: Download previous session data
       uses: actions/download-artifact@v4
@@ -55,20 +73,19 @@ jobs:
       env:
         LINUXDO_USERNAME: ${{ secrets.LINUXDO_USERNAME }}
         LINUXDO_PASSWORD: ${{ secrets.LINUXDO_PASSWORD }}
-        IDCFLARE_USERNAME: ${{ secrets.IDCFLARE_USERNAME }}
-        IDCFLARE_PASSWORD: ${{ secrets.IDCFLARE_PASSWORD }}
-        GITHUB_ACTIONS: 'true'
+        HEADLESS: 'true'
       run: |
         echo "开始执行自动化脚本..."
         python main.py
         echo "脚本执行完成"
 
     - name: Upload session data
-      uses: actions/upload-artifact@v4
       if: always()
+      uses: actions/upload-artifact@v4
       with:
         name: linuxdo-session-data
         path: |
+          browser_state_*.json
           cf_cookies_*.json
         retention-days: 7
         overwrite: true
