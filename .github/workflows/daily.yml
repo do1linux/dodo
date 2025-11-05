@@ -48,28 +48,29 @@ jobs:
           libasound2 \
           libatspi2.0-0 \
           libcups2 \
-          wget \
-          gnupg
-
-    - name: Install Google Chrome
-      run: |
-        wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
-        echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
-        sudo apt-get update
-        sudo apt-get install -y google-chrome-stable
-
-    - name: Cache Python dependencies
-      uses: actions/cache@v3
-      with:
-        path: ~/.cache/pip
-        key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
-        restore-keys: |
-          ${{ runner.os }}-pip-
+          libx11-xcb1 \
+          libxcb-dri3-0 \
+          libdrm2 \
+          libxtst6
 
     - name: Install Python dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install -r requirements.txt
+        pip install DrissionPage==4.1.0.18
+        pip install loguru==0.7.2
+        pip install Pillow>=10.0.0
+        pip install requests==2.32.3
+        # 创建 requirements.txt 中列出的依赖
+        pip list
+
+    - name: Install Chromium for DrissionPage
+      run: |
+        python -c "
+        from DrissionPage import ChromiumOptions
+        co = ChromiumOptions()
+        co.auto_port()
+        print('Chromium 初始化完成')
+        "
 
     - name: Download previous session data
       uses: actions/download-artifact@v4
@@ -84,17 +85,12 @@ jobs:
         LINUXDO_PASSWORD: ${{ secrets.LINUXDO_PASSWORD }}
         IDCFLARE_USERNAME: ${{ secrets.IDCFLARE_USERNAME }}
         IDCFLARE_PASSWORD: ${{ secrets.IDCFLARE_PASSWORD }}
+        GITHUB_ACTIONS: 'true'
         HEADLESS: 'true'
       run: |
-        echo "🚀 开始执行 LinuxDo 多站点自动化脚本..."
-        echo "📦 检查会话缓存..."
-        if ls *.json 1> /dev/null 2>&1; then
-          echo "✅ 找到缓存的会话文件"
-          ls -la *.json
-        else
-          echo "❌ 未找到缓存文件，将进行完整登录"
-        fi
-        python main.py --site ${{ github.event.inputs.site_selector || 'all' }}
+        echo "开始执行自动化脚本..."
+        python main.py
+        echo "脚本执行完成"
 
     - name: Upload session data
       uses: actions/upload-artifact@v4
@@ -102,6 +98,20 @@ jobs:
       with:
         name: linuxdo-session-data
         path: |
-          *.json
+          browser_state_*.json
+          cf_cookies_*.json
         retention-days: 7
         overwrite: true
+
+    - name: Notify on failure
+      if: failure()
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const { owner, repo } = context.repo;
+          github.rest.issues.create({
+            owner,
+            repo,
+            title: 'LinuxDo 自动化执行失败',
+            body: 'LinuxDo 多站点自动化脚本执行失败，请检查日志。'
+          });
