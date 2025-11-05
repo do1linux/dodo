@@ -50,7 +50,6 @@ jobs:
           libcups2 \
           libx11-xcb1 \
           libxcb-dri3-0 \
-          libdrm2 \
           libxtst6
 
     - name: Install Python dependencies
@@ -60,16 +59,17 @@ jobs:
         pip install loguru==0.7.2
         pip install Pillow>=10.0.0
         pip install requests==2.32.3
-        # 创建 requirements.txt 中列出的依赖
-        pip list
 
-    - name: Install Chromium for DrissionPage
+    - name: Install Chromium
       run: |
         python -c "
-        from DrissionPage import ChromiumOptions
-        co = ChromiumOptions()
-        co.auto_port()
-        print('Chromium 初始化完成')
+        from DrissionPage import ChromiumPage
+        try:
+            page = ChromiumPage()
+            print('Chromium 安装成功')
+            page.quit()
+        except Exception as e:
+            print(f'Chromium 安装测试失败: {e}')
         "
 
     - name: Download previous session data
