@@ -250,7 +250,7 @@ class BrowserManager:
             # 创建浏览器配置
             co = ChromiumOptions()
             
-            # 设置浏览器参数
+            # 设置浏览器参数 - 针对 GitHub Actions 环境优化
             browser_args = [
                 '--no-sandbox',
                 '--disable-dev-shm-usage',
@@ -267,6 +267,35 @@ class BrowserManager:
                 '--disable-sync',
                 '--disable-web-security',
                 '--disable-features=TranslateUI',
+                '--headless=new',  # 在无头环境中必须
+                '--disable-gpu',
+                '--remote-debugging-port=0',  # 自动选择端口
+                '--disable-software-rasterizer',
+                '--disable-background-networking',
+                '--disable-client-side-phishing-detection',
+                '--disable-component-update',
+                '--disable-hang-monitor',
+                '--disable-prompt-on-repost',
+                '--disable-background-timer-throttling',
+                '--disable-renderer-backgrounding',
+                '--disable-crash-reporter',
+                '--disable-domain-reliability',
+                '--metrics-recording-only',
+                '--no-default-browser-check',
+                '--safebrowsing-disable-auto-update',
+                '--disable-site-isolation-trials',
+                '--disable-back-forward-cache',
+                '--disable-component-extensions-with-background-pages',
+                '--disable-features=AudioServiceOutOfProcess,IsolateOrigins,site-per-process',
+                '--disable-ipc-flooding-protection',
+                '--disable-logging',
+                '--disable-notifications',
+                '--disable-popup-blocking',
+                '--disable-search-engine-choice-screen',
+                '--enable-automation',
+                '--password-store=basic',
+                '--use-mock-keychain',
+                '--user-data-dir=/tmp/chrome-user-data',
             ]
             
             for arg in browser_args:
@@ -279,7 +308,11 @@ class BrowserManager:
             viewport = random.choice(VIEWPORT_SIZES)
             co.set_argument(f"--window-size={viewport['width']},{viewport['height']}")
             
+            # 设置自动端口
+            co.auto_port()
+            
             # 创建页面对象
+            logger.info("🚀 正在启动浏览器...")
             page = ChromiumPage(addr_or_opts=co)
             page.set.timeouts(base=PAGE_TIMEOUT)
             
@@ -292,12 +325,21 @@ class BrowserManager:
             delete navigator.__proto__.webdriver;
             """)
             
-            logger.info("🚀 浏览器已启动")
+            logger.info("✅ 浏览器已成功启动")
             return page
             
         except Exception as e:
-            logger.error(f"浏览器初始化失败: {str(e)}")
-            raise
+            logger.error(f"❌ 浏览器初始化失败: {str(e)}")
+            # 尝试备用方案
+            try:
+                logger.info("🔄 尝试备用浏览器启动方案...")
+                page = ChromiumPage()
+                page.set.timeouts(base=PAGE_TIMEOUT)
+                logger.info("✅ 备用浏览器启动成功")
+                return page
+            except Exception as e2:
+                logger.error(f"❌ 备用浏览器启动也失败: {str(e2)}")
+                raise
 
 class SiteAutomator:
     def __init__(self, site_config):
