@@ -293,8 +293,8 @@ class SiteAutomator:
                 # 无头模式下添加更多参数模拟真实环境
                 co.set_argument("--window-position=0,0")
             
-            # 初始化浏览器
-            self.page = ChromiumPage(addr_driver_opts=co)
+            # 初始化浏览器 - 修正参数名称：将addr_driver_opts改为options
+            self.page = ChromiumPage(options=co)
             self.page.set.timeouts(page_load=PAGE_TIMEOUT)
             
             # 设置额外的浏览器属性，避免被检测为自动化
