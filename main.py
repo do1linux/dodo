@@ -244,34 +244,60 @@ class CloudflareHandler:
 
 class BrowserManager:
     @staticmethod
-    def init_browser_options():
-        co = ChromiumOptions()
-        
-        # 浏览器参数
-        co.set_argument('--no-sandbox')
-        co.set_argument('--disable-dev-shm-usage')
-        co.set_argument('--disable-blink-features=AutomationControlled')
-        co.set_argument('--disable-features=VizDisplayCompositor')
-        co.set_argument('--disable-background-timer-throttling')
-        co.set_argument('--disable-backgrounding-occluded-windows')
-        co.set_argument('--disable-renderer-backgrounding')
-        co.set_argument('--no-first-run')
-        co.set_argument('--no-default-browser-check')
-        co.set_argument('--disable-default-apps')
-        co.set_argument('--disable-translate')
-        co.set_argument('--disable-extensions')
-        co.set_argument('--disable-sync')
-        co.set_argument('--disable-web-security')
-        co.set_argument('--disable-features=TranslateUI')
-        
-        # 设置 User Agent
-        co.set_user_agent(USER_AGENT)
-        
-        # 设置视口大小
-        viewport = random.choice(VIEWPORT_SIZES)
-        co.set_argument(f"--window-size={viewport['width']},{viewport['height']}")
-        
-        return co
+    def init_browser():
+        """初始化浏览器并返回页面对象"""
+        try:
+            # 创建浏览器配置
+            co = ChromiumOptions()
+            
+            # 设置浏览器参数
+            browser_args = [
+                '--no-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-blink-features=AutomationControlled',
+                '--disable-features=VizDisplayCompositor',
+                '--disable-background-timer-throttling',
+                '--disable-backgrounding-occluded-windows',
+                '--disable-renderer-backgrounding',
+                '--no-first-run',
+                '--no-default-browser-check',
+                '--disable-default-apps',
+                '--disable-translate',
+                '--disable-extensions',
+                '--disable-sync',
+                '--disable-web-security',
+                '--disable-features=TranslateUI',
+            ]
+            
+            for arg in browser_args:
+                co.set_argument(arg)
+            
+            # 设置 User Agent
+            co.set_user_agent(USER_AGENT)
+            
+            # 设置视口大小
+            viewport = random.choice(VIEWPORT_SIZES)
+            co.set_argument(f"--window-size={viewport['width']},{viewport['height']}")
+            
+            # 创建页面对象
+            page = ChromiumPage(addr_or_opts=co)
+            page.set.timeouts(base=PAGE_TIMEOUT)
+            
+            # 注入反检测脚本
+            page.run_js("""
+            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+            Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh', 'en-US', 'en'] });
+            window.chrome = { runtime: {} };
+            delete navigator.__proto__.webdriver;
+            """)
+            
+            logger.info("🚀 浏览器已启动")
+            return page
+            
+        except Exception as e:
+            logger.error(f"浏览器初始化失败: {str(e)}")
+            raise
 
 class SiteAutomator:
     def __init__(self, site_config):
@@ -289,9 +315,7 @@ class SiteAutomator:
 
         try:
             # 初始化浏览器
-            co = BrowserManager.init_browser_options()
-            self.page = ChromiumPage(addr_driver_opts=co)
-            self.page.set.timeouts(base=PAGE_TIMEOUT)
+            self.page = BrowserManager.init_browser()
 
             login_success = self.smart_login_approach()
 
