@@ -1,11 +1,12 @@
 from DrissionPage import ChromiumPage, ChromiumOptions
-from loguru import logger
+from logursion import logger
 import random
 import json
 import os
 import time
 from urllib.parse import urljoin
 import re
+import sys
 
 # 配置常量
 SITE_CREDENTIALS = {
@@ -158,7 +159,7 @@ class CloudflareHandler:
                 # 尝试点击验证框
                 checkboxes = page.eles('.cf-turnstile, [data-sitekey], .challenge-form')
                 for checkbox in checkboxes:
-                    if checkbox and checkbox.is_displayed():
+                    if checkbox and checkbox.is_displayed:
                         try:
                             checkbox.click()
                             logger.info("已点击验证框")
@@ -192,8 +193,9 @@ class SiteAutomator:
         self.csrf_token = None
         
     def setup_browser(self):
-        """设置浏览器配置"""
+        """设置浏览器配置 - 修复版本"""
         try:
+            # 创建浏览器配置
             co = ChromiumOptions()
             
             # 设置用户代理
@@ -210,18 +212,45 @@ class SiteAutomator:
             co.set_argument("--no-sandbox")
             co.set_argument("--disable-web-security")
             co.set_argument("--allow-running-insecure-content")
+            co.set_argument("--disable-gpu")
             
             if HEADLESS_MODE:
                 co.headless()
             
-            self.page = ChromiumPage(addr_driver_opts=co)
-            self.page.set.timeouts(page_load=PAGE_TIMEOUT)
+            # 正确初始化 ChromiumPage
+            self.page = ChromiumPage(chromium_options=co)
+            self.page.set.timeouts(base=PAGE_TIMEOUT)
             
             logger.info(f"浏览器已初始化: {user_agent}")
             return True
             
         except Exception as e:
             logger.error(f"浏览器初始化失败: {str(e)}")
+            # 尝试备用方案
+            return self.setup_browser_fallback()
+    
+    def setup_browser_fallback(self):
+        """备用浏览器初始化方案"""
+        try:
+            logger.info("尝试备用浏览器初始化...")
+            
+            # 使用更简单的配置
+            if HEADLESS_MODE:
+                self.page = ChromiumPage(headless=True)
+            else:
+                self.page = ChromiumPage()
+                
+            self.page.set.timeouts(base=PAGE_TIMEOUT)
+            
+            # 设置用户代理
+            user_agent = random.choice(USER_AGENTS)
+            self.page.set.user_agent(user_agent)
+            
+            logger.info(f"备用浏览器初始化成功: {user_agent}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"备用浏览器初始化也失败: {str(e)}")
             return False
 
     def run_for_site(self):
@@ -440,7 +469,7 @@ class SiteAutomator:
                 
                 for selector in username_selectors:
                     element = self.page.ele(selector)
-                    if element and element.is_displayed():
+                    if element and element.is_displayed:
                         logger.success(f"找到登录表单: {selector}")
                         return True
                 
@@ -494,7 +523,7 @@ class SiteAutomator:
             
             for selector in username_selectors:
                 element = self.page.ele(selector)
-                if element and element.is_displayed():
+                if element and element.is_displayed:
                     username_field = element
                     break
             
@@ -510,7 +539,7 @@ class SiteAutomator:
             
             for selector in password_selectors:
                 element = self.page.ele(selector)
-                if element and element.is_displayed():
+                if element and element.is_displayed:
                     password_field = element
                     break
             
@@ -547,23 +576,32 @@ class SiteAutomator:
             login_buttons = [
                 '#login-button',
                 'button[type="submit"]',
-                'input[type="submit"]',
-                'button:has-text("登录")',
-                'button:has-text("Log In")',
-                'button:has-text("Sign In")'
+                'input[type="submit"]'
             ]
             
+            # 先尝试通过文本查找
+            button_texts = ['登录', 'Log In', 'Sign In', 'Login']
+            for text in button_texts:
+                buttons = self.page.eles(f'button:contains("{text}")')
+                if buttons:
+                    for button in buttons:
+                        if button.is_displayed:
+                            logger.info(f"找到登录按钮(文本): {text}")
+                            time.sleep(random.uniform(0.5, 1.5))
+                            button.click()
+                            logger.info("已点击登录按钮")
+                            time.sleep(8)
+                            return True
+            
+            # 然后尝试通过选择器查找
             for selector in login_buttons:
                 button = self.page.ele(selector)
-                if button and button.is_displayed():
+                if button and button.is_displayed:
                     logger.info(f"找到登录按钮: {selector}")
-                    
-                    # 模拟人类点击前的小延迟
                     time.sleep(random.uniform(0.5, 1.5))
                     button.click()
                     logger.info("已点击登录按钮")
-                    
-                    time.sleep(8)  # 等待登录处理
+                    time.sleep(8)
                     return True
             
             logger.error("未找到登录按钮")
@@ -586,7 +624,7 @@ class SiteAutomator:
         error_selectors = ['.alert-error', '.error', '.flash-error', '.alert-danger', '.login-error']
         for selector in error_selectors:
             error_element = self.page.ele(selector)
-            if error_element and error_element.is_displayed():
+            if error_element and error_element.is_displayed:
                 error_text = error_element.text
                 logger.error(f"登录错误: {error_text}")
                 return False
@@ -610,27 +648,33 @@ class SiteAutomator:
             user_indicators = [
                 f'[data-username="{username}"]',
                 f'[title="{username}"]',
-                f'.username[data-username="{username}"]',
-                f'a[href*="/u/{username}"]',
-                f'.current-user:contains("{username}")'
+                f'.username[data-username="{username}"]'
             ]
             
             for selector in user_indicators:
                 element = self.page.ele(selector)
-                if element and element.is_displayed():
+                if element and element.is_displayed:
                     logger.success(f"找到用户元素: {selector}")
                     return True
             
-            # 方法3: 访问个人资料页面验证
+            # 方法3: 查找包含用户名的链接
+            user_links = self.page.eles(f'a[href*="/u/{username}"]')
+            for link in user_links:
+                if link and link.is_displayed:
+                    logger.success(f"找到用户链接: {link.attr('href')}")
+                    return True
+            
+            # 方法4: 访问个人资料页面验证
             profile_url = f"{self.site_config['base_url']}/u/{username}"
+            current_url = self.page.url
             self.page.get(profile_url)
             time.sleep(3)
             
             profile_content = self.page.html
             if username.lower() in profile_content.lower():
                 logger.success(f"在个人资料页面验证用户名: {username}")
-                # 返回上一页
-                self.page.back()
+                # 返回原页面
+                self.page.get(current_url)
                 time.sleep(2)
                 return True
             
@@ -659,7 +703,10 @@ class SiteAutomator:
         browsed_topics = 0
         topics_to_browse = min(len(topic_list), MAX_TOPICS_TO_BROWSE)
         
-        for topic in random.sample(topic_list, topics_to_browse):
+        # 随机选择主题
+        selected_topics = random.sample(topic_list, topics_to_browse) if topic_list else []
+        
+        for topic in selected_topics:
             try:
                 # 查找主题链接
                 link = topic.ele(".title a")
@@ -775,7 +822,7 @@ class SiteAutomator:
             all_links = self.page.eles('a')
             if all_links:
                 random_link = random.choice(all_links)
-                if random_link and random_link.is_displayed():
+                if random_link and random_link.is_displayed:
                     random_link.hover()
                     time.sleep(random.uniform(0.1, 0.3))
         except Exception:
@@ -800,7 +847,7 @@ class SiteAutomator:
             table_found = False
             for selector in table_selectors:
                 table = self.page.ele(selector)
-                if table and table.is_displayed():
+                if table and table.is_displayed:
                     table_found = True
                     
                     # 获取所有行
