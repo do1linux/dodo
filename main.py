@@ -40,7 +40,7 @@ SITES = [
         'latest_topics_url': 'https://idcflare.com/latest',
         'connect_url': 'https://connect.idcflare.com/',
         'cf_cookies_file': "cf_cookies_idcflare.json",
-        'browser_state_file": "browser_state_idcflare.json",
+        'browser_state_file': "browser_state_idcflare.json",
     }
 ]
 
@@ -49,10 +49,8 @@ RETRY_TIMES = 3
 MAX_TOPICS_TO_BROWSE = 5
 
 USER_AGENTS = [
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'
-]
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'
+    ]
 
 class CacheManager:
     @staticmethod
