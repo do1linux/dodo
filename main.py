@@ -193,9 +193,9 @@ class SiteAutomator:
         self.csrf_token = None
         
     def setup_browser(self):
-        """设置浏览器配置 - 修复版本"""
+        """设置浏览器配置 - 使用正确的 DrissionPage API"""
         try:
-            # 创建浏览器配置
+            # 创建配置对象
             co = ChromiumOptions()
             
             # 设置用户代理
@@ -215,10 +215,21 @@ class SiteAutomator:
             co.set_argument("--disable-gpu")
             
             if HEADLESS_MODE:
-                co.headless()
+                co.set_argument("--headless")
             
-            # 正确初始化 ChromiumPage
-            self.page = ChromiumPage(chromium_options=co)
+            # 使用正确的 API 初始化浏览器
+            # 首先尝试使用配置对象
+            try:
+                self.page = ChromiumPage(addr_driver_opts=co)
+            except TypeError:
+                # 如果上面的方式不行，尝试备用方式
+                logger.info("使用备用浏览器初始化方式...")
+                self.page = ChromiumPage()
+                # 手动设置选项
+                for arg in co.arguments:
+                    self.page.set.browser_option(arg)
+            
+            # 设置超时
             self.page.set.timeouts(base=PAGE_TIMEOUT)
             
             logger.info(f"浏览器已初始化: {user_agent}")
@@ -226,31 +237,27 @@ class SiteAutomator:
             
         except Exception as e:
             logger.error(f"浏览器初始化失败: {str(e)}")
-            # 尝试备用方案
-            return self.setup_browser_fallback()
+            # 尝试最简单的初始化方式
+            return self.setup_browser_simple()
     
-    def setup_browser_fallback(self):
-        """备用浏览器初始化方案"""
+    def setup_browser_simple(self):
+        """最简单的浏览器初始化方式"""
         try:
-            logger.info("尝试备用浏览器初始化...")
+            logger.info("尝试最简单的浏览器初始化...")
             
-            # 使用更简单的配置
-            if HEADLESS_MODE:
-                self.page = ChromiumPage(headless=True)
-            else:
-                self.page = ChromiumPage()
-                
+            # 直接创建页面，不设置任何选项
+            self.page = ChromiumPage()
             self.page.set.timeouts(base=PAGE_TIMEOUT)
             
             # 设置用户代理
             user_agent = random.choice(USER_AGENTS)
             self.page.set.user_agent(user_agent)
             
-            logger.info(f"备用浏览器初始化成功: {user_agent}")
+            logger.info(f"简单浏览器初始化成功: {user_agent}")
             return True
             
         except Exception as e:
-            logger.error(f"备用浏览器初始化也失败: {str(e)}")
+            logger.error(f"简单浏览器初始化也失败: {str(e)}")
             return False
 
     def run_for_site(self):
