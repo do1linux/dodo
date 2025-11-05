@@ -45,7 +45,7 @@ SITES = [
 ]
 
 PAGE_TIMEOUT = 120
-RETRY_TIMES = 3
+RETRY_TIMES = 2  # 减少重试次数
 MAX_TOPICS_TO_BROWSE = 5
 
 USER_AGENTS = [
@@ -89,8 +89,8 @@ class CacheManager:
 
 class CloudflareHandler:
     @staticmethod
-    def wait_for_cloudflare(page, timeout=60):
-        """等待 Cloudflare 验证通过"""
+    def wait_for_cloudflare(page, timeout=30):
+        """等待 Cloudflare 验证通过 - 缩短超时时间"""
         logger.info("检测 Cloudflare 验证...")
         start_time = time.time()
         
@@ -114,7 +114,7 @@ class CloudflareHandler:
                 
                 if any(cloudflare_indicators):
                     logger.warning("检测到 Cloudflare/Turnstile 验证，等待中...")
-                    time.sleep(5)
+                    time.sleep(3)
                     continue
                 
                 # 检查是否包含登录相关元素，表示已通过验证
@@ -128,11 +128,11 @@ class CloudflareHandler:
                     logger.error("网站暂时不可用")
                     return False
                     
-                time.sleep(3)
+                time.sleep(2)
                 
             except Exception as e:
                 logger.debug(f"等待 Cloudflare 时出错: {str(e)}")
-                time.sleep(3)
+                time.sleep(2)
         
         logger.warning("Cloudflare 等待超时，继续执行")
         return False
@@ -146,7 +146,7 @@ class SiteAutomator:
         self.csrf_token = None
         
     def setup_browser(self):
-        """设置浏览器配置 - 使用正确的 DrissionPage API"""
+        """设置浏览器配置"""
         try:
             logger.info("初始化浏览器...")
             
@@ -158,7 +158,6 @@ class SiteAutomator:
             co.set_user_agent(user_agent)
             
             # 在 GitHub Actions 环境中必须的配置
-            # 使用正确的 API 方法
             co.set_argument('--no-sandbox')
             co.set_argument('--disable-dev-shm-usage')
             co.set_argument('--disable-gpu')
@@ -184,64 +183,6 @@ class SiteAutomator:
             
         except Exception as e:
             logger.error(f"浏览器初始化失败: {str(e)}")
-            # 尝试备用方案
-            return self.setup_browser_fallback()
-    
-    def setup_browser_fallback(self):
-        """备用浏览器初始化方案 - 使用字符串参数"""
-        try:
-            logger.info("尝试备用浏览器初始化...")
-            
-            # 构建参数字符串
-            args = []
-            args.append('--no-sandbox')
-            args.append('--disable-dev-shm-usage')
-            args.append('--disable-gpu')
-            args.append('--disable-web-security')
-            args.append('--allow-running-insecure-content')
-            args.append('--disable-blink-features=AutomationControlled')
-            args.append('--disable-extensions')
-            
-            if HEADLESS_MODE:
-                args.append('--headless=new')
-            
-            # 将参数列表转换为字符串
-            args_str = ' '.join(args)
-            
-            # 设置用户代理
-            user_agent = random.choice(USER_AGENTS)
-            
-            # 使用参数字符串初始化
-            self.page = ChromiumPage(addr_or_opts=args_str)
-            
-            # 设置用户代理
-            self.page.set.user_agent(user_agent)
-            
-            # 设置超时
-            self.page.set.timeouts(base=PAGE_TIMEOUT)
-            
-            logger.info(f"备用浏览器初始化成功: {user_agent}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"备用浏览器初始化也失败: {str(e)}")
-            # 最后尝试最简单的初始化
-            return self.setup_browser_simple()
-
-    def setup_browser_simple(self):
-        """最简单的浏览器初始化方式"""
-        try:
-            logger.info("尝试最简单的浏览器初始化...")
-            
-            # 直接创建页面，使用默认配置
-            self.page = ChromiumPage()
-            self.page.set.timeouts(base=PAGE_TIMEOUT)
-            
-            logger.info("简单浏览器初始化成功")
-            return True
-            
-        except Exception as e:
-            logger.error(f"简单浏览器初始化也失败: {str(e)}")
             return False
 
     def run_for_site(self):
@@ -264,18 +205,8 @@ class SiteAutomator:
                 self.save_session_data()
                 return True
             else:
-                # 执行完整登录流程
-                login_success = self.smart_login_approach()
-                
-                if login_success:
-                    logger.success(f"{self.site_config['name']} 登录成功")
-                    self.perform_browsing_actions()
-                    self.print_connect_info()
-                    self.save_session_data()
-                    return True
-                else:
-                    logger.error(f"{self.site_config['name']} 登录失败")
-                    return False
+                logger.warning(f"{self.site_config['name']} 缓存登录失败，跳过该站点")
+                return False
 
         except Exception as e:
             logger.error(f"{self.site_config['name']} 执行异常: {str(e)}")
@@ -284,7 +215,7 @@ class SiteAutomator:
             self.cleanup()
 
     def try_cached_login(self):
-        """尝试使用缓存登录"""
+        """尝试使用缓存登录 - 主要策略"""
         try:
             # 加载浏览器状态
             state_data = CacheManager.load_site_cache(self.site_config['name'], 'browser_state')
@@ -306,297 +237,14 @@ class SiteAutomator:
                     logger.success("缓存登录验证成功")
                     return True
                 else:
-                    logger.warning("缓存登录验证失败，需要重新登录")
+                    logger.warning("缓存登录验证失败")
                     
+            logger.info("无可用缓存或缓存失效")
             return False
             
         except Exception as e:
             logger.warning(f"缓存登录尝试失败: {str(e)}")
             return False
-
-    def smart_login_approach(self):
-        """智能登录方法"""
-        for attempt in range(RETRY_TIMES):
-            logger.info(f"登录尝试 {attempt + 1}/{RETRY_TIMES}")
-            
-            try:
-                if self.full_login_process():
-                    return True
-                    
-            except Exception as e:
-                logger.error(f"登录尝试 {attempt + 1} 失败: {str(e)}")
-                
-            if attempt < RETRY_TIMES - 1:
-                self.clear_cache()
-                time.sleep(10 * (attempt + 1))
-                
-        return False
-
-    def full_login_process(self):
-        """完整登录流程"""
-        try:
-            logger.info("开始完整登录流程")
-            
-            # 访问登录页面
-            self.page.get(self.site_config['login_url'])
-            time.sleep(5)
-            
-            # 处理 Cloudflare 验证
-            if not CloudflareHandler.wait_for_cloudflare(self.page):
-                logger.warning("Cloudflare 验证可能未完全通过，继续尝试...")
-            
-            # 分析登录页面状态
-            self.analyze_login_page()
-            
-            if not self.wait_for_login_form():
-                logger.error("登录表单加载失败")
-                return False
-            
-            # 获取 CSRF Token
-            self.extract_csrf_token()
-            
-            username = self.credentials['username']
-            password = self.credentials['password']
-            
-            # 模拟人类输入
-            self.fill_login_form_with_behavior(username, password)
-            
-            if not self.submit_login():
-                return False
-            
-            return self.verify_login_result()
-            
-        except Exception as e:
-            logger.error(f"登录流程异常: {str(e)}")
-            return False
-
-    def analyze_login_page(self):
-        """分析登录页面状态"""
-        try:
-            logger.info("分析登录页面...")
-            
-            # 检查机器人验证元素
-            bot_detection_selectors = [
-                '.cf-turnstile',
-                '.g-recaptcha',
-                '[data-sitekey]',
-                '.h-captcha',
-                '.challenge-form',
-                '#cf-challenge',
-                '.verification-form'
-            ]
-            
-            found_bot_elements = []
-            for selector in bot_detection_selectors:
-                elements = self.page.eles(selector)
-                if elements:
-                    found_bot_elements.append(selector)
-                    logger.warning(f"发现机器人验证元素: {selector}")
-            
-            if found_bot_elements:
-                logger.warning(f"页面包含以下机器人验证: {', '.join(found_bot_elements)}")
-            else:
-                logger.info("未发现明显的机器人验证元素")
-            
-            # 检查登录相关元素
-            login_selectors = [
-                '#login-account-name',
-                '#username', 
-                'input[name="username"]',
-                'input[type="text"]',
-                '#login-account-password',
-                '#password',
-                'input[name="password"]',
-                'input[type="password"]',
-                '#login-button',
-                'button[type="submit"]',
-                'input[type="submit"]'
-            ]
-            
-            found_login_elements = []
-            for selector in login_selectors:
-                elements = self.page.eles(selector)
-                if elements:
-                    found_login_elements.append(selector)
-                    logger.info(f"发现登录元素: {selector}")
-            
-            logger.info(f"登录页面分析完成，发现 {len(found_login_elements)} 个登录相关元素")
-            
-        except Exception as e:
-            logger.error(f"登录页面分析失败: {str(e)}")
-
-    def wait_for_login_form(self, max_wait=30):
-        """等待登录表单加载"""
-        logger.info("等待登录表单...")
-        start_time = time.time()
-        
-        while time.time() - start_time < max_wait:
-            try:
-                username_selectors = [
-                    '#login-account-name',
-                    '#username',
-                    'input[name="username"]',
-                    'input[type="text"]'
-                ]
-                
-                for selector in username_selectors:
-                    element = self.page.ele(selector)
-                    if element and element.is_displayed:
-                        logger.success(f"找到登录表单: {selector}")
-                        return True
-                
-                time.sleep(2)
-                
-            except Exception as e:
-                logger.debug(f"等待登录表单时出错: {str(e)}")
-                time.sleep(2)
-        
-        logger.error("登录表单等待超时")
-        return False
-
-    def extract_csrf_token(self):
-        """提取 CSRF Token"""
-        try:
-            # 从 meta 标签提取
-            meta_token = self.page.ele('meta[name="csrf-token"]')
-            if meta_token:
-                self.csrf_token = meta_token.attr('content')
-                logger.info(f"找到 CSRF Token: {self.csrf_token[:20]}...")
-                return True
-            
-            # 从 input 字段提取
-            input_token = self.page.ele('input[name="authenticity_token"]')
-            if input_token:
-                self.csrf_token = input_token.attr('value')
-                logger.info(f"找到 Authenticity Token: {self.csrf_token[:20]}...")
-                return True
-                
-            logger.warning("未找到 CSRF Token，可能不需要")
-            return False
-            
-        except Exception as e:
-            logger.warning(f"提取 CSRF Token 失败: {str(e)}")
-            return False
-
-    def fill_login_form_with_behavior(self, username, password):
-        """模拟人类行为填写登录表单"""
-        try:
-            logger.info("模拟人类行为填写登录表单...")
-            
-            # 查找用户名输入框
-            username_selectors = ['#login-account-name', '#username', 'input[name="username"]']
-            username_field = None
-            
-            for selector in username_selectors:
-                element = self.page.ele(selector)
-                if element and element.is_displayed:
-                    username_field = element
-                    break
-            
-            if username_field:
-                # 模拟人类输入用户名
-                self.simulate_human_typing(username_field, username)
-                logger.info("已填写用户名")
-                time.sleep(random.uniform(1, 2))
-            
-            # 查找密码输入框
-            password_selectors = ['#login-account-password', '#password', 'input[name="password"]']
-            password_field = None
-            
-            for selector in password_selectors:
-                element = self.page.ele(selector)
-                if element and element.is_displayed:
-                    password_field = element
-                    break
-            
-            if password_field:
-                # 模拟人类输入密码
-                self.simulate_human_typing(password_field, password)
-                logger.info("已填写密码")
-                time.sleep(random.uniform(1, 2))
-            
-        except Exception as e:
-            logger.error(f"填写登录表单失败: {str(e)}")
-
-    def simulate_human_typing(self, element, text):
-        """模拟人类输入"""
-        try:
-            element.click()
-            time.sleep(0.5)
-            
-            for char in text:
-                element.input(char)
-                # 随机延时，模拟人类输入节奏
-                time.sleep(random.uniform(0.05, 0.2))
-                
-        except Exception as e:
-            # 如果逐字输入失败，尝试一次性输入
-            try:
-                element.input(text)
-            except Exception as e2:
-                logger.error(f"输入文本失败: {str(e2)}")
-
-    def submit_login(self):
-        """提交登录"""
-        try:
-            login_buttons = [
-                '#login-button',
-                'button[type="submit"]',
-                'input[type="submit"]'
-            ]
-            
-            # 先尝试通过选择器查找
-            for selector in login_buttons:
-                button = self.page.ele(selector)
-                if button and button.is_displayed:
-                    logger.info(f"找到登录按钮: {selector}")
-                    time.sleep(random.uniform(0.5, 1.5))
-                    button.click()
-                    logger.info("已点击登录按钮")
-                    time.sleep(8)
-                    return True
-            
-            # 然后尝试通过文本查找
-            button_texts = ['登录', 'Log In', 'Sign In', 'Login']
-            for text in button_texts:
-                buttons = self.page.eles(f'button:contains("{text}")')
-                if buttons:
-                    for button in buttons:
-                        if button.is_displayed:
-                            logger.info(f"找到登录按钮(文本): {text}")
-                            time.sleep(random.uniform(0.5, 1.5))
-                            button.click()
-                            logger.info("已点击登录按钮")
-                            time.sleep(8)
-                            return True
-            
-            logger.error("未找到登录按钮")
-            return False
-            
-        except Exception as e:
-            logger.error(f"提交登录失败: {str(e)}")
-            return False
-
-    def verify_login_result(self):
-        """验证登录结果"""
-        logger.info("验证登录结果...")
-        
-        # 检查是否跳转到其他页面
-        current_url = self.page.url
-        if current_url != self.site_config['login_url']:
-            logger.info(f"页面已跳转到: {current_url}")
-        
-        # 检查错误信息
-        error_selectors = ['.alert-error', '.error', '.flash-error', '.alert-danger', '.login-error']
-        for selector in error_selectors:
-            error_element = self.page.ele(selector)
-            if error_element and error_element.is_displayed:
-                error_text = error_element.text
-                logger.error(f"登录错误: {error_text}")
-                return False
-        
-        # 必须检测到用户名才算成功
-        return self.check_login_status()
 
     def check_login_status(self):
         """检查登录状态 - 必须检测到用户名"""
@@ -663,6 +311,10 @@ class SiteAutomator:
         topic_list = self.page.eles(".topic-list-item")
         if not topic_list:
             topic_list = self.page.eles(".topic-list .topic-list-body tr")
+        
+        if not topic_list:
+            logger.warning("未找到主题帖")
+            return
         
         logger.info(f"发现 {len(topic_list)} 个主题帖，将随机选择浏览")
         
@@ -913,4 +565,3 @@ def main():
 if __name__ == "__main__":
     success = main()
     exit(0 if success else 1)
-
