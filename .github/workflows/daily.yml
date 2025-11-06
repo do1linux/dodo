@@ -143,3 +143,12 @@ jobs:
             
             请查看 Action 日志获取详细错误信息。`
           });
+    - name: Upload debug files
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: connect-debug-files
+        path: |
+          connect_debug_*.html
+          connect_debug_*.png
+        retention-days: 7
