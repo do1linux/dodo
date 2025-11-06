@@ -494,7 +494,7 @@ class EnhancedSiteAutomator:
             pass
 
     def get_connect_info_debug(self):
-        """调试版本的连接信息获取 - 打印HTML结构"""
+        """修复的连接信息获取 - 调试版本"""
         logger.info("🔗 获取连接信息 - 调试模式")
         new_page = self.page.new_tab()
         try:
@@ -512,12 +512,15 @@ class EnhancedSiteAutomator:
             page_title = new_page.title
             logger.info(f"📄 页面标题: {page_title}")
             
-            # 检查页面内容
-            page_text = new_page.text
-            if "访问次数" in page_text or "浏览的话题" in page_text:
-                logger.info("✅ 页面包含连接信息关键词")
-            else:
-                logger.warning("❌ 页面不包含连接信息关键词")
+            # 检查页面内容 - 修复：使用run_js获取页面文本
+            try:
+                page_text = new_page.run_js("return document.body.innerText")
+                if "访问次数" in page_text or "浏览的话题" in page_text:
+                    logger.info("✅ 页面包含连接信息关键词")
+                else:
+                    logger.warning("❌ 页面不包含连接信息关键词")
+            except Exception as e:
+                logger.warning(f"获取页面文本失败: {str(e)}")
             
             # 查找所有表格
             tables = new_page.eles("tag:table")
@@ -549,30 +552,29 @@ class EnhancedSiteAutomator:
                         # 打印前几个单元格内容
                         content_preview = []
                         for cell in (th_cells + cells)[:3]:
-                            text = cell.text.strip()
-                            if text:
-                                content_preview.append(text[:20])  # 只取前20个字符
+                            try:
+                                text = cell.text.strip()
+                                if text:
+                                    content_preview.append(text[:20])  # 只取前20个字符
+                            except:
+                                content_preview.append("无法获取文本")
                         
                         if content_preview:
                             row_info += f" 内容: {', '.join(content_preview)}"
                         
                         logger.info(row_info)
             
-            # 尝试使用之前有效的方法
+            # 尝试使用简单方法提取数据
             info = self.extract_connect_data_simple(new_page)
             if info:
                 self.display_connect_info(info, "简单提取")
                 return
-            else:
-                logger.warning("❌ 简单提取方法失败")
-                
-            # 尝试备用方法
+            
+            # 尝试使用高级方法提取数据
             info = self.extract_connect_data_advanced(new_page)
             if info:
                 self.display_connect_info(info, "高级提取")
                 return
-            else:
-                logger.warning("❌ 高级提取方法也失败")
                 
             logger.error("💥 所有方法都无法提取连接信息")
                 
@@ -583,82 +585,97 @@ class EnhancedSiteAutomator:
             new_page.close()
 
     def extract_connect_data_simple(self, page):
-        """简单提取连接数据 - 基于之前有效的方法"""
+        """简单提取连接数据"""
         try:
-            table = page.ele("tag:table", timeout=5)
-            if not table:
-                return []
-                
-            rows = table.eles("tag:tr")
-            info = []
-
-            for row in rows:
-                cells = row.eles("tag:td")
-                if len(cells) >= 3:
-                    project = cells[0].text.strip()
-                    current = cells[1].text.strip()
-                    requirement = cells[2].text.strip()
-                    info.append([project, current, requirement])
+            # 查找所有表格
+            tables = page.eles("tag:table")
             
-            return info
-        except:
-            return []
-
-    def extract_connect_data_advanced(self, page):
-        """高级提取连接数据 - 多种方法尝试"""
-        info = []
-        
-        # 方法1: 查找包含特定关键词的行
-        try:
-            all_elements = page.eles("tag:*")
-            for elem in all_elements:
-                text = elem.text.strip()
-                if any(keyword in text for keyword in ["访问次数", "回复的话题", "浏览的话题", "已读帖子"]):
-                    # 查找父级表格或容器
-                    parent = elem.parent
-                    while parent and parent.tag != 'table':
-                        parent = parent.parent
-                    
-                    if parent and parent.tag == 'table':
-                        rows = parent.eles("tag:tr")
-                        for row in rows:
-                            cells = row.eles("tag:td")
-                            if len(cells) >= 3:
-                                project = cells[0].text.strip()
-                                current = cells[1].text.strip()
-                                requirement = cells[2].text.strip()
-                                if project and project not in ['项目']:
-                                    info.append([project, current, requirement])
-                        break
-        except:
-            pass
-        
-        # 方法2: 查找所有可能包含数据的容器
-        try:
-            containers = page.eles('.connect-stats, .stats, [class*="connect"], [class*="stats"]')
-            for container in containers:
-                rows = container.eles("tag:tr")
+            for table in tables:
+                rows = table.eles("tag:tr")
+                info = []
+                
                 for row in rows:
+                    # 跳过表头行（只包含th）
+                    th_cells = row.eles("tag:th")
+                    if th_cells and len(th_cells) >= 3:
+                        continue
+                        
                     cells = row.eles("tag:td")
                     if len(cells) >= 3:
                         project = cells[0].text.strip()
                         current = cells[1].text.strip()
                         requirement = cells[2].text.strip()
-                        if project and project not in ['项目']:
+                        
+                        # 只添加有意义的行
+                        if project and (current or requirement):
                             info.append([project, current, requirement])
-        except:
-            pass
-        
-        # 去重
-        unique_info = []
-        seen = set()
-        for item in info:
-            key = tuple(item)
-            if key not in seen:
-                seen.add(key)
-                unique_info.append(item)
-        
-        return unique_info
+                
+                if info:
+                    return info
+                    
+            return []
+        except Exception as e:
+            logger.debug(f"简单提取失败: {str(e)}")
+            return []
+
+    def extract_connect_data_advanced(self, page):
+        """高级提取连接数据"""
+        try:
+            # 获取页面所有文本
+            all_text = page.run_js("return document.body.innerText")
+            
+            # 查找包含连接信息的部分
+            lines = all_text.split('\n')
+            info = []
+            
+            # 查找包含关键信息的行
+            for i, line in enumerate(lines):
+                line = line.strip()
+                if not line:
+                    continue
+                    
+                # 检查是否包含连接信息的关键词
+                keywords = ['访问次数', '回复的话题', '浏览的话题', '已读帖子', '点赞', '获赞']
+                if any(keyword in line for keyword in keywords):
+                    # 尝试从上下文中提取信息
+                    context_lines = lines[max(0, i-2):min(len(lines), i+3)]
+                    logger.debug(f"找到关键词行: {line}")
+                    logger.debug(f"上下文: {context_lines}")
+            
+            # 另一种方法：查找所有可能的数据行
+            all_elements = page.eles("tag:tr, tag:div, tag:li")
+            for elem in all_elements:
+                try:
+                    text = elem.text.strip()
+                    if any(keyword in text for keyword in keywords):
+                        # 尝试提取项目、当前值和要求
+                        parts = [part.strip() for part in text.split('\n') if part.strip()]
+                        if len(parts) >= 3:
+                            # 简单的启发式规则：第一个部分可能是项目名
+                            project = parts[0]
+                            # 尝试找到包含百分比或数字的部分
+                            current = next((p for p in parts if any(c in p for c in ['%', '/', '≥'])), '')
+                            requirement = next((p for p in parts if '要求' in p or '需要' in p), '')
+                            
+                            if project and (current or requirement):
+                                info.append([project, current, requirement])
+                except:
+                    continue
+            
+            # 去重
+            unique_info = []
+            seen = set()
+            for item in info:
+                key = tuple(item)
+                if key not in seen:
+                    seen.add(key)
+                    unique_info.append(item)
+            
+            return unique_info
+            
+        except Exception as e:
+            logger.debug(f"高级提取失败: {str(e)}")
+            return []
 
     def display_connect_info(self, info, method):
         """显示连接信息"""
@@ -706,7 +723,7 @@ def main():
         level="INFO"
     )
 
-    logger.info("🚀 LinuxDo自动化脚本启动 - 调试版本")
+    logger.info("🚀 LinuxDo自动化脚本启动 - 连接信息修复版")
     logger.info(f"🔧 平台: {PLATFORM_IDENTIFIER}")
     logger.info(f"🔧 User-Agent: {USER_AGENT}")
     logger.info(f"🔧 扩展状态: {'已启用' if EXTENSION_ENABLED else '未启用'}")
