@@ -305,8 +305,10 @@ class SiteAutomator:
             selected_topics = random.sample(topic_list, min(MAX_TOPICS_TO_BROWSE, len(topic_list)))
             
             for topic in selected_topics:
-                self.click_one_topic(topic.attr("href"))
-                HumanBehaviorSimulator.random_delay(2, 5)
+                topic_href = topic.attr("href")
+                if topic_href:
+                    self.click_one_topic(topic_href)
+                    HumanBehaviorSimulator.random_delay(2, 5)
             
             logger.success("✅ 浏览操作完成")
             
@@ -317,9 +319,12 @@ class SiteAutomator:
         """使用您原来的选择器获取主题列表"""
         try:
             # 主要选择器：您原来的选择器
-            topic_list = self.page.ele("@id=list-area").eles(".:title")
-            if topic_list:
-                return topic_list
+            list_area = self.page.ele("@id=list-area")
+            if list_area:
+                topic_list = list_area.eles(".:title")
+                if topic_list:
+                    logger.info(f"✅ 使用原选择器找到 {len(topic_list)} 个主题")
+                    return topic_list
             
             # 备用选择器：如果主要选择器失败
             backup_selectors = [
@@ -332,11 +337,13 @@ class SiteAutomator:
                 try:
                     elements = self.page.eles(selector)
                     if elements:
-                        logger.info(f"✅ 使用备用选择器找到 {len(elements)} 个主题")
+                        logger.info(f"✅ 使用备用选择器 '{selector}' 找到 {len(elements)} 个主题")
                         return elements
-                except:
+                except Exception as e:
+                    logger.debug(f"备用选择器 '{selector}' 失败: {str(e)}")
                     continue
             
+            logger.warning("❌ 所有选择器都未能找到主题")
             return []
             
         except Exception as e:
@@ -344,14 +351,22 @@ class SiteAutomator:
             return []
 
     def click_one_topic(self, topic_url):
-        """浏览单个主题 - 使用您原来的逻辑"""
+        """浏览单个主题 - 修复标签页管理问题"""
         try:
+            # 保存当前页面的URL，以便后续返回
+            original_url = self.page.url
+            
             # 在新标签页打开主题
             new_tab = self.page.new_tab()
-            self.page.wait.new_tab()
-            self.page.to_tab(1)
+            if not new_tab:
+                logger.error("❌ 无法创建新标签页")
+                return
+                
+            # 切换到新标签页 - 使用正确的方法
+            self.page.set.tabs.to(new_tab)
             
             full_url = urljoin(self.site_config['base_url'], topic_url)
+            logger.info(f"📖 打开主题: {full_url}")
             self.page.get(full_url)
             time.sleep(3)
             
@@ -362,47 +377,56 @@ class SiteAutomator:
             # 浏览帖子内容
             self.browse_post()
             
-            # 关闭标签页
+            # 关闭当前标签页
             self.page.close_tab()
-            self.page.to_tab(0)
+            
+            # 切换回原来的标签页
+            self.page.set.tabs.to(0)  # 第一个标签页是原来的页面
+            
+            logger.info(f"✅ 完成浏览主题: {topic_url}")
             
         except Exception as e:
             logger.error(f"浏览主题失败: {str(e)}")
+            # 尝试恢复原标签页
             try:
-                self.page.to_tab(0)
+                self.page.set.tabs.to(0)
             except:
-                pass
+                logger.error("恢复原标签页失败")
 
     def browse_post(self):
         """浏览帖子内容 - 使用您原来的滚动逻辑"""
         prev_url = None
         
         # 开始自动滚动，最多滚动10次
-        for _ in range(10):
+        for i in range(10):
             # 随机滚动一段距离
             scroll_distance = random.randint(550, 650)
-            logger.info(f"向下滚动 {scroll_distance} 像素...")
-            self.page.run_js(f"window.scrollBy(0, {scroll_distance})")
-            logger.info(f"已加载页面: {self.page.url}")
+            logger.debug(f"第{i+1}次滚动，向下滚动 {scroll_distance} 像素...")
+            
+            # 使用 DrissionPage 的滚动方法
+            self.page.scroll.down(scroll_distance)
+            
+            logger.debug(f"已加载页面: {self.page.url}")
 
             if random.random() < 0.03:
-                logger.success("随机退出浏览")
+                logger.info("随机退出浏览")
                 break
 
             # 检查是否到达页面底部
             at_bottom = self.page.run_js(
-                "window.scrollY + window.innerHeight >= document.body.scrollHeight"
+                "return window.scrollY + window.innerHeight >= document.body.scrollHeight"
             )
+            
             current_url = self.page.url
             if current_url != prev_url:
                 prev_url = current_url
             elif at_bottom and prev_url == current_url:
-                logger.success("已到达页面底部，退出浏览")
+                logger.info("已到达页面底部，退出浏览")
                 break
 
             # 动态随机等待
             wait_time = random.uniform(2, 4)
-            logger.info(f"等待 {wait_time:.2f} 秒...")
+            logger.debug(f"等待 {wait_time:.2f} 秒...")
             time.sleep(wait_time)
 
     def click_like(self):
@@ -420,13 +444,21 @@ class SiteAutomator:
             logger.error(f"点赞失败: {str(e)}")
 
     def print_connect_info(self):
-        """获取连接信息 - 使用您原来的逻辑"""
+        """获取连接信息 - 修复标签页管理问题"""
         try:
             logger.info("获取连接信息")
             
-            # 使用新标签页
+            # 保存当前标签页索引
+            current_tab_index = self.page.tab_index
+            
+            # 在新标签页打开连接信息
             new_tab = self.page.new_tab()
-            self.page.to_tab(new_tab)
+            if not new_tab:
+                logger.error("❌ 无法创建新标签页")
+                return
+                
+            # 切换到新标签页
+            self.page.set.tabs.to(new_tab)
             
             self.page.get(self.site_config['connect_url'])
             time.sleep(3)
@@ -453,17 +485,19 @@ class SiteAutomator:
             else:
                 logger.warning("⚠️ 未找到表格")
             
-            # 关闭标签页
+            # 关闭当前标签页
             self.page.close_tab()
-            self.page.to_tab(0)
+            
+            # 切换回原来的标签页
+            self.page.set.tabs.to(current_tab_index)
                 
         except Exception as e:
             logger.error(f"获取连接信息失败: {str(e)}")
+            # 尝试恢复原标签页
             try:
-                self.page.close_tab()
-                self.page.to_tab(0)
+                self.page.set.tabs.to(0)
             except:
-                pass
+                logger.error("恢复原标签页失败")
 
     def save_session_data(self):
         """保存会话数据"""
@@ -510,7 +544,7 @@ def main():
         level="INFO"
     )
 
-    logger.info("🚀 LinuxDo自动化脚本启动 (使用原选择器版本)")
+    logger.info("🚀 LinuxDo自动化脚本启动 (修复标签页管理版本)")
 
     target_sites = SITES
     results = []
