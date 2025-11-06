@@ -242,7 +242,7 @@ class SiteAutomator:
             username = self.credentials['username']
             password = self.credentials['password']
 
-            # 使用登录表单选择器
+            # 使用您原来的登录方式
             self.page.ele("@id=login-account-name").input(username)
             self.page.ele("@id=login-account-password").input(password)
             self.page.ele("@id=login-button").click()
@@ -289,11 +289,11 @@ class SiteAutomator:
             return False
 
     def perform_browsing_actions(self):
-        """执行浏览操作"""
+        """使用您原来的浏览逻辑"""
         try:
             logger.info("🌐 开始浏览操作...")
             
-            # 获取主题列表
+            # 使用您原来的选择器
             topic_list = self.get_topic_list()
             if not topic_list:
                 logger.warning("❌ 未找到主题链接")
@@ -316,9 +316,9 @@ class SiteAutomator:
             logger.error(f"浏览操作失败: {str(e)}")
 
     def get_topic_list(self):
-        """获取主题列表"""
+        """使用您原来的选择器获取主题列表"""
         try:
-            # 主要选择器
+            # 主要选择器：您原来的选择器
             list_area = self.page.ele("@id=list-area")
             if list_area:
                 topic_list = list_area.eles(".:title")
@@ -326,7 +326,7 @@ class SiteAutomator:
                     logger.info(f"✅ 使用原选择器找到 {len(topic_list)} 个主题")
                     return topic_list
             
-            # 备用选择器
+            # 备用选择器：如果主要选择器失败
             backup_selectors = [
                 "#list-area .title",
                 ".topic-list-item a.title",
@@ -351,46 +351,38 @@ class SiteAutomator:
             return []
 
     def click_one_topic(self, topic_url):
-        """浏览单个主题 - 修复标签页管理问题"""
+        """浏览单个主题 - 简化标签页管理"""
         try:
-            # 保存当前标签页索引
-            original_tab_index = 0  # 默认第一个标签页为原始页面
+            # 保存当前页面的URL
+            original_url = self.page.url
             
-            # 在新标签页打开主题
+            # 在新标签页打开主题 - 直接使用 new_tab 方法
+            new_page = self.page.new_tab()
+            
             full_url = urljoin(self.site_config['base_url'], topic_url)
             logger.info(f"📖 打开主题: {full_url}")
             
-            # 创建新标签页并切换
-            self.page.new_tab(full_url)
-            all_tabs = self.page.get_tabs()
-            new_tab_index = len(all_tabs) - 1  # 最后一个是新创建的标签页
-            self.page.switch_to_tab(new_tab_index)
-            
+            # 在新标签页中导航
+            new_page.get(full_url)
             time.sleep(3)
             
             # 随机点赞（0.3%概率）
             if random.random() < 0.003:
-                self.click_like()
+                self.click_like(new_page)
             
             # 浏览帖子内容
-            self.browse_post()
+            self.browse_post(new_page)
             
-            # 关闭当前标签页并切换回原标签页
-            self.page.close_tab(new_tab_index)
-            self.page.switch_to_tab(original_tab_index)
+            # 关闭新标签页
+            new_page.close()
             
             logger.info(f"✅ 完成浏览主题: {topic_url}")
             
         except Exception as e:
             logger.error(f"浏览主题失败: {str(e)}")
-            # 尝试恢复原标签页
-            try:
-                self.page.switch_to_tab(0)
-            except:
-                logger.error("恢复原标签页失败")
 
-    def browse_post(self):
-        """浏览帖子内容"""
+    def browse_post(self, page):
+        """浏览帖子内容 - 使用您原来的滚动逻辑"""
         prev_url = None
         
         # 开始自动滚动，最多滚动10次
@@ -399,21 +391,21 @@ class SiteAutomator:
             scroll_distance = random.randint(550, 650)
             logger.debug(f"第{i+1}次滚动，向下滚动 {scroll_distance} 像素...")
             
-            # 滚动页面
-            self.page.scroll.down(scroll_distance)
+            # 使用 DrissionPage 的滚动方法
+            page.scroll.down(scroll_distance)
             
-            logger.debug(f"已加载页面: {self.page.url}")
+            logger.debug(f"已加载页面: {page.url}")
 
             if random.random() < 0.03:
                 logger.info("随机退出浏览")
                 break
 
             # 检查是否到达页面底部
-            at_bottom = self.page.run_js(
+            at_bottom = page.run_js(
                 "return window.scrollY + window.innerHeight >= document.body.scrollHeight"
             )
             
-            current_url = self.page.url
+            current_url = page.url
             if current_url != prev_url:
                 prev_url = current_url
             elif at_bottom and prev_url == current_url:
@@ -425,10 +417,10 @@ class SiteAutomator:
             logger.debug(f"等待 {wait_time:.2f} 秒...")
             time.sleep(wait_time)
 
-    def click_like(self):
-        """点赞操作"""
+    def click_like(self, page):
+        """点赞操作 - 使用您原来的逻辑"""
         try:
-            like_button = self.page.ele(".discourse-reactions-reaction-button")
+            like_button = page.ele(".discourse-reactions-reaction-button")
             if like_button:
                 logger.info("找到未点赞的帖子，准备点赞")
                 like_button.click()
@@ -440,23 +432,18 @@ class SiteAutomator:
             logger.error(f"点赞失败: {str(e)}")
 
     def print_connect_info(self):
-        """获取连接信息 - 修复标签页管理问题"""
+        """获取连接信息 - 简化标签页管理"""
         try:
             logger.info("获取连接信息")
             
-            # 保存当前标签页索引
-            original_tab_index = 0  # 默认第一个标签页为原始页面
-            
             # 在新标签页打开连接信息
-            self.page.new_tab(self.site_config['connect_url'])
-            all_tabs = self.page.get_tabs()
-            new_tab_index = len(all_tabs) - 1  # 最后一个是新创建的标签页
-            self.page.switch_to_tab(new_tab_index)
+            new_page = self.page.new_tab()
             
+            new_page.get(self.site_config['connect_url'])
             time.sleep(3)
             
-            # 解析表格数据
-            table = self.page.ele("tag:table")
+            # 使用您原来的表格解析逻辑
+            table = new_page.ele("tag:table")
             if table:
                 rows = table.eles("tag:tr")
                 info = []
@@ -477,17 +464,11 @@ class SiteAutomator:
             else:
                 logger.warning("⚠️ 未找到表格")
             
-            # 关闭当前标签页并切换回原标签页
-            self.page.close_tab(new_tab_index)
-            self.page.switch_to_tab(original_tab_index)
+            # 关闭新标签页
+            new_page.close()
                 
         except Exception as e:
             logger.error(f"获取连接信息失败: {str(e)}")
-            # 尝试恢复原标签页
-            try:
-                self.page.switch_to_tab(0)
-            except:
-                logger.error("恢复原标签页失败")
 
     def save_session_data(self):
         """保存会话数据"""
@@ -534,15 +515,9 @@ def main():
         level="INFO"
     )
 
-    logger.info("🚀 LinuxDo自动化脚本启动 (修复标签页管理版本)")
+    logger.info("🚀 LinuxDo自动化脚本启动 (简化标签页管理版本)")
 
-    # 获取站点选择器输入
-    site_selector = os.getenv('SITE_SELECTOR', 'all')
-    if site_selector == 'all':
-        target_sites = SITES
-    else:
-        target_sites = [site for site in SITES if site['name'] == site_selector]
-
+    target_sites = SITES
     results = []
 
     try:
