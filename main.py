@@ -277,8 +277,7 @@ class SiteAutomator:
             # 精确滚动距离（550-650像素）
             scroll_distance = random.randint(550, 650)
             page.scroll.down(scroll_distance)
-            logger.info(f"📜 滚动 {scroll_distance} 像素")
-            
+                     
             # 检测是否到达页面底部
             at_bottom = page.run_js(
                 "window.scrollY + window.innerHeight >= document.body.scrollHeight"
@@ -416,3 +415,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
