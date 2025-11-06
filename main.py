@@ -169,7 +169,7 @@ class EnhancedSiteAutomator:
             if self.enhanced_login_approach():
                 logger.success(f"✅ {self.site_config['name']} 登录成功")
                 self.perform_browsing_actions_improved()
-                self.get_connect_info_fixed()
+                self.get_connect_info_debug()
                 self.save_session_data()
                 return True
             else:
@@ -493,20 +493,101 @@ class EnhancedSiteAutomator:
         except:
             pass
 
-    def get_connect_info_fixed(self):
-        """修复的连接信息获取 - 基于您之前有效的代码"""
-        logger.info("🔗 获取连接信息")
+    def get_connect_info_debug(self):
+        """调试版本的连接信息获取 - 打印HTML结构"""
+        logger.info("🔗 获取连接信息 - 调试模式")
         new_page = self.page.new_tab()
         try:
             new_page.get(self.site_config['connect_url'])
-            time.sleep(10)  # 增加等待时间确保页面完全加载
+            time.sleep(10)  # 确保页面完全加载
             
-            # 使用您之前有效的代码
-            table = new_page.ele("tag:table", timeout=15)
+            # 保存页面HTML用于调试
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            html_path = f"connect_debug_{self.site_config['name']}_{timestamp}.html"
+            with open(html_path, "w", encoding="utf-8") as f:
+                f.write(new_page.html)
+            logger.info(f"💾 已保存完整HTML: {html_path}")
+            
+            # 打印页面标题和关键信息
+            page_title = new_page.title
+            logger.info(f"📄 页面标题: {page_title}")
+            
+            # 检查页面内容
+            page_text = new_page.text
+            if "访问次数" in page_text or "浏览的话题" in page_text:
+                logger.info("✅ 页面包含连接信息关键词")
+            else:
+                logger.warning("❌ 页面不包含连接信息关键词")
+            
+            # 查找所有表格
+            tables = new_page.eles("tag:table")
+            logger.info(f"📊 找到 {len(tables)} 个表格")
+            
+            for i, table in enumerate(tables):
+                logger.info(f"🔍 分析表格 {i+1}:")
+                
+                # 获取表格HTML结构
+                table_html = table.html
+                # 只打印前500个字符避免日志过长
+                logger.info(f"  表格HTML (前500字符): {table_html[:500]}...")
+                
+                # 尝试提取表格行
+                rows = table.eles("tag:tr")
+                logger.info(f"  表格包含 {len(rows)} 行")
+                
+                for j, row in enumerate(rows):
+                    cells = row.eles("tag:td")
+                    th_cells = row.eles("tag:th")
+                    
+                    if cells or th_cells:
+                        row_info = f"  第{j+1}行: "
+                        if th_cells:
+                            row_info += f"表头[{len(th_cells)}] "
+                        if cells:
+                            row_info += f"数据[{len(cells)}]"
+                        
+                        # 打印前几个单元格内容
+                        content_preview = []
+                        for cell in (th_cells + cells)[:3]:
+                            text = cell.text.strip()
+                            if text:
+                                content_preview.append(text[:20])  # 只取前20个字符
+                        
+                        if content_preview:
+                            row_info += f" 内容: {', '.join(content_preview)}"
+                        
+                        logger.info(row_info)
+            
+            # 尝试使用之前有效的方法
+            info = self.extract_connect_data_simple(new_page)
+            if info:
+                self.display_connect_info(info, "简单提取")
+                return
+            else:
+                logger.warning("❌ 简单提取方法失败")
+                
+            # 尝试备用方法
+            info = self.extract_connect_data_advanced(new_page)
+            if info:
+                self.display_connect_info(info, "高级提取")
+                return
+            else:
+                logger.warning("❌ 高级提取方法也失败")
+                
+            logger.error("💥 所有方法都无法提取连接信息")
+                
+        except Exception as e:
+            logger.error(f"获取连接信息失败: {str(e)}")
+            traceback.print_exc()
+        finally:
+            new_page.close()
+
+    def extract_connect_data_simple(self, page):
+        """简单提取连接数据 - 基于之前有效的方法"""
+        try:
+            table = page.ele("tag:table", timeout=5)
             if not table:
-                logger.warning("❌ 未找到表格")
-                # 尝试备用方法
-                return self.try_alternative_connect_methods(new_page)
+                return []
                 
             rows = table.eles("tag:tr")
             info = []
@@ -518,84 +599,75 @@ class EnhancedSiteAutomator:
                     current = cells[1].text.strip()
                     requirement = cells[2].text.strip()
                     info.append([project, current, requirement])
+            
+            return info
+        except:
+            return []
 
-            if info:
-                print("=" * 60)
-                print(f"📊 {self.site_config['name']} Connect 连接信息")
-                print("=" * 60)
-                print(tabulate(info, headers=["项目", "当前", "要求"], tablefmt="grid"))
-                print("=" * 60)
-                logger.success(f"✅ 找到 {len(info)} 个连接项目")
-            else:
-                logger.warning("⚠️ 表格中没有有效数据")
-                # 尝试备用方法
-                self.try_alternative_connect_methods(new_page)
-                
-        except Exception as e:
-            logger.error(f"获取连接信息失败: {str(e)}")
-            # 尝试备用方法
-            try:
-                self.try_alternative_connect_methods(new_page)
-            except:
-                pass
-        finally:
-            new_page.close()
-
-    def try_alternative_connect_methods(self, page):
-        """尝试备用方法获取连接信息"""
+    def extract_connect_data_advanced(self, page):
+        """高级提取连接数据 - 多种方法尝试"""
+        info = []
+        
+        # 方法1: 查找包含特定关键词的行
         try:
-            # 方法1: 直接查找所有表格行
-            all_rows = page.eles("tag:tr")
-            info = []
-            
-            for row in all_rows:
-                cells = row.eles("tag:td")
-                if len(cells) >= 3:
-                    project = cells[0].text.strip()
-                    current = cells[1].text.strip()
-                    requirement = cells[2].text.strip()
-                    # 过滤掉表头行
-                    if project and project not in ["项目"]:
-                        info.append([project, current, requirement])
-            
-            if info:
-                print("=" * 60)
-                print(f"📊 {self.site_config['name']} Connect 连接信息 (备用方法)")
-                print("=" * 60)
-                print(tabulate(info, headers=["项目", "当前", "要求"], tablefmt="grid"))
-                print("=" * 60)
-                logger.success(f"✅ 找到 {len(info)} 个连接项目 (备用方法)")
-                return True
-                
-            # 方法2: 查找tbody内的行
-            tbody = page.ele("tag:tbody", timeout=5)
-            if tbody:
-                rows = tbody.eles("tag:tr")
-                info = []
-                
+            all_elements = page.eles("tag:*")
+            for elem in all_elements:
+                text = elem.text.strip()
+                if any(keyword in text for keyword in ["访问次数", "回复的话题", "浏览的话题", "已读帖子"]):
+                    # 查找父级表格或容器
+                    parent = elem.parent
+                    while parent and parent.tag != 'table':
+                        parent = parent.parent
+                    
+                    if parent and parent.tag == 'table':
+                        rows = parent.eles("tag:tr")
+                        for row in rows:
+                            cells = row.eles("tag:td")
+                            if len(cells) >= 3:
+                                project = cells[0].text.strip()
+                                current = cells[1].text.strip()
+                                requirement = cells[2].text.strip()
+                                if project and project not in ['项目']:
+                                    info.append([project, current, requirement])
+                        break
+        except:
+            pass
+        
+        # 方法2: 查找所有可能包含数据的容器
+        try:
+            containers = page.eles('.connect-stats, .stats, [class*="connect"], [class*="stats"]')
+            for container in containers:
+                rows = container.eles("tag:tr")
                 for row in rows:
                     cells = row.eles("tag:td")
                     if len(cells) >= 3:
                         project = cells[0].text.strip()
                         current = cells[1].text.strip()
                         requirement = cells[2].text.strip()
-                        info.append([project, current, requirement])
-                
-                if info:
-                    print("=" * 60)
-                    print(f"📊 {self.site_config['name']} Connect 连接信息 (tbody方法)")
-                    print("=" * 60)
-                    print(tabulate(info, headers=["项目", "当前", "要求"], tablefmt="grid"))
-                    print("=" * 60)
-                    logger.success(f"✅ 找到 {len(info)} 个连接项目 (tbody方法)")
-                    return True
-            
-            logger.warning("⚠️ 所有方法都无法获取连接信息")
-            return False
-            
-        except Exception as e:
-            logger.error(f"备用方法也失败: {str(e)}")
-            return False
+                        if project and project not in ['项目']:
+                            info.append([project, current, requirement])
+        except:
+            pass
+        
+        # 去重
+        unique_info = []
+        seen = set()
+        for item in info:
+            key = tuple(item)
+            if key not in seen:
+                seen.add(key)
+                unique_info.append(item)
+        
+        return unique_info
+
+    def display_connect_info(self, info, method):
+        """显示连接信息"""
+        print("=" * 60)
+        print(f"📊 {self.site_config['name']} Connect 连接信息 ({method})")
+        print("=" * 60)
+        print(tabulate(info, headers=["项目", "当前", "要求"], tablefmt="grid"))
+        print("=" * 60)
+        logger.success(f"✅ 连接信息获取成功 ({method}) - 找到 {len(info)} 个项目")
 
     def save_session_data(self):
         try:
@@ -634,7 +706,7 @@ def main():
         level="INFO"
     )
 
-    logger.info("🚀 LinuxDo自动化脚本启动 - 连接信息修复版")
+    logger.info("🚀 LinuxDo自动化脚本启动 - 调试版本")
     logger.info(f"🔧 平台: {PLATFORM_IDENTIFIER}")
     logger.info(f"🔧 User-Agent: {USER_AGENT}")
     logger.info(f"🔧 扩展状态: {'已启用' if EXTENSION_ENABLED else '未启用'}")
