@@ -232,14 +232,15 @@ class SiteAutomator:
 
     def get_topic_list(self):
         try:
-            # 只使用主要选择器
+            # 使用主要选择器：list-area内的.title元素
             list_area = self.page.ele("@id=list-area")
             if list_area:
                 topic_list = list_area.eles(".:title")
                 if topic_list:
                     logger.info(f"✅ 使用主要选择器找到 {len(topic_list)} 个主题")
                     return topic_list
-            logger.warning("❌ 主要选择器未找到主题")
+            
+            logger.warning("❌ 主要选择器未能找到主题")
             return []
             
         except Exception as e:
@@ -255,11 +256,11 @@ class SiteAutomator:
             new_page.get(full_url)
             time.sleep(2)
             
-            # 随机点赞
+            # 随机点赞（0.3%概率）
             if random.random() < 0.003:
                 self.click_like(new_page)
             
-            # 浏览内容
+            # 智能浏览内容
             self.simulate_reading(new_page)
             
             new_page.close()
@@ -269,14 +270,35 @@ class SiteAutomator:
             logger.error(f"浏览主题失败: {str(e)}")
 
     def simulate_reading(self, page):
-        for i in range(random.randint(3, 8)):
-            scroll_distance = random.randint(300, 600)
+        prev_url = None
+        
+        # 智能滚动，最多10次
+        for _ in range(10):
+            # 精确滚动距离（550-650像素）
+            scroll_distance = random.randint(550, 650)
             page.scroll.down(scroll_distance)
+            logger.info(f"📜 滚动 {scroll_distance} 像素")
             
-            if random.random() < 0.05:
+            # 检测是否到达页面底部
+            at_bottom = page.run_js(
+                "window.scrollY + window.innerHeight >= document.body.scrollHeight"
+            )
+            
+            current_url = page.url
+            if current_url != prev_url:
+                prev_url = current_url
+            elif at_bottom and prev_url == current_url:
+                logger.info("📄 已到达页面底部，退出浏览")
                 break
-                
-            time.sleep(random.uniform(1, 3))
+            
+            # 动态随机等待（2-4秒）
+            wait_time = random.uniform(2, 4)
+            time.sleep(wait_time)
+            
+            # 随机退出机制（3%概率）
+            if random.random() < 0.03:
+                logger.info("🎲 随机退出浏览")
+                break
 
     def click_like(self, page):
         try:
@@ -289,31 +311,42 @@ class SiteAutomator:
             pass
 
     def print_connect_info(self):
-        """打印连接信息"""
+        """获取连接信息 - 使用已验证有效的方法"""
         logger.info("获取连接信息")
-        page = self.context.new_page()
+        new_page = self.page.new_tab()
         try:
-            page.goto("https://connect.linux.do/")
+            new_page.get(self.site_config['connect_url'])
             time.sleep(5)
 
-            rows = page.query_selector_all("table tr")
+            # 使用简单有效的方法：直接查找表格行
+            rows = new_page.eles('table tr')
             info = []
 
             for row in rows:
-                cells = row.query_selector_all("td")
+                cells = row.eles('td')
                 if len(cells) >= 3:
-                    project = cells[0].text_content().strip()
-                    current = cells[1].text_content().strip()
-                    requirement = cells[2].text_content().strip()
-                    info.append([project, current, requirement])
+                    project = cells[0].text.strip()
+                    current = cells[1].text.strip()
+                    requirement = cells[2].text.strip()
+                    
+                    # 确保不是空行
+                    if project and (current or requirement):
+                        info.append([project, current, requirement])
 
-            print("--------------Connect Info-----------------")
-            print(tabulate(info, headers=["项目", "当前", "要求"], tablefmt="pretty"))
+            if info:
+                print("=" * 50)
+                print("📊 Connect 连接信息")
+                print("=" * 50)
+                print(tabulate(info, headers=["项目", "当前", "要求"], tablefmt="grid"))
+                print("=" * 50)
+                logger.success("✅ 连接信息获取成功")
+            else:
+                logger.warning("⚠️ 未找到连接信息")
 
         except Exception as e:
             logger.error(f"获取连接信息失败: {str(e)}")
         finally:
-            page.close()
+            new_page.close()
 
     def save_session_data(self):
         try:
@@ -383,5 +416,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
