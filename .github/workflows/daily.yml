@@ -13,7 +13,7 @@ on:
           - linux_do
           - idcflare
   schedule:
-    - cron: '0 */6 * * *'
+    - cron: '0 */6 * * *'  # 每6小时运行一次
 
 env:
   PYTHON_VERSION: '3.11'
@@ -21,7 +21,7 @@ env:
 jobs:
   automate:
     runs-on: ubuntu-22.04
-    timeout-minutes: 30
+    timeout-minutes: 45  # 增加超时时间，因为浏览操作需要时间
     
     steps:
     - name: Checkout repository
@@ -32,10 +32,30 @@ jobs:
       with:
         python-version: ${{ env.PYTHON_VERSION }}
 
+    - name: Install system dependencies for Chromium
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          libnss3 \
+          libatk-bridge2.0-0 \
+          libdrm2 \
+          libxkbcommon0 \
+          libxcomposite1 \
+          libxdamage1 \
+          libxrandr2 \
+          libgbm1 \
+          libxss1 \
+          libasound2 \
+          libatspi2.0-0 \
+          libcups2 \
+          libx11-xcb1
+
     - name: Install Python dependencies
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
+        # 显示已安装的包
+        pip list
 
     - name: Download previous session data
       uses: actions/download-artifact@v4
@@ -43,6 +63,12 @@ jobs:
         name: linuxdo-session-data
         path: ./
       continue-on-error: true
+
+    - name: Display cache status
+      run: |
+        echo "📦 缓存文件状态:"
+        ls -la *.json 2>/dev/null || echo "未找到缓存文件"
+        echo ""
 
     - name: Run automation script
       env:
@@ -53,6 +79,8 @@ jobs:
         GITHUB_ACTIONS: 'true'
       run: |
         echo "开始执行自动化脚本..."
+        echo "站点选择: ${{ github.event.inputs.site_selector || 'all' }}"
+        echo "当前时间: $(date)"
         python main.py
         echo "脚本执行完成"
 
@@ -62,10 +90,15 @@ jobs:
       with:
         name: linuxdo-session-data
         path: |
-          browser_state_*.json
           cf_cookies_*.json
+          browser_state_*.json
         retention-days: 7
         overwrite: true
+
+    - name: Display uploaded artifacts
+      run: |
+        echo "📤 上传的缓存文件:"
+        ls -la *.json 2>/dev/null || echo "未生成缓存文件"
 
     - name: Notify on failure
       if: failure()
@@ -77,5 +110,31 @@ jobs:
             owner,
             repo,
             title: 'LinuxDo 自动化执行失败',
-            body: 'LinuxDo 多站点自动化脚本执行失败，请检查日志。'
+            body: `LinuxDo 多站点自动化脚本执行失败，请检查日志。
+            
+            工作流运行: ${context.runId}
+            触发时间: ${new Date().toISOString()}
+            
+            请查看 Action 日志获取详细错误信息。`
           });
+
+    - name: Notify on success
+      if: success()
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const { owner, repo } = context.repo;
+          // 可选：成功时也创建 issue 通知（如果需要）
+          // 这里注释掉，因为通常只需要失败通知
+          /*
+          github.rest.issues.create({
+            owner,
+            repo,
+            title: 'LinuxDo 自动化执行成功',
+            body: `LinuxDo 多站点自动化脚本执行成功。
+            
+            工作流运行: ${context.runId}
+            完成时间: ${new Date().toISOString()}`
+          });
+          */
+          console.log('自动化脚本执行成功');
