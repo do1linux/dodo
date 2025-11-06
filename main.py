@@ -15,6 +15,10 @@ SITE_CREDENTIALS = {
     'linux_do': {
         'username': os.getenv('LINUXDO_USERNAME'),
         'password': os.getenv('LINUXDO_PASSWORD')
+    },
+    'idcflare': {
+        'username': os.getenv('IDCFLARE_USERNAME'),
+        'password': os.getenv('IDCFLARE_PASSWORD')
     }
 }
 
@@ -25,12 +29,21 @@ SITES = [
         'login_url': 'https://linux.do/login',
         'latest_topics_url': 'https://linux.do/latest',
         'connect_url': 'https://connect.linux.do/',
+    },
+    {
+        'name': 'idcflare',
+        'base_url': 'https://idcflare.com',
+        'login_url': 'https://idcflare.com/login',
+        'latest_topics_url': 'https://idcflare.com/latest',
+        'connect_url': 'https://connect.idcflare.com/',
     }
 ]
 
 PAGE_TIMEOUT = 120
 RETRY_TIMES = 3
 MAX_TOPICS_TO_BROWSE = 10
+
+USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'
 
 class CacheManager:
     @staticmethod
@@ -67,7 +80,7 @@ class BrowserManager:
             for arg in browser_args:
                 co.set_argument(arg)
             
-            co.set_user_agent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
+            co.set_user_agent(USER_AGENT)
             page = ChromiumPage(addr_or_opts=co)
             page.set.timeouts(base=PAGE_TIMEOUT)
             
@@ -93,8 +106,6 @@ class SiteAutomator:
         self.page = None
         self.credentials = SITE_CREDENTIALS.get(site_config['name'], {})
         self.topic_count = 0
-        self.login_method_used = None
-        self.connect_info_method_used = None
 
     def run_for_site(self):
         if not self.credentials.get('username'):
@@ -105,7 +116,7 @@ class SiteAutomator:
             self.page = BrowserManager.init_browser(self.site_config['name'])
             
             if self.smart_login_approach():
-                logger.success(f"✅ {self.site_config['name']} 登录成功 (方法: {self.login_method_used})")
+                logger.success(f"✅ {self.site_config['name']} 登录成功")
                 self.perform_browsing_actions()
                 self.print_connect_info()
                 self.save_session_data()
@@ -126,12 +137,10 @@ class SiteAutomator:
 
             # 方法1: 尝试直接访问（使用缓存）
             if self.try_direct_access():
-                self.login_method_used = "缓存登录"
                 return True
 
             # 方法2: 完整登录流程
             if self.full_login_process():
-                self.login_method_used = "完整登录"
                 return True
 
             if attempt < RETRY_TIMES - 1:
@@ -180,35 +189,20 @@ class SiteAutomator:
         username = self.credentials['username']
         logger.info(f"🔍 检查登录状态，查找用户名: {username}")
 
-        # 方法1: 检查用户菜单
-        try:
-            user_ele = self.page.ele("@id=current-user")
-            if user_ele:
-                logger.info("✅ 方法1生效: 找到用户菜单")
-                return True
-        except Exception:
-            pass
-
-        # 方法2: 检查页面内容中的用户名
-        content = self.page.html
-        if username.lower() in content.lower():
-            logger.info("✅ 方法2生效: 在页面内容中找到用户名")
-            return True
-
-        # 方法3: 访问个人资料页面验证
+        # 使用已验证有效的方法：访问个人资料页面验证
         try:
             profile_url = f"{self.site_config['base_url']}/u/{username}"
             self.page.get(profile_url)
             time.sleep(2)
             profile_content = self.page.html
             if username.lower() in profile_content.lower():
-                logger.info("✅ 方法3生效: 在个人资料页面验证用户名")
+                logger.info("✅ 登录状态验证成功")
                 self.page.back()
                 return True
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"个人资料页面验证失败: {str(e)}")
 
-        logger.error(f"❌ 所有登录状态检查方法都失败，无法找到用户名: {username}")
+        logger.error(f"❌ 登录状态检查失败，无法找到用户名: {username}")
         return False
 
     def perform_browsing_actions(self):
@@ -312,87 +306,42 @@ class SiteAutomator:
             pass
 
     def print_connect_info(self):
+        """获取连接信息 - 使用已验证有效的方法"""
+        logger.info("获取连接信息")
+        new_page = self.page.new_tab()
         try:
-            logger.info("获取连接信息")
-            
-            new_page = self.page.new_tab()
             new_page.get(self.site_config['connect_url'])
-            time.sleep(3)
-            
-            # 方法1: 通过信任级别标题查找
-            trust_level_element = new_page.ele('xpath://*[contains(text(), "信任级别")]')
-            if trust_level_element:
-                logger.info("✅ 方法1生效: 通过信任级别标题找到信息")
-                self.connect_info_method_used = "信任级别标题"
-                parent_div = trust_level_element.parent()
-                table = parent_div.ele('tag:table')
-                
-                if table:
-                    self.extract_table_data(table)
-                    new_page.close()
-                    return
-            
-            # 方法2: 通过关键词查找表格
-            logger.info("🔄 尝试方法2: 通过关键词查找表格")
-            all_tables = new_page.eles('tag:table')
-            for table in all_tables:
-                table_text = table.text
-                if any(keyword in table_text for keyword in ["访问次数", "回复的话题", "浏览的话题"]):
-                    logger.info("✅ 方法2生效: 通过关键词找到表格")
-                    self.connect_info_method_used = "关键词查找"
-                    self.extract_table_data(table)
-                    new_page.close()
-                    return
-            
-            # 方法3: 备用方案
-            logger.info("🔄 尝试方法3: 备用方案")
-            stats_elements = new_page.eles('tag:p, tag:div')
-            backup_info = []
-            for element in stats_elements:
-                text = element.text.strip()
-                if text and any(keyword in text for keyword in ["访问次数", "回复的话题", "浏览的话题"]):
-                    backup_info.append(text)
-            
-            if backup_info:
-                logger.info("✅ 方法3生效: 通过备用方案找到信息")
-                self.connect_info_method_used = "备用方案"
+            time.sleep(5)
+
+            # 使用简单有效的方法：直接查找表格行
+            rows = new_page.eles('table tr')
+            info = []
+
+            for row in rows:
+                cells = row.eles('td')
+                if len(cells) >= 3:
+                    project = cells[0].text.strip()
+                    current = cells[1].text.strip()
+                    requirement = cells[2].text.strip()
+                    
+                    # 确保不是空行
+                    if project and (current or requirement):
+                        info.append([project, current, requirement])
+
+            if info:
                 print("=" * 50)
                 print("📊 Connect 连接信息")
                 print("=" * 50)
-                for item in backup_info[:10]:  # 限制输出数量
-                    print(f"• {item}")
+                print(tabulate(info, headers=["项目", "当前", "要求"], tablefmt="grid"))
                 print("=" * 50)
-            
-            new_page.close()
-            logger.info(f"✅ 连接信息获取完成 (方法: {self.connect_info_method_used})")
-                
+                logger.success("✅ 连接信息获取成功")
+            else:
+                logger.warning("⚠️ 未找到连接信息")
+
         except Exception as e:
             logger.error(f"获取连接信息失败: {str(e)}")
-            try:
-                new_page.close()
-            except:
-                pass
-
-    def extract_table_data(self, table):
-        rows = table.eles('tag:tr')
-        info = []
-        
-        for row in rows:
-            cells = row.eles('tag:td, tag:th')
-            if len(cells) >= 3:
-                project = cells[0].text.strip()
-                current = cells[1].text.strip()
-                requirement = cells[2].text.strip()
-                
-                if project and project != "项目" and (current or requirement):
-                    info.append([project, current, requirement])
-        
-        if info:
-            print("=" * 50)
-            print("📊 Connect 连接信息")
-            print("=" * 50)
-            print(tabulate(info, headers=["项目", "当前状态", "要求"], tablefmt="grid"))
-            print("=" * 50)
+        finally:
+            new_page.close()
 
     def save_session_data(self):
         try:
@@ -405,13 +354,11 @@ class SiteAutomator:
             # 保存会话数据
             session_data = {
                 'topic_count': self.topic_count,
-                'login_method': self.login_method_used,
-                'connect_info_method': self.connect_info_method_used,
                 'last_updated': datetime.now().isoformat(),
             }
             CacheManager.save_site_cache(session_data, self.site_config['name'], 'browser_state')
             
-            logger.success(f"✅ 会话数据已保存 (主题: {self.topic_count}, 登录方法: {self.login_method_used})")
+            logger.success(f"✅ 会话数据已保存 (主题数量: {self.topic_count})")
 
         except Exception as e:
             logger.error(f"保存会话数据失败: {str(e)}")
@@ -433,28 +380,34 @@ def main():
 
     logger.info("🚀 LinuxDo自动化脚本启动")
 
+    target_sites = SITES
     results = []
-    for site_config in SITES:
-        logger.info(f"🎯 处理站点: {site_config['name']}")
 
-        automator = SiteAutomator(site_config)
-        success = automator.run_for_site()
+    try:
+        for site_config in target_sites:
+            logger.info(f"🎯 处理站点: {site_config['name']}")
 
-        results.append({
-            'site': site_config['name'],
-            'success': success,
-            'login_method': automator.login_method_used,
-            'connect_method': automator.connect_info_method_used
-        })
+            automator = SiteAutomator(site_config)
+            success = automator.run_for_site()
 
-    # 输出执行摘要
-    logger.info("📊 执行摘要:")
-    for result in results:
-        status = "✅ 成功" if result['success'] else "❌ 失败"
-        logger.info(f"  {result['site']}: {status} (登录: {result['login_method']}, 连接信息: {result['connect_method']})")
+            results.append({
+                'site': site_config['name'],
+                'success': success
+            })
 
-    success_count = sum(1 for r in results if r['success'])
-    logger.success(f"🎉 完成: {success_count}/{len(results)} 个站点成功")
+            if site_config != target_sites[-1]:
+                time.sleep(random.uniform(10, 20))
+
+        logger.info("📊 执行结果:")
+        table_data = [[r['site'], "✅ 成功" if r['success'] else "❌ 失败"] for r in results]
+        print(tabulate(table_data, headers=['站点', '状态'], tablefmt='grid'))
+
+        success_count = sum(1 for r in results if r['success'])
+        logger.success(f"🎉 完成: {success_count}/{len(results)} 个站点成功")
+
+    except Exception as e:
+        logger.critical(f"💥 主流程异常: {str(e)}")
+        traceback.print_exc()
 
 if __name__ == "__main__":
     main()
