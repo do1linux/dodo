@@ -56,6 +56,89 @@ EXTENSION_PATH = os.path.abspath(
 # 检查扩展目录是否存在
 EXTENSION_ENABLED = os.path.exists(EXTENSION_PATH)
 
+# Cloudflare Turnstile 处理相关常量
+TURNSTILE_SCRIPT = """
+// 尝试获取 Turnstile token
+function getTurnstileToken() {
+    return new Promise((resolve, reject) => {
+        // 方法1: 直接检查 turnstile 对象
+        if (window.turnstile) {
+            const response = window.turnstile.getResponse();
+            if (response && response.length > 0) {
+                resolve(response);
+                return;
+            }
+        }
+        
+        // 方法2: 检查隐藏的 input 字段
+        const hiddenInput = document.querySelector('input[name="cf-turnstile-response"]');
+        if (hiddenInput && hiddenInput.value) {
+            resolve(hiddenInput.value);
+            return;
+        }
+        
+        // 方法3: 等待一段时间后重试
+        setTimeout(() => {
+            if (window.turnstile) {
+                const response = window.turnstile.getResponse();
+                if (response && response.length > 0) {
+                    resolve(response);
+                } else {
+                    reject(new Error('无法获取 Turnstile token'));
+                }
+            } else {
+                reject(new Error('Turnstile 对象未找到'));
+            }
+        }, 3000);
+    });
+}
+
+// 设置 Turnstile token 到表单
+function setTurnstileToken(token) {
+    // 查找现有的 cf-turnstile-response 字段
+    let existingInput = document.querySelector('input[name="cf-turnstile-response"]');
+    if (existingInput) {
+        existingInput.value = token;
+    } else {
+        // 创建新的隐藏字段
+        const newInput = document.createElement('input');
+        newInput.type = 'hidden';
+        newInput.name = 'cf-turnstile-response';
+        newInput.value = token;
+        
+        // 添加到表单中
+        const form = document.querySelector('form');
+        if (form) {
+            form.appendChild(newInput);
+        }
+    }
+    return true;
+}
+
+// 主函数
+async function handleTurnstile() {
+    try {
+        console.log('开始处理 Turnstile 验证...');
+        const token = await getTurnstileToken();
+        console.log('获取到 Turnstile token:', token.substring(0, 20) + '...');
+        
+        const success = setTurnstileToken(token);
+        if (success) {
+            console.log('Turnstile token 已设置到表单');
+            return { success: true, token: token };
+        } else {
+            return { success: false, error: '无法设置 token 到表单' };
+        }
+    } catch (error) {
+        console.error('处理 Turnstile 验证失败:', error);
+        return { success: false, error: error.message };
+    }
+}
+
+// 执行处理
+handleTurnstile();
+"""
+
 # 重试装饰器
 def retry_decorator(max_retries=3, delay=2):
     def decorator(func):
@@ -95,6 +178,16 @@ class CacheManager:
         except Exception:
             return False
 
+    @staticmethod
+    def load_turnstile_cache(site_name):
+        """加载 Turnstile 验证缓存"""
+        return CacheManager.load_site_cache(site_name, 'turnstile')
+
+    @staticmethod
+    def save_turnstile_cache(data, site_name):
+        """保存 Turnstile 验证缓存"""
+        return CacheManager.save_site_cache(data, site_name, 'turnstile')
+
 class EnhancedBrowserManager:
     @staticmethod
     def init_browser(site_name):
@@ -131,7 +224,7 @@ class EnhancedBrowserManager:
             page = ChromiumPage(addr_or_opts=co)
             page.set.timeouts(base=PAGE_TIMEOUT)
             
-            # 加载缓存cookies
+            # 加载缓存cookies和Turnstile缓存
             cf_cookies = CacheManager.load_site_cache(site_name, 'cf_cookies')
             if cf_cookies:
                 page.set.cookies(cf_cookies)
@@ -157,6 +250,7 @@ class EnhancedSiteAutomator:
         self.credentials = SITE_CREDENTIALS.get(site_config['name'], {})
         self.topic_count = 0
         self.successful_browsed = 0
+        self.turnstile_cache = None
 
     def run_for_site(self):
         if not self.credentials.get('username'):
@@ -165,6 +259,11 @@ class EnhancedSiteAutomator:
 
         try:
             self.page = EnhancedBrowserManager.init_browser(self.site_config['name'])
+            
+            # 加载 Turnstile 缓存
+            self.turnstile_cache = CacheManager.load_turnstile_cache(self.site_config['name'])
+            if self.turnstile_cache:
+                logger.info(f"✅ 已加载 Turnstile 缓存")
             
             if self.enhanced_login_approach():
                 logger.success(f"✅ {self.site_config['name']} 登录成功")
@@ -190,8 +289,8 @@ class EnhancedSiteAutomator:
             if self.try_direct_access():
                 return True
 
-            # 方法2: 完整登录流程
-            if self.enhanced_login_process():
+            # 方法2: 完整登录流程（处理 Turnstile 验证）
+            if self.enhanced_login_process_with_turnstile():
                 return True
 
             if attempt < RETRY_TIMES - 1:
@@ -217,11 +316,21 @@ class EnhancedSiteAutomator:
             logger.debug(f"直接访问失败: {str(e)}")
             return False
 
-    def enhanced_login_process(self):
+    def enhanced_login_process_with_turnstile(self):
+        """增强的登录流程，专门处理 Turnstile 验证"""
         try:
-            logger.info("🔐 开始完整登录流程")
+            logger.info("🔐 开始完整登录流程（含 Turnstile 处理）")
             self.page.get(self.site_config['login_url'])
-            time.sleep(5)  # 增加等待时间
+            time.sleep(5)
+
+            # 检查是否有 Cloudflare Turnstile 验证
+            if self.detect_turnstile_challenge():
+                logger.info("🛡️ 检测到 Cloudflare Turnstile 验证")
+                if self.handle_turnstile_challenge():
+                    logger.info("✅ Turnstile 验证处理成功")
+                else:
+                    logger.error("❌ Turnstile 验证处理失败")
+                    return False
 
             username = self.credentials['username']
             password = self.credentials['password']
@@ -233,7 +342,6 @@ class EnhancedSiteAutomator:
 
             if not all([username_field, password_field, login_button]):
                 logger.error("❌ 登录表单元素未找到")
-                # 尝试备用选择器
                 return self.alternative_login_method()
 
             # 模拟人类输入
@@ -242,14 +350,83 @@ class EnhancedSiteAutomator:
             self.human_like_input(password_field, password)
             time.sleep(random.uniform(1, 2))
 
+            # 再次检查是否有 Turnstile 验证（可能在输入后出现）
+            if self.detect_turnstile_challenge():
+                logger.info("🛡️ 输入后检测到 Turnstile 验证")
+                if self.handle_turnstile_challenge():
+                    logger.info("✅ 输入后 Turnstile 验证处理成功")
+
             login_button.click()
-            time.sleep(8)  # 增加登录等待时间
+            time.sleep(8)
 
             # 检查登录结果
             return self.check_login_status()
 
         except Exception as e:
             logger.error(f"登录流程异常: {str(e)}")
+            return False
+
+    def detect_turnstile_challenge(self):
+        """检测是否存在 Cloudflare Turnstile 验证"""
+        try:
+            # 检查是否存在 Turnstile 相关元素
+            turnstile_selectors = [
+                'iframe[src*="challenges.cloudflare.com"]',
+                'div[class*="turnstile"]',
+                'input[name="cf-turnstile-response"]',
+                '.cf-turnstile'
+            ]
+            
+            for selector in turnstile_selectors:
+                elements = self.page.eles(selector)
+                if elements:
+                    logger.info(f"✅ 检测到 Turnstile 元素: {selector}")
+                    return True
+            
+            # 检查页面内容中是否包含 Turnstile 相关文本
+            page_text = self.page.html.lower()
+            turnstile_keywords = ['cloudflare', 'turnstile', 'challenge', 'verifying']
+            if any(keyword in page_text for keyword in turnstile_keywords):
+                logger.info("✅ 检测到 Turnstile 相关关键词")
+                return True
+                
+            return False
+        except Exception as e:
+            logger.debug(f"检测 Turnstile 验证失败: {str(e)}")
+            return False
+
+    def handle_turnstile_challenge(self):
+        """处理 Cloudflare Turnstile 验证"""
+        try:
+            logger.info("🔄 开始处理 Turnstile 验证...")
+            
+            # 等待 Turnstile 加载完成
+            time.sleep(5)
+            
+            # 注入并执行 Turnstile 处理脚本
+            result = self.page.run_js(TURNSTILE_SCRIPT)
+            
+            if result and result.get('success'):
+                token = result.get('token')
+                logger.info(f"✅ 成功获取 Turnstile token: {token[:20]}...")
+                
+                # 保存 Turnstile token 到缓存
+                turnstile_data = {
+                    'token': token,
+                    'timestamp': datetime.now().isoformat(),
+                    'site': self.site_config['name']
+                }
+                CacheManager.save_turnstile_cache(turnstile_data, self.site_config['name'])
+                logger.info("💾 Turnstile token 已保存到缓存")
+                
+                return True
+            else:
+                error_msg = result.get('error', '未知错误') if result else '无结果'
+                logger.error(f"❌ 获取 Turnstile token 失败: {error_msg}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"❌ 处理 Turnstile 验证时发生异常: {str(e)}")
             return False
 
     def alternative_login_method(self):
@@ -500,7 +677,7 @@ class EnhancedSiteAutomator:
         # 首先检查当前是否仍然登录
         if not self.check_login_status():
             logger.warning("⚠️ 连接信息页面访问前需要重新登录")
-            if not self.enhanced_login_process():
+            if not self.enhanced_login_process_with_turnstile():
                 logger.error("❌ 重新登录失败，无法获取连接信息")
                 return
         
@@ -520,7 +697,7 @@ class EnhancedSiteAutomator:
             # 检查是否跳转到了登录页面或其他页面
             if 'login' in current_url or '登录' in page_title:
                 logger.warning("⚠️ 被重定向到登录页面，需要重新登录")
-                if not self.enhanced_login_process():
+                if not self.enhanced_login_process_with_turnstile():
                     logger.error("❌ 重新登录失败，无法获取连接信息")
                     return
                 
@@ -732,7 +909,7 @@ def main():
         level="INFO"
     )
 
-    logger.info("🚀 LinuxDo自动化脚本启动 - 连接信息修复版")
+    logger.info("🚀 LinuxDo自动化脚本启动 - Turnstile验证增强版")
     logger.info(f"🔧 平台: {PLATFORM_IDENTIFIER}")
     logger.info(f"🔧 User-Agent: {USER_AGENT}")
     logger.info(f"🔧 扩展状态: {'已启用' if EXTENSION_ENABLED else '未启用'}")
