@@ -72,7 +72,13 @@ jobs:
         echo "browser_state 文件:"
         ls -la browser_state_*.json 2>/dev/null || echo "未找到 browser_state 文件"
         echo ""
-
+    - name: Create turnstilePatch extension
+      run: |
+        echo "🔧 创建turnstilePatch扩展..."
+        python setup_directories.py
+        echo "📁 检查扩展目录:"
+        ls -la turnstilePatch/
+        
     - name: Run automation script
       env:
         LINUXDO_USERNAME: ${{ secrets.LINUXDO_USERNAME }}
