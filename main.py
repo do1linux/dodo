@@ -169,7 +169,7 @@ class EnhancedSiteAutomator:
             if self.enhanced_login_approach():
                 logger.success(f"✅ {self.site_config['name']} 登录成功")
                 self.perform_browsing_actions_improved()
-                self.get_connect_info_debug()
+                self.get_connect_info_fixed()
                 self.save_session_data()
                 return True
             else:
@@ -493,96 +493,103 @@ class EnhancedSiteAutomator:
         except:
             pass
 
-    def get_connect_info_debug(self):
-        """修复的连接信息获取 - 调试版本"""
-        logger.info("🔗 获取连接信息 - 调试模式")
-        new_page = self.page.new_tab()
+    def get_connect_info_fixed(self):
+        """修复的连接信息获取 - 确保登录状态"""
+        logger.info("🔗 获取连接信息 - 确保登录状态")
+        
+        # 首先检查当前是否仍然登录
+        if not self.check_login_status():
+            logger.warning("⚠️ 连接信息页面访问前需要重新登录")
+            if not self.enhanced_login_process():
+                logger.error("❌ 重新登录失败，无法获取连接信息")
+                return
+        
+        # 使用当前页面访问连接信息，而不是新开标签页
         try:
-            new_page.get(self.site_config['connect_url'])
-            time.sleep(10)  # 确保页面完全加载
+            logger.info(f"🔗 访问连接信息页面: {self.site_config['connect_url']}")
+            self.page.get(self.site_config['connect_url'])
+            time.sleep(8)  # 确保页面完全加载
+            
+            # 检查是否成功跳转到连接信息页面
+            current_url = self.page.url
+            page_title = self.page.title
+            
+            logger.info(f"🌐 当前URL: {current_url}")
+            logger.info(f"📄 页面标题: {page_title}")
+            
+            # 检查是否跳转到了登录页面或其他页面
+            if 'login' in current_url or '登录' in page_title:
+                logger.warning("⚠️ 被重定向到登录页面，需要重新登录")
+                if not self.enhanced_login_process():
+                    logger.error("❌ 重新登录失败，无法获取连接信息")
+                    return
+                
+                # 重新尝试访问连接信息页面
+                self.page.get(self.site_config['connect_url'])
+                time.sleep(8)
+                current_url = self.page.url
+                page_title = self.page.title
+                logger.info(f"🔄 重新访问后URL: {current_url}")
+                logger.info(f"🔄 重新访问后标题: {page_title}")
             
             # 保存页面HTML用于调试
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            html_path = f"connect_debug_{self.site_config['name']}_{timestamp}.html"
+            html_path = f"connect_fixed_{self.site_config['name']}_{timestamp}.html"
             with open(html_path, "w", encoding="utf-8") as f:
-                f.write(new_page.html)
-            logger.info(f"💾 已保存完整HTML: {html_path}")
+                f.write(self.page.html)
+            logger.info(f"💾 已保存HTML: {html_path}")
             
-            # 打印页面标题和关键信息
-            page_title = new_page.title
-            logger.info(f"📄 页面标题: {page_title}")
-            
-            # 检查页面内容 - 修复：使用run_js获取页面文本
+            # 检查页面内容
             try:
-                page_text = new_page.run_js("return document.body.innerText")
+                page_text = self.page.run_js("return document.body.innerText")
                 if "访问次数" in page_text or "浏览的话题" in page_text:
                     logger.info("✅ 页面包含连接信息关键词")
                 else:
                     logger.warning("❌ 页面不包含连接信息关键词")
+                    logger.info(f"📄 页面内容预览: {page_text[:500]}...")
             except Exception as e:
                 logger.warning(f"获取页面文本失败: {str(e)}")
             
-            # 查找所有表格
-            tables = new_page.eles("tag:table")
-            logger.info(f"📊 找到 {len(tables)} 个表格")
-            
-            for i, table in enumerate(tables):
-                logger.info(f"🔍 分析表格 {i+1}:")
-                
-                # 获取表格HTML结构
-                table_html = table.html
-                # 只打印前500个字符避免日志过长
-                logger.info(f"  表格HTML (前500字符): {table_html[:500]}...")
-                
-                # 尝试提取表格行
-                rows = table.eles("tag:tr")
-                logger.info(f"  表格包含 {len(rows)} 行")
-                
-                for j, row in enumerate(rows):
-                    cells = row.eles("tag:td")
-                    th_cells = row.eles("tag:th")
-                    
-                    if cells or th_cells:
-                        row_info = f"  第{j+1}行: "
-                        if th_cells:
-                            row_info += f"表头[{len(th_cells)}] "
-                        if cells:
-                            row_info += f"数据[{len(cells)}]"
-                        
-                        # 打印前几个单元格内容
-                        content_preview = []
-                        for cell in (th_cells + cells)[:3]:
-                            try:
-                                text = cell.text.strip()
-                                if text:
-                                    content_preview.append(text[:20])  # 只取前20个字符
-                            except:
-                                content_preview.append("无法获取文本")
-                        
-                        if content_preview:
-                            row_info += f" 内容: {', '.join(content_preview)}"
-                        
-                        logger.info(row_info)
-            
-            # 尝试使用简单方法提取数据
-            info = self.extract_connect_data_simple(new_page)
+            # 尝试多种方法提取连接信息
+            info = self.extract_connect_data_simple(self.page)
             if info:
                 self.display_connect_info(info, "简单提取")
                 return
             
-            # 尝试使用高级方法提取数据
-            info = self.extract_connect_data_advanced(new_page)
+            info = self.extract_connect_data_advanced(self.page)
             if info:
                 self.display_connect_info(info, "高级提取")
                 return
+            
+            # 如果当前页面不是连接信息页面，尝试直接导航
+            if 'connect' not in current_url.lower():
+                logger.info("🔄 当前页面不是连接信息页面，尝试直接导航")
+                # 尝试访问已知的连接信息URL模式
+                connect_urls = [
+                    self.site_config['connect_url'],
+                    f"{self.site_config['base_url']}/connect",
+                    f"{self.site_config['base_url']}/my/connect"
+                ]
                 
-            logger.error("💥 所有方法都无法提取连接信息")
+                for url in connect_urls:
+                    logger.info(f"🔗 尝试访问: {url}")
+                    self.page.get(url)
+                    time.sleep(5)
+                    
+                    # 检查是否成功
+                    current_url = self.page.url
+                    if 'connect' in current_url.lower():
+                        logger.info(f"✅ 成功访问连接信息页面: {current_url}")
+                        info = self.extract_connect_data_simple(self.page)
+                        if info:
+                            self.display_connect_info(info, "直接导航")
+                            return
+            
+            logger.error("💥 无法获取连接信息")
                 
         except Exception as e:
             logger.error(f"获取连接信息失败: {str(e)}")
             traceback.print_exc()
-        finally:
-            new_page.close()
 
     def extract_connect_data_simple(self, page):
         """简单提取连接数据"""
@@ -624,38 +631,40 @@ class EnhancedSiteAutomator:
             # 获取页面所有文本
             all_text = page.run_js("return document.body.innerText")
             
-            # 查找包含连接信息的部分
-            lines = all_text.split('\n')
+            # 查找包含连接信息的关键词
+            keywords = ['访问次数', '回复的话题', '浏览的话题', '已读帖子', '点赞', '获赞', '被举报', '被封禁']
+            found_keywords = [kw for kw in keywords if kw in all_text]
+            
+            if found_keywords:
+                logger.info(f"✅ 找到连接信息关键词: {found_keywords}")
+            else:
+                logger.warning("❌ 未找到连接信息关键词")
+                return []
+            
+            # 查找所有可能包含数据的元素
             info = []
+            all_elements = page.eles("tag:tr, tag:div, tag:li, tag:p")
             
-            # 查找包含关键信息的行
-            for i, line in enumerate(lines):
-                line = line.strip()
-                if not line:
-                    continue
-                    
-                # 检查是否包含连接信息的关键词
-                keywords = ['访问次数', '回复的话题', '浏览的话题', '已读帖子', '点赞', '获赞']
-                if any(keyword in line for keyword in keywords):
-                    # 尝试从上下文中提取信息
-                    context_lines = lines[max(0, i-2):min(len(lines), i+3)]
-                    logger.debug(f"找到关键词行: {line}")
-                    logger.debug(f"上下文: {context_lines}")
-            
-            # 另一种方法：查找所有可能的数据行
-            all_elements = page.eles("tag:tr, tag:div, tag:li")
             for elem in all_elements:
                 try:
                     text = elem.text.strip()
                     if any(keyword in text for keyword in keywords):
-                        # 尝试提取项目、当前值和要求
-                        parts = [part.strip() for part in text.split('\n') if part.strip()]
-                        if len(parts) >= 3:
-                            # 简单的启发式规则：第一个部分可能是项目名
-                            project = parts[0]
-                            # 尝试找到包含百分比或数字的部分
-                            current = next((p for p in parts if any(c in p for c in ['%', '/', '≥'])), '')
-                            requirement = next((p for p in parts if '要求' in p or '需要' in p), '')
+                        # 尝试提取结构化的数据
+                        lines = [line.strip() for line in text.split('\n') if line.strip()]
+                        
+                        if len(lines) >= 2:
+                            # 简单的启发式：第一行可能是项目名
+                            project = lines[0]
+                            
+                            # 在剩余行中查找当前值和要求
+                            current = ""
+                            requirement = ""
+                            
+                            for line in lines[1:]:
+                                if any(indicator in line for indicator in ['%', '/', '≥', '>', '<']):
+                                    current = line
+                                elif '要求' in line or '需要' in line or '至少' in line:
+                                    requirement = line
                             
                             if project and (current or requirement):
                                 info.append([project, current, requirement])
