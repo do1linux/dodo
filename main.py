@@ -289,42 +289,31 @@ class SiteAutomator:
             pass
 
     def print_connect_info(self):
-        """获取连接信息 - 使用已验证有效的方法"""
+        """打印连接信息"""
         logger.info("获取连接信息")
-        new_page = self.page.new_tab()
+        page = self.context.new_page()
         try:
-            new_page.get(self.site_config['connect_url'])
+            page.goto("https://connect.linux.do/")
             time.sleep(5)
 
-            # 使用简单有效的方法：直接查找表格行
-            rows = new_page.eles('table tr')
+            rows = page.query_selector_all("table tr")
             info = []
 
             for row in rows:
-                cells = row.eles('td')
+                cells = row.query_selector_all("td")
                 if len(cells) >= 3:
-                    project = cells[0].text.strip()
-                    current = cells[1].text.strip()
-                    requirement = cells[2].text.strip()
-                    
-                    # 确保不是空行
-                    if project and (current or requirement):
-                        info.append([project, current, requirement])
+                    project = cells[0].text_content().strip()
+                    current = cells[1].text_content().strip()
+                    requirement = cells[2].text_content().strip()
+                    info.append([project, current, requirement])
 
-            if info:
-                print("=" * 50)
-                print("📊 Connect 连接信息")
-                print("=" * 50)
-                print(tabulate(info, headers=["项目", "当前", "要求"], tablefmt="grid"))
-                print("=" * 50)
-                logger.success("✅ 连接信息获取成功")
-            else:
-                logger.warning("⚠️ 未找到连接信息")
+            print("--------------Connect Info-----------------")
+            print(tabulate(info, headers=["项目", "当前", "要求"], tablefmt="pretty"))
 
         except Exception as e:
             logger.error(f"获取连接信息失败: {str(e)}")
         finally:
-            new_page.close()
+            page.close()
 
     def save_session_data(self):
         try:
@@ -394,4 +383,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
