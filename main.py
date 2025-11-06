@@ -432,147 +432,147 @@ class SiteAutomator:
             logger.error(f"点赞失败: {str(e)}")
 
     def print_connect_info(self):
-    """获取连接信息 - 基于提供的HTML结构"""
-    try:
-        logger.info("获取连接信息")
-        
-        # 在新标签页打开连接信息
-        new_page = self.page.new_tab()
-        
-        new_page.get(self.site_config['connect_url'])
-        time.sleep(5)  # 增加等待时间确保页面加载
-        
-        # 根据提供的HTML结构，查找包含信任级别信息的div
-        # 查找包含 "roychuan - 信任级别" 文本的元素
-        trust_level_element = new_page.ele('xpath://*[contains(text(), "信任级别")]')
-        
-        if trust_level_element:
-            logger.info("✅ 找到信任级别信息")
+        """获取连接信息 - 基于提供的HTML结构"""
+        try:
+            logger.info("获取连接信息")
             
-            # 获取父级div容器
-            parent_div = trust_level_element.parent()
+            # 在新标签页打开连接信息
+            new_page = self.page.new_tab()
             
-            # 在父级div中查找表格
-            table = parent_div.ele('tag:table')
+            new_page.get(self.site_config['connect_url'])
+            time.sleep(5)  # 增加等待时间确保页面加载
             
-            if table:
-                # 获取所有行
-                rows = table.eles('tag:tr')
-                info = []
-                
-                for row in rows:
-                    # 获取所有单元格（包括th和td）
-                    cells = row.eles('tag:td, tag:th')
-                    
-                    if len(cells) >= 3:
-                        # 提取项目、当前状态和要求
-                        project = cells[0].text.strip()
-                        current = cells[1].text.strip()
-                        requirement = cells[2].text.strip()
-                        
-                        # 跳过表头行（如果第一列是"项目"）
-                        if project == "项目" and current == "当前" and requirement == "要求":
-                            continue
-                            
-                        # 确保不是空行
-                        if project and (current or requirement):
-                            info.append([project, current, requirement])
-                
-                if info:
-                    print("=" * 50)
-                    print("📊 Connect 连接信息")
-                    print("=" * 50)
-                    print(tabulate(info, headers=["项目", "当前状态", "要求"], tablefmt="grid"))
-                    print("=" * 50)
-                    
-                    # 统计达标情况
-                    passed_count = 0
-                    total_count = len(info)
-                    
-                    for item in info:
-                        project, current, requirement = item
-                        # 检查是否达标（绿色显示的项目）
-                        if "text-green-500" in str(cells[1].html) or "✅" in current:
-                            passed_count += 1
-                    
-                    logger.success(f"✅ 连接信息获取成功 - 达标项目: {passed_count}/{total_count}")
-                else:
-                    logger.warning("⚠️ 表格中没有找到有效数据")
-            else:
-                logger.warning("⚠️ 在信任级别区域未找到表格")
-                
-                # 备用方案：尝试直接查找所有包含统计信息的元素
-                logger.info("🔄 尝试备用方案查找统计信息")
-                
-                # 查找所有包含统计数据的段落或div
-                stats_elements = parent_div.eles('tag:p, tag:div')
-                backup_info = []
-                
-                for element in stats_elements:
-                    text = element.text.strip()
-                    if text and ("访问次数" in text or "回复的话题" in text or "浏览的话题" in text or 
-                               "已读帖子" in text or "被举报的帖子" in text or "点赞" in text or 
-                               "获赞" in text or "被禁言" in text or "被封禁" in text):
-                        backup_info.append(text)
-                
-                if backup_info:
-                    print("=" * 50)
-                    print("📊 Connect 连接信息（备用数据）")
-                    print("=" * 50)
-                    for item in backup_info:
-                        print(f"• {item}")
-                    print("=" * 50)
-                    logger.success("✅ 通过备用方案获取连接信息成功")
-        else:
-            logger.warning("⚠️ 未找到信任级别信息")
+            # 根据提供的HTML结构，查找包含信任级别信息的div
+            # 查找包含 "roychuan - 信任级别" 文本的元素
+            trust_level_element = new_page.ele('xpath://*[contains(text(), "信任级别")]')
             
-            # 如果找不到信任级别信息，尝试其他可能的位置
-            logger.info("🔄 尝试在其他位置查找连接信息")
-            
-            # 查找所有表格
-            all_tables = new_page.eles('tag:table')
-            found_table = False
-            
-            for table in all_tables:
-                # 检查表格是否包含信任级别相关的关键词
-                table_text = table.text
-                if any(keyword in table_text for keyword in ["访问次数", "回复的话题", "浏览的话题", "已读帖子"]):
+            if trust_level_element:
+                logger.info("✅ 找到信任级别信息")
+                
+                # 获取父级div容器
+                parent_div = trust_level_element.parent()
+                
+                # 在父级div中查找表格
+                table = parent_div.ele('tag:table')
+                
+                if table:
+                    # 获取所有行
                     rows = table.eles('tag:tr')
                     info = []
                     
                     for row in rows:
+                        # 获取所有单元格（包括th和td）
                         cells = row.eles('tag:td, tag:th')
+                        
                         if len(cells) >= 3:
+                            # 提取项目、当前状态和要求
                             project = cells[0].text.strip()
                             current = cells[1].text.strip()
                             requirement = cells[2].text.strip()
                             
-                            if project and project != "项目" and (current or requirement):
+                            # 跳过表头行（如果第一列是"项目"）
+                            if project == "项目" and current == "当前" and requirement == "要求":
+                                continue
+                                
+                            # 确保不是空行
+                            if project and (current or requirement):
                                 info.append([project, current, requirement])
                     
                     if info:
                         print("=" * 50)
-                        print("📊 Connect 连接信息（通过关键词查找）")
+                        print("📊 Connect 连接信息")
                         print("=" * 50)
                         print(tabulate(info, headers=["项目", "当前状态", "要求"], tablefmt="grid"))
                         print("=" * 50)
-                        logger.success("✅ 通过关键词查找获取连接信息成功")
-                        found_table = True
-                        break
-            
-            if not found_table:
-                logger.error("❌ 无法在任何位置找到连接信息")
+                        
+                        # 统计达标情况
+                        passed_count = 0
+                        total_count = len(info)
+                        
+                        for item in info:
+                            project, current, requirement = item
+                            # 检查是否达标（绿色显示的项目）
+                            if "text-green-500" in str(cells[1].html) or "✅" in current:
+                                passed_count += 1
+                        
+                        logger.success(f"✅ 连接信息获取成功 - 达标项目: {passed_count}/{total_count}")
+                    else:
+                        logger.warning("⚠️ 表格中没有找到有效数据")
+                else:
+                    logger.warning("⚠️ 在信任级别区域未找到表格")
+                    
+                    # 备用方案：尝试直接查找所有包含统计信息的元素
+                    logger.info("🔄 尝试备用方案查找统计信息")
+                    
+                    # 查找所有包含统计数据的段落或div
+                    stats_elements = parent_div.eles('tag:p, tag:div')
+                    backup_info = []
+                    
+                    for element in stats_elements:
+                        text = element.text.strip()
+                        if text and ("访问次数" in text or "回复的话题" in text or "浏览的话题" in text or 
+                                   "已读帖子" in text or "被举报的帖子" in text or "点赞" in text or 
+                                   "获赞" in text or "被禁言" in text or "被封禁" in text):
+                            backup_info.append(text)
+                    
+                    if backup_info:
+                        print("=" * 50)
+                        print("📊 Connect 连接信息（备用数据）")
+                        print("=" * 50)
+                        for item in backup_info:
+                            print(f"• {item}")
+                        print("=" * 50)
+                        logger.success("✅ 通过备用方案获取连接信息成功")
+            else:
+                logger.warning("⚠️ 未找到信任级别信息")
                 
-        # 关闭新标签页
-        new_page.close()
-            
-    except Exception as e:
-        logger.error(f"获取连接信息失败: {str(e)}")
-        logger.debug(f"详细错误信息: {traceback.format_exc()}")
-        try:
+                # 如果找不到信任级别信息，尝试其他可能的位置
+                logger.info("🔄 尝试在其他位置查找连接信息")
+                
+                # 查找所有表格
+                all_tables = new_page.eles('tag:table')
+                found_table = False
+                
+                for table in all_tables:
+                    # 检查表格是否包含信任级别相关的关键词
+                    table_text = table.text
+                    if any(keyword in table_text for keyword in ["访问次数", "回复的话题", "浏览的话题", "已读帖子"]):
+                        rows = table.eles('tag:tr')
+                        info = []
+                        
+                        for row in rows:
+                            cells = row.eles('tag:td, tag:th')
+                            if len(cells) >= 3:
+                                project = cells[0].text.strip()
+                                current = cells[1].text.strip()
+                                requirement = cells[2].text.strip()
+                                
+                                if project and project != "项目" and (current or requirement):
+                                    info.append([project, current, requirement])
+                        
+                        if info:
+                            print("=" * 50)
+                            print("📊 Connect 连接信息（通过关键词查找）")
+                            print("=" * 50)
+                            print(tabulate(info, headers=["项目", "当前状态", "要求"], tablefmt="grid"))
+                            print("=" * 50)
+                            logger.success("✅ 通过关键词查找获取连接信息成功")
+                            found_table = True
+                            break
+                
+                if not found_table:
+                    logger.error("❌ 无法在任何位置找到连接信息")
+                    
+            # 关闭新标签页
             new_page.close()
-        except:
-            pass
+                
+        except Exception as e:
+            logger.error(f"获取连接信息失败: {str(e)}")
+            logger.debug(f"详细错误信息: {traceback.format_exc()}")
+            try:
+                new_page.close()
+            except:
+                pass
 
     def save_session_data(self):
         """保存会话数据"""
@@ -652,4 +652,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
