@@ -44,16 +44,14 @@ PAGE_TIMEOUT = 120
 RETRY_TIMES = 3
 MAX_TOPICS_TO_BROWSE = 10
 
-# 平台检测
-import sys
-if sys.platform == "win32":
-    PLATFORM_IDENTIFIER = "Windows NT 10.0; Win64; x64"
-elif sys.platform == "darwin":
-    PLATFORM_IDENTIFIER = "Macintosh; Intel Mac OS X 10_15_7"
-else:
-    PLATFORM_IDENTIFIER = "X11; Linux x86_64"
-
+# 平台检测 - 固定为Windows
+PLATFORM_IDENTIFIER = "Windows NT 10.0; Win64; x64"
 USER_AGENT = f'Mozilla/5.0 ({PLATFORM_IDENTIFIER}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
+
+# 扩展路径
+EXTENSION_PATH = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "turnstilePatch")
+)
 
 # 重试装饰器
 def retry_decorator(max_retries=3, delay=2):
@@ -100,6 +98,9 @@ class EnhancedBrowserManager:
         try:
             co = ChromiumOptions()
             
+            # 设置扩展路径
+            logger.info(f"🔧 加载扩展: {EXTENSION_PATH}")
+            
             # 优化的浏览器参数
             browser_args = [
                 '--no-sandbox', 
@@ -114,7 +115,10 @@ class EnhancedBrowserManager:
             for arg in browser_args:
                 co.set_argument(arg)
             
+            # 添加扩展
+            co.add_extension(EXTENSION_PATH)
             co.set_user_agent(USER_AGENT)
+            
             page = ChromiumPage(addr_or_opts=co)
             page.set.timeouts(base=PAGE_TIMEOUT)
             
@@ -143,6 +147,7 @@ class EnhancedSiteAutomator:
         self.page = None
         self.credentials = SITE_CREDENTIALS.get(site_config['name'], {})
         self.topic_count = 0
+        self.successful_browsed = 0
 
     def run_for_site(self):
         if not self.credentials.get('username'):
@@ -155,7 +160,7 @@ class EnhancedSiteAutomator:
             if self.enhanced_login_approach():
                 logger.success(f"✅ {self.site_config['name']} 登录成功")
                 self.perform_browsing_actions_improved()
-                self.get_connect_info_simple()
+                self.get_connect_info_enhanced()
                 self.save_session_data()
                 return True
             else:
@@ -296,7 +301,8 @@ class EnhancedSiteAutomator:
             
             for i, topic in enumerate(selected_topics, 1):
                 logger.info(f"📖 浏览进度: {i}/{browse_count}")
-                self.browse_topic_improved(topic)
+                if self.browse_topic_safe(topic):
+                    self.successful_browsed += 1
                 
                 # 主题间随机延迟
                 if i < browse_count:
@@ -304,7 +310,7 @@ class EnhancedSiteAutomator:
                     logger.info(f"⏳ 等待 {delay:.1f} 秒后浏览下一个主题...")
                     time.sleep(delay)
             
-            logger.success(f"✅ 完成浏览 {browse_count} 个主题")
+            logger.success(f"✅ 完成浏览 {self.successful_browsed}/{browse_count} 个主题")
             
         except Exception as e:
             logger.error(f"浏览操作失败: {str(e)}")
@@ -312,6 +318,10 @@ class EnhancedSiteAutomator:
     def get_topic_list_improved(self):
         """改进的主题列表获取"""
         try:
+            # 确保在最新主题页面
+            self.page.get(self.site_config['latest_topics_url'])
+            time.sleep(3)
+            
             # 方法1: 使用已验证的选择器
             list_area = self.page.ele("@id=list-area", timeout=10)
             if list_area:
@@ -339,12 +349,12 @@ class EnhancedSiteAutomator:
             logger.error(f"获取主题列表失败: {str(e)}")
             return []
 
-    def browse_topic_improved(self, topic):
-        """确保被记录的主题浏览"""
+    def browse_topic_safe(self, topic):
+        """安全浏览主题，避免元素失效问题"""
         try:
             topic_href = topic.attr("href")
             if not topic_href:
-                return
+                return False
                 
             # 构建完整URL
             if topic_href.startswith('/'):
@@ -354,35 +364,41 @@ class EnhancedSiteAutomator:
                 
             logger.info(f"🔗 访问: {full_url}")
             
-            # 保存当前URL以便返回
-            current_url = self.page.url
-            
-            # 访问主题页面
-            self.page.get(full_url)
+            # 使用新标签页浏览，避免页面刷新导致的元素失效
+            new_tab = self.page.new_tab()
+            new_tab.get(full_url)
             time.sleep(3)  # 确保页面加载完成
             
             # 执行深度浏览
-            self.deep_simulate_reading()
+            self.deep_simulate_reading(new_tab)
             
             # 随机点赞（极低概率，避免滥用）
             if random.random() < 0.002:  # 0.2%概率
-                self.safe_like_action()
+                self.safe_like_action(new_tab)
             
-            # 返回原页面
-            self.page.get(current_url)
-            time.sleep(2)
+            # 关闭标签页
+            new_tab.close()
+            logger.info(f"✅ 成功浏览主题")
+            return True
             
         except Exception as e:
             logger.error(f"浏览主题失败: {str(e)}")
+            # 如果新标签页出现问题，尝试关闭它
+            try:
+                if 'new_tab' in locals():
+                    new_tab.close()
+            except:
+                pass
+            return False
 
-    def deep_simulate_reading(self):
+    def deep_simulate_reading(self, page):
         """深度模拟阅读行为"""
-        scroll_actions = random.randint(6, 12)
+        scroll_actions = random.randint(8, 15)
         
         for i in range(scroll_actions):
             # 随机滚动
             scroll_pixels = random.randint(400, 700)
-            self.page.scroll.down(scroll_pixels)
+            page.scroll.down(scroll_pixels)
             
             # 随机阅读时间
             read_time = random.uniform(2, 4)
@@ -390,10 +406,10 @@ class EnhancedSiteAutomator:
             
             # 随机互动
             if random.random() < 0.15:
-                self.random_interaction()
+                self.random_interaction(page)
             
             # 检查是否到达底部
-            at_bottom = self.page.run_js(
+            at_bottom = page.run_js(
                 "return window.innerHeight + window.scrollY >= document.body.scrollHeight - 100"
             )
             
@@ -406,13 +422,13 @@ class EnhancedSiteAutomator:
                 logger.info("🎲 随机提前退出浏览")
                 break
 
-    def random_interaction(self):
+    def random_interaction(self, page):
         """随机互动增加真实性"""
         try:
             # 随机鼠标移动
             x = random.randint(50, 800)
             y = random.randint(50, 600)
-            self.page.run_js(f"""
+            page.run_js(f"""
             var elem = document.elementFromPoint({x}, {y});
             if (elem) {{
                 var event = new MouseEvent('mousemove', {{
@@ -426,12 +442,13 @@ class EnhancedSiteAutomator:
         except:
             pass
 
-    def safe_like_action(self):
+    def safe_like_action(self, page):
         """安全的点赞动作"""
         try:
-            like_buttons = self.page.eles('.like-button, .discourse-reactions-reaction-button')
+            like_buttons = page.eles('.like-button, .discourse-reactions-reaction-button')
             for button in like_buttons:
-                if 'has-like' not in button.attr('class', ''):
+                class_attr = button.attr('class', '')
+                if class_attr and 'has-like' not in class_attr:
                     button.click()
                     logger.info("👍 执行点赞")
                     time.sleep(1)
@@ -439,24 +456,59 @@ class EnhancedSiteAutomator:
         except:
             pass
 
-    def get_connect_info_simple(self):
-        """简化的连接信息获取，借鉴第二个脚本的方法"""
+    def get_connect_info_enhanced(self):
+        """增强的连接信息获取"""
         logger.info("🔗 获取连接信息")
         new_page = self.page.new_tab()
         try:
             new_page.get(self.site_config['connect_url'])
-            time.sleep(5)
+            time.sleep(8)  # 增加等待时间
             
-            # 直接使用已验证的方法
+            # 方法1: 直接查找表格
             table = new_page.ele("tag:table", timeout=10)
-            if not table:
-                logger.warning("❌ 未找到表格")
+            if table:
+                rows = table.eles("tag:tr")
+                info = self.extract_table_data(rows)
+                if info:
+                    self.display_connect_info(info, "主要方法")
+                    return
+            
+            # 方法2: 查找包含连接信息的任何表格
+            all_tables = new_page.eles("tag:table")
+            for table in all_tables:
+                rows = table.eles("tag:tr")
+                info = self.extract_table_data(rows)
+                if info:
+                    self.display_connect_info(info, "备用方法")
+                    return
+            
+            # 方法3: 查找任何包含数据的行
+            all_rows = new_page.eles("tag:tr")
+            info = self.extract_table_data(all_rows)
+            if info:
+                self.display_connect_info(info, "行扫描方法")
                 return
                 
-            rows = table.eles("tag:tr")
-            info = []
-            
-            for row in rows:
+            logger.warning("⚠️ 未找到连接信息表格")
+            # 保存截图用于调试
+            try:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                screenshot_path = f"connect_debug_{self.site_config['name']}_{timestamp}.png"
+                new_page.get_screenshot(screenshot_path)
+                logger.info(f"📸 已保存截图: {screenshot_path}")
+            except Exception as e:
+                logger.debug(f"截图保存失败: {str(e)}")
+                
+        except Exception as e:
+            logger.error(f"获取连接信息失败: {str(e)}")
+        finally:
+            new_page.close()
+
+    def extract_table_data(self, rows):
+        """从表格行中提取数据"""
+        info = []
+        for row in rows:
+            try:
                 cells = row.eles("tag:td")
                 if len(cells) >= 3:
                     project = cells[0].text.strip()
@@ -466,21 +518,28 @@ class EnhancedSiteAutomator:
                     # 只添加有意义的行
                     if project and (current or requirement):
                         info.append([project, current, requirement])
-            
-            if info:
-                print("=" * 50)
-                print("📊 Connect 连接信息")
-                print("=" * 50)
-                print(tabulate(info, headers=["项目", "当前", "要求"], tablefmt="grid"))
-                print("=" * 50)
-                logger.success(f"✅ 找到 {len(info)} 个连接项目")
-            else:
-                logger.warning("⚠️ 表格中没有有效数据")
-                
-        except Exception as e:
-            logger.error(f"获取连接信息失败: {str(e)}")
-        finally:
-            new_page.close()
+            except:
+                continue
+        
+        # 去重
+        unique_info = []
+        seen = set()
+        for item in info:
+            key = tuple(item)
+            if key not in seen:
+                seen.add(key)
+                unique_info.append(item)
+        
+        return unique_info
+
+    def display_connect_info(self, info, method):
+        """显示连接信息"""
+        print("=" * 60)
+        print(f"📊 {self.site_config['name']} Connect 连接信息 ({method})")
+        print("=" * 60)
+        print(tabulate(info, headers=["项目", "当前", "要求"], tablefmt="grid"))
+        print("=" * 60)
+        logger.success(f"✅ 连接信息获取成功 ({method})")
 
     def save_session_data(self):
         try:
@@ -493,12 +552,13 @@ class EnhancedSiteAutomator:
             # 保存会话数据
             session_data = {
                 'topic_count': self.topic_count,
+                'successful_browsed': self.successful_browsed,
                 'last_updated': datetime.now().isoformat(),
                 'user_agent': USER_AGENT
             }
             CacheManager.save_site_cache(session_data, self.site_config['name'], 'browser_state')
             
-            logger.success(f"✅ 会话数据已保存 (主题数量: {self.topic_count})")
+            logger.success(f"✅ 会话数据已保存 (发现主题: {self.topic_count}, 成功浏览: {self.successful_browsed})")
 
         except Exception as e:
             logger.error(f"保存会话数据失败: {str(e)}")
@@ -518,7 +578,9 @@ def main():
         level="INFO"
     )
 
-    logger.info("🚀 LinuxDo自动化脚本启动 - 优化版")
+    logger.info("🚀 LinuxDo自动化脚本启动 - 最终优化版")
+    logger.info(f"🔧 平台: {PLATFORM_IDENTIFIER}")
+    logger.info(f"🔧 User-Agent: {USER_AGENT}")
 
     target_sites = SITES
     results = []
