@@ -432,65 +432,65 @@ class SiteAutomator:
             logger.error(f"点赞失败: {str(e)}")
 
     def print_connect_info(self):
-    """获取连接信息 - 直接基于提供的HTML结构"""
-    try:
-        logger.info("获取连接信息")
-        
-        # 在新标签页打开连接信息
-        new_page = self.page.new_tab()
-        
-        new_page.get(self.site_config['connect_url'])
-        time.sleep(5)  # 增加等待时间确保页面加载
-        
-        # 直接查找包含"信任级别"的h2，然后在其父div中找table
-        trust_level_h2 = new_page.ele('xpath://h2[contains(text(), "信任级别")]')
-        if trust_level_h2:
-            # 找到h2的父div
-            parent_div = trust_level_h2.parent()
-            if parent_div:
-                # 在父div中查找table
-                table = parent_div.ele('tag:table')
-                if table:
-                    rows = table.eles('tag:tr')
-                    info = []
-                    
-                    for row in rows:
-                        cells = row.eles('tag:td, tag:th')
-                        if len(cells) >= 3:
-                            # 跳过表头行
-                            if cells[0].tag == 'th' and '项目' in cells[0].text:
-                                continue
-                            
-                            project = cells[0].text.strip()
-                            current = cells[1].text.strip()
-                            requirement = cells[2].text.strip()
-                            
-                            # 确保不是空行
-                            if project and (current or requirement):
-                                info.append([project, current, requirement])
-                    
-                    if info:
-                        print("--------------Connect Info-----------------")
-                        print(tabulate(info, headers=["项目", "当前", "要求"], tablefmt="pretty"))
-                        logger.success("✅ 连接信息获取成功")
-                    else:
-                        logger.warning("⚠️ 表格中没有有效数据")
-                else:
-                    logger.warning("⚠️ 在信任级别div中未找到表格")
-            else:
-                logger.warning("⚠️ 未找到信任级别div的父元素")
-        else:
-            logger.warning("⚠️ 未找到信任级别标题")
-            
-        # 关闭新标签页
-        new_page.close()
-            
-    except Exception as e:
-        logger.error(f"获取连接信息失败: {str(e)}")
+        """获取连接信息 - 直接基于提供的HTML结构"""
         try:
+            logger.info("获取连接信息")
+            
+            # 在新标签页打开连接信息
+            new_page = self.page.new_tab()
+            
+            new_page.get(self.site_config['connect_url'])
+            time.sleep(5)  # 增加等待时间确保页面加载
+            
+            # 直接查找包含"信任级别"的h2，然后在其父div中找table
+            trust_level_h2 = new_page.ele('xpath://h2[contains(text(), "信任级别")]')
+            if trust_level_h2:
+                # 找到h2的父div
+                parent_div = trust_level_h2.parent()
+                if parent_div:
+                    # 在父div中查找table
+                    table = parent_div.ele('tag:table')
+                    if table:
+                        rows = table.eles('tag:tr')
+                        info = []
+                        
+                        for row in rows:
+                            cells = row.eles('tag:td, tag:th')
+                            if len(cells) >= 3:
+                                # 跳过表头行
+                                if cells[0].tag == 'th' and '项目' in cells[0].text:
+                                    continue
+                                
+                                project = cells[0].text.strip()
+                                current = cells[1].text.strip()
+                                requirement = cells[2].text.strip()
+                                
+                                # 确保不是空行
+                                if project and (current or requirement):
+                                    info.append([project, current, requirement])
+                        
+                        if info:
+                            print("--------------Connect Info-----------------")
+                            print(tabulate(info, headers=["项目", "当前", "要求"], tablefmt="pretty"))
+                            logger.success("✅ 连接信息获取成功")
+                        else:
+                            logger.warning("⚠️ 表格中没有有效数据")
+                    else:
+                        logger.warning("⚠️ 在信任级别div中未找到表格")
+                else:
+                    logger.warning("⚠️ 未找到信任级别div的父元素")
+            else:
+                logger.warning("⚠️ 未找到信任级别标题")
+                
+            # 关闭新标签页
             new_page.close()
-        except:
-            pass
+                
+        except Exception as e:
+            logger.error(f"获取连接信息失败: {str(e)}")
+            try:
+                new_page.close()
+            except:
+                pass
 
     def save_session_data(self):
         """保存会话数据"""
@@ -570,4 +570,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
