@@ -1,18 +1,14 @@
 {
-    "manifest_version": 3,
-    "name": "Turnstile Patcher",
-    "version": "2.1",
-    "content_scripts": [
-        {
-            "js": [
-                "./script.js"
-            ],
-            "matches": [
-                "<all_urls>"
-            ],
-            "run_at": "document_start",
-            "all_frames": true,
-            "world": "MAIN"
-        }
-    ]
+  "manifest_version": 3,
+  "name": "Turnstile Patch",
+  "version": "1.0",
+  "description": "Patch for Cloudflare Turnstile challenges",
+  "permissions": [],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["script.js"],
+      "run_at": "document_start"
+    }
+  ]
 }
