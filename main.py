@@ -48,10 +48,13 @@ MAX_TOPICS_TO_BROWSE = 10
 PLATFORM_IDENTIFIER = "Windows NT 10.0; Win64; x64"
 USER_AGENT = f'Mozilla/5.0 ({PLATFORM_IDENTIFIER}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
 
-# 扩展路径
+# 扩展路径 - 检查是否存在，如果不存在则跳过
 EXTENSION_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "turnstilePatch")
 )
+
+# 检查扩展目录是否存在
+EXTENSION_ENABLED = os.path.exists(EXTENSION_PATH)
 
 # 重试装饰器
 def retry_decorator(max_retries=3, delay=2):
@@ -98,9 +101,6 @@ class EnhancedBrowserManager:
         try:
             co = ChromiumOptions()
             
-            # 设置扩展路径
-            logger.info(f"🔧 加载扩展: {EXTENSION_PATH}")
-            
             # 优化的浏览器参数
             browser_args = [
                 '--no-sandbox', 
@@ -109,16 +109,25 @@ class EnhancedBrowserManager:
                 '--headless=new', 
                 '--disable-gpu',
                 '--disable-extensions',
-                '--disable-plugins'
+                '--disable-plugins',
+                '--disable-web-security',
+                '--allow-running-insecure-content'
             ]
             
             for arg in browser_args:
                 co.set_argument(arg)
             
-            # 添加扩展
-            co.add_extension(EXTENSION_PATH)
-            co.set_user_agent(USER_AGENT)
+            # 只有在扩展存在时才加载
+            if EXTENSION_ENABLED:
+                logger.info(f"🔧 加载扩展: {EXTENSION_PATH}")
+                try:
+                    co.add_extension(EXTENSION_PATH)
+                except Exception as e:
+                    logger.warning(f"⚠️ 扩展加载失败，继续无扩展运行: {str(e)}")
+            else:
+                logger.warning("⚠️ 扩展目录不存在，跳过扩展加载")
             
+            co.set_user_agent(USER_AGENT)
             page = ChromiumPage(addr_or_opts=co)
             page.set.timeouts(base=PAGE_TIMEOUT)
             
@@ -212,28 +221,29 @@ class EnhancedSiteAutomator:
         try:
             logger.info("🔐 开始完整登录流程")
             self.page.get(self.site_config['login_url'])
-            time.sleep(3)
+            time.sleep(5)  # 增加等待时间
 
             username = self.credentials['username']
             password = self.credentials['password']
 
             # 使用更健壮的元素定位
-            username_field = self.page.ele("@id=login-account-name", timeout=10)
-            password_field = self.page.ele("@id=login-account-password", timeout=10)
-            login_button = self.page.ele("@id=login-button", timeout=10)
+            username_field = self.page.ele("@id=login-account-name", timeout=15)
+            password_field = self.page.ele("@id=login-account-password", timeout=15)
+            login_button = self.page.ele("@id=login-button", timeout=15)
 
             if not all([username_field, password_field, login_button]):
                 logger.error("❌ 登录表单元素未找到")
-                return False
+                # 尝试备用选择器
+                return self.alternative_login_method()
 
             # 模拟人类输入
             self.human_like_input(username_field, username)
-            time.sleep(random.uniform(0.5, 1.5))
+            time.sleep(random.uniform(1, 2))
             self.human_like_input(password_field, password)
-            time.sleep(random.uniform(0.5, 1.5))
+            time.sleep(random.uniform(1, 2))
 
             login_button.click()
-            time.sleep(5)
+            time.sleep(8)  # 增加登录等待时间
 
             # 检查登录结果
             return self.check_login_status()
@@ -242,11 +252,37 @@ class EnhancedSiteAutomator:
             logger.error(f"登录流程异常: {str(e)}")
             return False
 
+    def alternative_login_method(self):
+        """备用登录方法"""
+        try:
+            logger.info("🔄 尝试备用登录方法")
+            username = self.credentials['username']
+            password = self.credentials['password']
+            
+            # 尝试通过name属性查找
+            username_field = self.page.ele('@name=username', timeout=10)
+            password_field = self.page.ele('@name=password', timeout=10)
+            login_button = self.page.ele('@type=submit', timeout=10)
+            
+            if all([username_field, password_field, login_button]):
+                self.human_like_input(username_field, username)
+                time.sleep(1)
+                self.human_like_input(password_field, password)
+                time.sleep(1)
+                login_button.click()
+                time.sleep(8)
+                return self.check_login_status()
+                
+            return False
+        except Exception as e:
+            logger.debug(f"备用登录方法失败: {str(e)}")
+            return False
+
     def human_like_input(self, element, text):
         """模拟人类输入"""
         for char in text:
             element.input(char)
-            time.sleep(random.uniform(0.05, 0.2))
+            time.sleep(random.uniform(0.05, 0.15))
 
     def check_login_status(self):
         username = self.credentials['username']
@@ -254,7 +290,7 @@ class EnhancedSiteAutomator:
 
         # 方法1: 检查用户菜单
         try:
-            user_menu = self.page.ele("@id=current-user", timeout=5)
+            user_menu = self.page.ele("@id=current-user", timeout=8)
             if user_menu:
                 logger.info("✅ 通过用户菜单验证登录成功")
                 return True
@@ -265,13 +301,14 @@ class EnhancedSiteAutomator:
         try:
             profile_url = f"{self.site_config['base_url']}/u/{username}"
             self.page.get(profile_url)
-            time.sleep(2)
+            time.sleep(3)
             
             # 检查页面内容
             profile_content = self.page.html.lower()
             if username.lower() in profile_content:
                 logger.info("✅ 通过个人资料页面验证登录成功")
-                self.page.back()
+                # 返回最新主题页面
+                self.page.get(self.site_config['latest_topics_url'])
                 return True
         except Exception as e:
             logger.debug(f"个人资料页面验证失败: {str(e)}")
@@ -283,6 +320,10 @@ class EnhancedSiteAutomator:
         """改进的浏览操作，确保被网站记录"""
         try:
             logger.info("🌐 开始浏览操作...")
+            
+            # 确保在最新主题页面
+            self.page.get(self.site_config['latest_topics_url'])
+            time.sleep(3)
             
             # 获取主题列表
             topic_list = self.get_topic_list_improved()
@@ -318,10 +359,6 @@ class EnhancedSiteAutomator:
     def get_topic_list_improved(self):
         """改进的主题列表获取"""
         try:
-            # 确保在最新主题页面
-            self.page.get(self.site_config['latest_topics_url'])
-            time.sleep(3)
-            
             # 方法1: 使用已验证的选择器
             list_area = self.page.ele("@id=list-area", timeout=10)
             if list_area:
@@ -581,6 +618,7 @@ def main():
     logger.info("🚀 LinuxDo自动化脚本启动 - 最终优化版")
     logger.info(f"🔧 平台: {PLATFORM_IDENTIFIER}")
     logger.info(f"🔧 User-Agent: {USER_AGENT}")
+    logger.info(f"🔧 扩展状态: {'已启用' if EXTENSION_ENABLED else '未启用'}")
 
     target_sites = SITES
     results = []
