@@ -187,6 +187,16 @@ class CacheManager:
     def save_turnstile_cache(data, site_name):
         """保存 Turnstile 验证缓存"""
         return CacheManager.save_site_cache(data, site_name, 'turnstile')
+    
+    @staticmethod
+    def load_cf_cookies(site_name):
+        """加载 Cloudflare cookies 缓存"""
+        return CacheManager.load_site_cache(site_name, 'cf_cookies')
+
+    @staticmethod
+    def save_cf_cookies(data, site_name):
+        """保存 Cloudflare cookies 缓存"""
+        return CacheManager.save_site_cache(data, site_name, 'cf_cookies')
 
 class EnhancedBrowserManager:
     @staticmethod
@@ -224,11 +234,11 @@ class EnhancedBrowserManager:
             page = ChromiumPage(addr_or_opts=co)
             page.set.timeouts(base=PAGE_TIMEOUT)
             
-            # 加载缓存cookies和Turnstile缓存
-            cf_cookies = CacheManager.load_site_cache(site_name, 'cf_cookies')
+            # 只加载 Cloudflare cookies 缓存，不加载登录状态缓存
+            cf_cookies = CacheManager.load_cf_cookies(site_name)
             if cf_cookies:
                 page.set.cookies(cf_cookies)
-                logger.info(f"✅ 已加载 {len(cf_cookies)} 个缓存cookies")
+                logger.info(f"✅ 已加载 {len(cf_cookies)} 个 Cloudflare 缓存cookies")
             
             # 增强的反自动化检测
             page.run_js("""
@@ -265,11 +275,12 @@ class EnhancedSiteAutomator:
             if self.turnstile_cache:
                 logger.info(f"✅ 已加载 Turnstile 缓存")
             
-            if self.enhanced_login_approach():
+            # 强制每次都必须登录
+            if self.force_login_required():
                 logger.success(f"✅ {self.site_config['name']} 登录成功")
                 self.perform_browsing_actions_improved()
                 self.get_connect_info_fixed()
-                self.save_session_data()
+                self.save_verification_data_only()  # 只保存验证数据，不保存登录状态
                 return True
             else:
                 logger.error(f"❌ {self.site_config['name']} 登录失败")
@@ -281,15 +292,14 @@ class EnhancedSiteAutomator:
         finally:
             self.cleanup()
 
-    def enhanced_login_approach(self):
+    def force_login_required(self):
+        """强制要求每次都必须登录，不使用任何登录状态缓存"""
+        logger.info("🔐 强制登录流程 - 每次都必须重新登录")
+        
         for attempt in range(RETRY_TIMES):
             logger.info(f"🔄 登录尝试 {attempt + 1}/{RETRY_TIMES}")
-
-            # 方法1: 尝试直接访问（使用缓存）
-            if self.try_direct_access():
-                return True
-
-            # 方法2: 完整登录流程（处理 Turnstile 验证）
+            
+            # 直接进行完整登录流程，跳过任何缓存检查
             if self.enhanced_login_process_with_turnstile():
                 return True
 
@@ -299,22 +309,6 @@ class EnhancedSiteAutomator:
                 time.sleep(wait_time)
 
         return False
-
-    def try_direct_access(self):
-        try:
-            logger.info("🔍 尝试直接访问...")
-            self.page.get(self.site_config['latest_topics_url'])
-            time.sleep(3)
-            
-            if self.check_login_status():
-                logger.info("✅ 缓存登录成功")
-                return True
-                
-            logger.info("❌ 缓存登录失败")
-            return False
-        except Exception as e:
-            logger.debug(f"直接访问失败: {str(e)}")
-            return False
 
     def enhanced_login_process_with_turnstile(self):
         """增强的登录流程，专门处理 Turnstile 验证"""
@@ -872,27 +866,27 @@ class EnhancedSiteAutomator:
         print("=" * 60)
         logger.success(f"✅ 连接信息获取成功 ({method}) - 找到 {len(info)} 个项目")
 
-    def save_session_data(self):
+    def save_verification_data_only(self):
+        """只保存验证数据，不保存登录状态"""
         try:
-            # 保存cookies
+            # 保存 Cloudflare cookies (仅用于验证，不用于登录状态)
             cookies = self.page.cookies()
             if cookies:
-                CacheManager.save_site_cache(cookies, self.site_config['name'], 'cf_cookies')
-                logger.info(f"💾 保存 {len(cookies)} 个cookies")
-
-            # 保存会话数据
-            session_data = {
-                'topic_count': self.topic_count,
-                'successful_browsed': self.successful_browsed,
-                'last_updated': datetime.now().isoformat(),
-                'user_agent': USER_AGENT
-            }
-            CacheManager.save_site_cache(session_data, self.site_config['name'], 'browser_state')
+                # 只保存可能用于验证的cookies
+                cf_cookies = []
+                for cookie in cookies:
+                    if any(keyword in cookie.get('name', '').lower() for keyword in 
+                          ['cf_', 'cloudflare', '__cf', '_cf']):
+                        cf_cookies.append(cookie)
+                
+                if cf_cookies:
+                    CacheManager.save_cf_cookies(cf_cookies, self.site_config['name'])
+                    logger.info(f"💾 保存 {len(cf_cookies)} 个 Cloudflare 验证cookies")
             
-            logger.success(f"✅ 会话数据已保存 (发现主题: {self.topic_count}, 成功浏览: {self.successful_browsed})")
+            logger.success(f"✅ 验证数据已保存 (发现主题: {self.topic_count}, 成功浏览: {self.successful_browsed})")
 
         except Exception as e:
-            logger.error(f"保存会话数据失败: {str(e)}")
+            logger.error(f"保存验证数据失败: {str(e)}")
 
     def cleanup(self):
         try:
