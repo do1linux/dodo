@@ -242,7 +242,7 @@ class SiteAutomator:
             username = self.credentials['username']
             password = self.credentials['password']
 
-            # 使用您原来的登录方式
+            # 使用登录表单选择器
             self.page.ele("@id=login-account-name").input(username)
             self.page.ele("@id=login-account-password").input(password)
             self.page.ele("@id=login-button").click()
@@ -289,11 +289,11 @@ class SiteAutomator:
             return False
 
     def perform_browsing_actions(self):
-        """使用您原来的浏览逻辑"""
+        """执行浏览操作"""
         try:
             logger.info("🌐 开始浏览操作...")
             
-            # 使用您原来的选择器
+            # 获取主题列表
             topic_list = self.get_topic_list()
             if not topic_list:
                 logger.warning("❌ 未找到主题链接")
@@ -316,9 +316,9 @@ class SiteAutomator:
             logger.error(f"浏览操作失败: {str(e)}")
 
     def get_topic_list(self):
-        """使用您原来的选择器获取主题列表"""
+        """获取主题列表"""
         try:
-            # 主要选择器：您原来的选择器
+            # 主要选择器
             list_area = self.page.ele("@id=list-area")
             if list_area:
                 topic_list = list_area.eles(".:title")
@@ -326,7 +326,7 @@ class SiteAutomator:
                     logger.info(f"✅ 使用原选择器找到 {len(topic_list)} 个主题")
                     return topic_list
             
-            # 备用选择器：如果主要选择器失败
+            # 备用选择器
             backup_selectors = [
                 "#list-area .title",
                 ".topic-list-item a.title",
@@ -353,21 +353,19 @@ class SiteAutomator:
     def click_one_topic(self, topic_url):
         """浏览单个主题 - 修复标签页管理问题"""
         try:
-            # 保存当前页面的URL，以便后续返回
-            original_url = self.page.url
+            # 保存当前标签页索引
+            original_tab_index = 0  # 默认第一个标签页为原始页面
             
             # 在新标签页打开主题
-            new_tab = self.page.new_tab()
-            if not new_tab:
-                logger.error("❌ 无法创建新标签页")
-                return
-                
-            # 切换到新标签页 - 使用正确的方法
-            self.page.set.tabs.to(new_tab)
-            
             full_url = urljoin(self.site_config['base_url'], topic_url)
             logger.info(f"📖 打开主题: {full_url}")
-            self.page.get(full_url)
+            
+            # 创建新标签页并切换
+            self.page.new_tab(full_url)
+            all_tabs = self.page.get_tabs()
+            new_tab_index = len(all_tabs) - 1  # 最后一个是新创建的标签页
+            self.page.switch_to_tab(new_tab_index)
+            
             time.sleep(3)
             
             # 随机点赞（0.3%概率）
@@ -377,11 +375,9 @@ class SiteAutomator:
             # 浏览帖子内容
             self.browse_post()
             
-            # 关闭当前标签页
-            self.page.close_tab()
-            
-            # 切换回原来的标签页
-            self.page.set.tabs.to(0)  # 第一个标签页是原来的页面
+            # 关闭当前标签页并切换回原标签页
+            self.page.close_tab(new_tab_index)
+            self.page.switch_to_tab(original_tab_index)
             
             logger.info(f"✅ 完成浏览主题: {topic_url}")
             
@@ -389,12 +385,12 @@ class SiteAutomator:
             logger.error(f"浏览主题失败: {str(e)}")
             # 尝试恢复原标签页
             try:
-                self.page.set.tabs.to(0)
+                self.page.switch_to_tab(0)
             except:
                 logger.error("恢复原标签页失败")
 
     def browse_post(self):
-        """浏览帖子内容 - 使用您原来的滚动逻辑"""
+        """浏览帖子内容"""
         prev_url = None
         
         # 开始自动滚动，最多滚动10次
@@ -403,7 +399,7 @@ class SiteAutomator:
             scroll_distance = random.randint(550, 650)
             logger.debug(f"第{i+1}次滚动，向下滚动 {scroll_distance} 像素...")
             
-            # 使用 DrissionPage 的滚动方法
+            # 滚动页面
             self.page.scroll.down(scroll_distance)
             
             logger.debug(f"已加载页面: {self.page.url}")
@@ -430,7 +426,7 @@ class SiteAutomator:
             time.sleep(wait_time)
 
     def click_like(self):
-        """点赞操作 - 使用您原来的逻辑"""
+        """点赞操作"""
         try:
             like_button = self.page.ele(".discourse-reactions-reaction-button")
             if like_button:
@@ -449,21 +445,17 @@ class SiteAutomator:
             logger.info("获取连接信息")
             
             # 保存当前标签页索引
-            current_tab_index = self.page.tab_index
+            original_tab_index = 0  # 默认第一个标签页为原始页面
             
             # 在新标签页打开连接信息
-            new_tab = self.page.new_tab()
-            if not new_tab:
-                logger.error("❌ 无法创建新标签页")
-                return
-                
-            # 切换到新标签页
-            self.page.set.tabs.to(new_tab)
+            self.page.new_tab(self.site_config['connect_url'])
+            all_tabs = self.page.get_tabs()
+            new_tab_index = len(all_tabs) - 1  # 最后一个是新创建的标签页
+            self.page.switch_to_tab(new_tab_index)
             
-            self.page.get(self.site_config['connect_url'])
             time.sleep(3)
             
-            # 使用您原来的表格解析逻辑
+            # 解析表格数据
             table = self.page.ele("tag:table")
             if table:
                 rows = table.eles("tag:tr")
@@ -485,17 +477,15 @@ class SiteAutomator:
             else:
                 logger.warning("⚠️ 未找到表格")
             
-            # 关闭当前标签页
-            self.page.close_tab()
-            
-            # 切换回原来的标签页
-            self.page.set.tabs.to(current_tab_index)
+            # 关闭当前标签页并切换回原标签页
+            self.page.close_tab(new_tab_index)
+            self.page.switch_to_tab(original_tab_index)
                 
         except Exception as e:
             logger.error(f"获取连接信息失败: {str(e)}")
             # 尝试恢复原标签页
             try:
-                self.page.set.tabs.to(0)
+                self.page.switch_to_tab(0)
             except:
                 logger.error("恢复原标签页失败")
 
@@ -546,7 +536,13 @@ def main():
 
     logger.info("🚀 LinuxDo自动化脚本启动 (修复标签页管理版本)")
 
-    target_sites = SITES
+    # 获取站点选择器输入
+    site_selector = os.getenv('SITE_SELECTOR', 'all')
+    if site_selector == 'all':
+        target_sites = SITES
+    else:
+        target_sites = [site for site in SITES if site['name'] == site_selector]
+
     results = []
 
     try:
