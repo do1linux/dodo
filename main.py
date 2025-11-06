@@ -232,31 +232,14 @@ class SiteAutomator:
 
     def get_topic_list(self):
         try:
-            # 主要选择器
+            # 只使用主要选择器
             list_area = self.page.ele("@id=list-area")
             if list_area:
                 topic_list = list_area.eles(".:title")
                 if topic_list:
-                    logger.info("✅ 使用主要选择器找到主题")
+                    logger.info(f"✅ 使用主要选择器找到 {len(topic_list)} 个主题")
                     return topic_list
-            
-            # 备用选择器
-            backup_selectors = [
-                "#list-area .title",
-                ".topic-list-item a.title", 
-                "a.title[href*='/t/']"
-            ]
-            
-            for selector in backup_selectors:
-                try:
-                    elements = self.page.eles(selector)
-                    if elements:
-                        logger.info(f"✅ 使用备用选择器 '{selector}' 找到主题")
-                        return elements
-                except Exception:
-                    continue
-            
-            logger.warning("❌ 所有选择器都未能找到主题")
+            logger.warning("❌ 主要选择器未找到主题")
             return []
             
         except Exception as e:
@@ -411,3 +394,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
