@@ -49,6 +49,7 @@ SITES = [
 # 全局配置
 BROWSE_ENABLED = os.environ.get("BROWSE_ENABLED", "true").strip().lower() not in ["false", "0", "off"]
 HEADLESS = os.environ.get("HEADLESS", "true").strip().lower() not in ["false", "0", "off"]
+CACHE_DIR = os.environ.get("CACHE_DIR", "cache")
 
 # Cookie有效期设置（天）
 COOKIE_VALIDITY_DAYS = 7
@@ -59,12 +60,12 @@ class CacheManager:
     @staticmethod
     def get_cache_directory():
         """获取缓存目录"""
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        cache_dir = os.path.join(current_dir, "cache")
+        cache_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), CACHE_DIR)
         try:
             os.makedirs(cache_dir, exist_ok=True)
-        except Exception:
-            cache_dir = current_dir
+        except Exception as e:
+            logger.warning(f"创建缓存目录失败 {cache_dir}: {str(e)}")
+            cache_dir = os.path.dirname(os.path.abspath(__file__))
         return cache_dir
 
     @staticmethod
@@ -224,7 +225,7 @@ class LinuxDoBrowser:
         self.login_attempts = 0
         self.max_login_attempts = 2
         
-        # Chrome配置 - 使用webdriver-manager自动管理驱动
+        # Chrome配置 - 简化版本，避免webdriver-manager问题
         chrome_options = Options()
         if HEADLESS:
             chrome_options.add_argument('--headless=new')
@@ -241,18 +242,12 @@ class LinuxDoBrowser:
         chrome_options.add_argument(f'--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36')
         
         try:
-            # 使用webdriver-manager自动下载和管理ChromeDriver
-            service = Service(ChromeDriverManager().install())
-            self.driver = webdriver.Chrome(service=service, options=chrome_options)
+            # 直接使用系统Chrome，避免webdriver-manager问题
+            self.driver = webdriver.Chrome(options=chrome_options)
             self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         except Exception as e:
             logger.error(f"Chrome驱动初始化失败: {str(e)}")
-            # 备用方案：尝试直接使用系统Chrome
-            try:
-                self.driver = webdriver.Chrome(options=chrome_options)
-            except Exception as e2:
-                logger.error(f"备用Chrome驱动也失败: {str(e2)}")
-                raise
+            raise
         
         self.wait = WebDriverWait(self.driver, 20)
 
@@ -559,7 +554,7 @@ class LinuxDoBrowser:
 
     @retry_decorator()
     def click_one_topic(self, topic_url):
-        """浏览单个主题"""
+        """浏览单个主题 - 真实用户行为模拟"""
         original_window = self.driver.current_window_handle
         
         # 在新标签页中打开主题
@@ -573,11 +568,11 @@ class LinuxDoBrowser:
         try:
             time.sleep(3)
             
-            # 随机决定是否点赞 (0.5%概率)
+            # 随机决定是否点赞 (0.5%概率) - 增加真实性
             if random.random() < 0.005:
                 self.click_like()
 
-            # 浏览帖子内容 - 不打印滚动日志
+            # 浏览帖子内容 - 真实用户滚动行为
             self.browse_post()
             
             # 关闭当前标签页
@@ -596,7 +591,7 @@ class LinuxDoBrowser:
             return False
 
     def click_like(self):
-        """点赞帖子"""
+        """点赞帖子 - 真实用户行为"""
         try:
             like_button = self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, ".discourse-reactions-reaction-button")))
             if like_button.is_displayed():
@@ -610,31 +605,35 @@ class LinuxDoBrowser:
             logger.error(f"点赞失败: {str(e)}")
 
     def browse_post(self):
-        """浏览帖子内容 - 简化版本，不打印滚动日志"""
+        """浏览帖子内容 - 真实用户滚动行为模拟"""
         # 开始自动滚动，最多滚动8次
         for i in range(8):
-            # 随机滚动一段距离
+            # 随机滚动一段距离 - 模拟真实用户
             scroll_distance = random.randint(400, 800)
             self.driver.execute_script(f"window.scrollBy(0, {scroll_distance})")
+            
+            # 随机决定是否提前退出 - 真实用户行为
             if random.random() < 0.03:
                 break
+                
             # 检查是否到达页面底部
             at_bottom = self.driver.execute_script(
                 "return window.scrollY + window.innerHeight >= document.body.scrollHeight"
             )
             if at_bottom:
                 break
-            # 动态随机等待
+                
+            # 动态随机等待 - 模拟真实阅读时间
             wait_time = random.uniform(2, 4)
             time.sleep(wait_time)
 
     def click_topic(self):
-        """点击浏览主题"""
+        """点击浏览主题 - 真实用户浏览流程"""
         if not BROWSE_ENABLED:
             logger.info("⏭️ 浏览功能已禁用，跳过")
             return True
 
-        logger.info("🌐 开始浏览主题")
+        logger.info("🌐 开始浏览主题 - 模拟真实用户行为")
 
         # 确保在latest页面
         if not self.driver.current_url.endswith('/latest'):
@@ -648,12 +647,12 @@ class LinuxDoBrowser:
                 logger.error("❌ 没有找到主题列表")
                 return False
 
-            # 随机选择5-8个主题
+            # 随机选择5-8个主题 - 模拟真实用户随机浏览
             browse_count = min(random.randint(5, 8), len(topic_elements))
             selected_topics = random.sample(topic_elements, browse_count)
             success_count = 0
 
-            logger.info(f"发现 {len(topic_elements)} 个主题帖，随机选择 {browse_count} 个")
+            logger.info(f"发现 {len(topic_elements)} 个主题帖，随机选择 {browse_count} 个进行浏览")
 
             for i, topic in enumerate(selected_topics):
                 topic_url = topic.get_attribute("href")
@@ -668,7 +667,7 @@ class LinuxDoBrowser:
                 if self.click_one_topic(topic_url):
                     success_count += 1
 
-                # 随机等待
+                # 随机等待 - 模拟真实用户思考时间
                 if i < browse_count - 1:
                     wait_time = random.uniform(5, 12)
                     time.sleep(wait_time)
@@ -722,7 +721,7 @@ class LinuxDoBrowser:
                 logger.error(f"❌ {self.site_name} 登录失败")
                 return False
 
-            # 2. 浏览主题
+            # 2. 浏览主题 - 真实用户行为模拟
             if not self.click_topic():
                 logger.warning(f"⚠️ {self.site_name} 浏览主题失败")
 
@@ -744,7 +743,7 @@ class LinuxDoBrowser:
 # ======================== 主函数 ========================
 def main():
     """主函数"""
-    logger.info("🎯 Linux.Do 多站点自动化脚本启动 (Selenium版)")
+    logger.info("🎯 Linux.Do 多站点自动化脚本启动 (Selenium版) - 真实用户行为模拟")
     
     # 设置环境变量
     os.environ.pop("DISPLAY", None)
@@ -774,7 +773,7 @@ def main():
             logger.error(f"❌ {site_name} 执行异常: {str(e)}")
             failed_sites.append(site_name)
 
-        # 站点间随机等待
+        # 站点间随机等待 - 模拟真实用户切换站点行为
         if site_config != SITES[-1]:
             wait_time = random.uniform(10, 30)
             logger.info(f"⏳ 等待 {wait_time:.1f} 秒后处理下一个站点...")
