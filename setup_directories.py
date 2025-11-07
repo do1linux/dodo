@@ -2,102 +2,101 @@ import os
 import json
 
 def create_turnstile_patch():
-    """创建turnstilePatch扩展目录和文件"""
-    turnstile_dir = "turnstilePatch"
+    """创建 Turnstile Patch 扩展"""
+    extension_dir = "turnstilePatch"
+    os.makedirs(extension_dir, exist_ok=True)
     
-    # 创建目录
-    if not os.path.exists(turnstile_dir):
-        os.makedirs(turnstile_dir)
-        print(f"✅ 创建目录: {turnstile_dir}")
-    
-    # 创建manifest.json
-    manifest_content = {
+    # 创建 manifest.json
+    manifest = {
         "manifest_version": 3,
         "name": "Turnstile Patch",
         "version": "1.0",
-        "description": "Patch for Cloudflare Turnstile challenges",
-        "permissions": [],
-        "content_scripts": [
-            {
-                "matches": ["<all_urls>"],
-                "js": ["script.js"],
-                "run_at": "document_start"
-            }
-        ]
+        "content_scripts": [{
+            "matches": ["https://linux.do/*", "https://idcflare.com/*"],
+            "js": ["script.js"],
+            "run_at": "document_end"
+        }]
     }
     
-    with open(os.path.join(turnstile_dir, "manifest.json"), "w", encoding='utf-8') as f:
-        json.dump(manifest_content, f, indent=2)
-    print("✅ 创建 manifest.json")
+    with open(os.path.join(extension_dir, "manifest.json"), "w") as f:
+        json.dump(manifest, f, indent=2)
     
-    # 创建script.js
-    script_content = """// Turnstile Patch - Cloudflare Challenge Bypass
+    # 创建 script.js
+    script_content = """
+// Turnstile Patch - 自动处理 Cloudflare Turnstile 验证
 (function() {
     'use strict';
     
-    // Patch turnstile if it exists
-    if (window.turnstile) {
-        const originalRender = window.turnstile.render;
-        const originalReset = window.turnstile.reset;
-        
-        window.turnstile.render = function(element, options) {
-            console.log('Turnstile render intercepted');
-            if (options && typeof options.callback === 'function') {
-                // Simulate successful challenge
-                setTimeout(() => {
-                    options.callback('fake_turnstile_token_' + Date.now());
-                }, 1000);
-            }
-            return 'fake_widget_id';
-        };
-        
-        window.turnstile.reset = function(widgetId) {
-            console.log('Turnstile reset intercepted');
-            return true;
-        };
-        
-        window.turnstile.getResponse = function(widgetId) {
-            return 'fake_turnstile_token_' + Date.now();
-        };
+    console.log('🔧 Turnstile Patch 已加载');
+    
+    function waitForTurnstile() {
+        if (typeof turnstile !== 'undefined') {
+            console.log('✅ 检测到 Turnstile，准备自动处理');
+            handleTurnstile();
+        } else {
+            setTimeout(waitForTurnstile, 500);
+        }
     }
     
-    // Intercept Cloudflare challenges
-    const originalFetch = window.fetch;
-    window.fetch = function(...args) {
-        const url = args[0];
-        if (typeof url === 'string' && url.includes('challenges')) {
-            console.log('Cloudflare challenge intercepted');
-            return Promise.resolve({
-                ok: true,
-                status: 200,
-                json: () => Promise.resolve({success: true}),
-                text: () => Promise.resolve('{"success": true}')
-            });
-        }
-        return originalFetch.apply(this, args);
-    };
-    
-    // Remove Cloudflare protection attributes
-    document.addEventListener('DOMContentLoaded', function() {
-        const elements = document.querySelectorAll('*');
-        elements.forEach(el => {
-            if (el.hasAttribute('data-cf-chl-completed')) {
-                el.setAttribute('data-cf-chl-completed', 'true');
+    function handleTurnstile() {
+        try {
+            // 重置 Turnstile
+            turnstile.reset();
+            
+            // 获取响应 token
+            const response = turnstile.getResponse();
+            if (response) {
+                console.log('✅ 获取到 Turnstile token:', response.substring(0, 20) + '...');
+                
+                // 设置到表单字段
+                const input = document.querySelector('input[name="cf-turnstile-response"]');
+                if (input) {
+                    input.value = response;
+                    console.log('✅ 已设置 cf-turnstile-response');
+                }
+                
+                // 触发变化事件
+                if (input) {
+                    input.dispatchEvent(new Event('change', { bubbles: true }));
+                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                }
             }
-            if (el.hasAttribute('data-cf-modified')) {
-                el.setAttribute('data-cf-modified', 'true');
+        } catch (error) {
+            console.warn('⚠️ Turnstile 处理出错:', error);
+        }
+    }
+    
+    // 页面加载完成后开始监听
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', waitForTurnstile);
+    } else {
+        waitForTurnstile();
+    }
+    
+    // 监听动态加载的 Turnstile
+    const observer = new MutationObserver(function(mutations) {
+        mutations.forEach(function(mutation) {
+            if (mutation.type === 'childList') {
+                const turnstileElements = document.querySelectorAll('[data-sitekey], .cf-turnstile');
+                if (turnstileElements.length > 0 && typeof turnstile !== 'undefined') {
+                    console.log('🔄 检测到动态加载的 Turnstile');
+                    setTimeout(handleTurnstile, 1000);
+                }
             }
         });
     });
     
-    console.log('Turnstile Patch loaded successfully');
-})();"""
+    observer.observe(document.body, {
+        childList: true,
+        subtree: true
+    });
+})();
+"""
     
-    with open(os.path.join(turnstile_dir, "script.js"), "w", encoding='utf-8') as f:
+    with open(os.path.join(extension_dir, "script.js"), "w") as f:
         f.write(script_content)
-    print("✅ 创建 script.js")
     
-    print("🎉 turnstilePatch扩展创建完成!")
+    print(f"✅ Turnstile Patch 扩展创建完成: {extension_dir}")
 
 if __name__ == "__main__":
     create_turnstile_patch()
