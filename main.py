@@ -23,6 +23,9 @@ SITE_CREDENTIALS = {
     }
 }
 
+# 检测 GitHub Actions 环境
+IS_GITHUB_ACTIONS = os.getenv('GITHUB_ACTIONS') == 'true'
+
 SITES = [
     {
         'name': 'linux_do',
@@ -40,131 +43,148 @@ SITES = [
     }
 ]
 
-PAGE_TIMEOUT = 120
+PAGE_TIMEOUT = 60
 RETRY_TIMES = 3
 MAX_TOPICS_TO_BROWSE = 10
 
-# 固定使用 Windows User-Agent
+# 平台检测 - 固定为Windows
 PLATFORM_IDENTIFIER = "Windows NT 10.0; Win64; x64"
 USER_AGENT = f'Mozilla/5.0 ({PLATFORM_IDENTIFIER}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
 
-# 扩展路径
-EXTENSION_PATH = os.path.abspath("turnstilePatch")
+# 扩展路径 - 检查是否存在，如果不存在则跳过
+EXTENSION_PATH = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "turnstilePatch")
+)
+
+# 检查扩展目录是否存在
 EXTENSION_ENABLED = os.path.exists(EXTENSION_PATH)
 
-# Cloudflare Turnstile 处理脚本
+# 改进的 Cloudflare Turnstile 处理脚本
 TURNSTILE_SCRIPT = """
-// 改进的 Turnstile token 获取函数
-function getTurnstileToken() {
-    return new Promise((resolve, reject) => {
-        console.log('开始获取 Turnstile token...');
+async function handleTurnstile() {
+    return new Promise((resolve) => {
+        console.log('开始处理 Turnstile 验证...');
         
         // 方法1: 检查全局 turnstile 对象
         if (window.turnstile) {
             console.log('检测到 window.turnstile 对象');
             try {
-                const response = window.turnstile.getResponse();
-                if (response && response.length > 0) {
-                    console.log('通过 turnstile.getResponse() 获取到 token');
-                    resolve(response);
-                    return;
+                const iframe = document.querySelector('iframe[src*="challenges.cloudflare.com"], iframe[src*="turnstile"]');
+                if (iframe) {
+                    const widgetId = iframe.getAttribute('data-turnstile-widget-id') || iframe.id;
+                    if (widgetId) {
+                        turnstile.getResponse(widgetId).then((token) => {
+                            if (token) {
+                                console.log('通过 turnstile.getResponse() 获取到 token');
+                                resolve({success: true, token: token});
+                                return;
+                            }
+                        });
+                    }
                 }
             } catch (e) {
                 console.log('turnstile.getResponse() 出错:', e);
             }
         }
         
-        // 方法2: 检查隐藏的 input 字段
-        const hiddenInput = document.querySelector('input[name="cf-turnstile-response"]');
-        if (hiddenInput && hiddenInput.value) {
-            console.log('通过隐藏字段获取到 token');
-            resolve(hiddenInput.value);
-            return;
-        }
-        
-        // 方法3: 轮询等待 token 出现
+        // 方法2: 轮询等待隐藏字段被填充
         let attempts = 0;
-        const maxAttempts = 15;
+        const maxAttempts = 20;
         
-        function pollForToken() {
+        function checkToken() {
             attempts++;
-            console.log(`轮询等待 token (${attempts}/${maxAttempts})`);
+            console.log(`检查 token (${attempts}/${maxAttempts})`);
             
-            if (window.turnstile) {
-                try {
-                    const response = window.turnstile.getResponse();
-                    if (response && response.length > 0) {
-                        resolve(response);
-                        return;
-                    }
-                } catch (e) {}
-            }
-            
-            const input = document.querySelector('input[name="cf-turnstile-response"]');
-            if (input && input.value) {
-                resolve(input.value);
+            const hiddenInput = document.querySelector('input[name="cf-turnstile-response"]');
+            if (hiddenInput && hiddenInput.value) {
+                console.log('检测到 Turnstile token');
+                resolve({success: true, token: hiddenInput.value});
                 return;
             }
             
             if (attempts >= maxAttempts) {
-                reject(new Error(`轮询 ${maxAttempts} 次后仍未获取到 token`));
+                console.log('达到最大尝试次数，未找到 token');
+                resolve({success: false, error: '轮询超时'});
                 return;
             }
             
-            setTimeout(pollForToken, 2000);
+            setTimeout(checkToken, 2000);
         }
         
-        pollForToken();
+        checkToken();
     });
 }
 
-// 设置 Turnstile token 到表单
-function setTurnstileToken(token) {
-    console.log('设置 Turnstile token 到表单');
-    
-    let existingInput = document.querySelector('input[name="cf-turnstile-response"]');
-    if (existingInput) {
-        existingInput.value = token;
-        console.log('已设置到现有字段');
-    } else {
-        const newInput = document.createElement('input');
-        newInput.type = 'hidden';
-        newInput.name = 'cf-turnstile-response';
-        newInput.value = token;
-        
-        const form = document.querySelector('form');
-        if (form) {
-            form.appendChild(newInput);
-            console.log('已创建新字段并添加到表单');
-        } else {
-            console.log('未找到表单，无法设置 token');
-            return false;
-        }
-    }
-    return true;
-}
-
-// 主函数
-async function handleTurnstile() {
-    try {
-        console.log('开始处理 Turnstile 验证...');
-        const token = await getTurnstileToken();
-        console.log('成功获取 Turnstile token:', token.substring(0, 20) + '...');
-        
-        const success = setTurnstileToken(token);
-        if (success) {
-            console.log('Turnstile token 已设置到表单');
-            return { success: true, token: token };
-        } else {
-            return { success: false, error: '无法设置 token 到表单' };
-        }
-    } catch (error) {
-        console.error('处理 Turnstile 验证失败:', error);
-        return { success: false, error: error.message };
-    }
-}
-
 return handleTurnstile();
+"""
+
+# 备用 Turnstile 处理脚本 - 模拟用户交互
+TURNSTILE_SCRIPT_ALTERNATIVE = """
+async function alternativeTurnstileHandler() {
+    return new Promise((resolve) => {
+        console.log('使用备用方法处理 Turnstile...');
+        
+        // 模拟用户与 Turnstile 交互
+        function simulateInteraction() {
+            const turnstileElement = document.querySelector('.cf-turnstile, [data-sitekey]');
+            if (turnstileElement) {
+                console.log('找到 Turnstile 元素，模拟交互');
+                
+                // 模拟鼠标移动
+                const rect = turnstileElement.getBoundingClientRect();
+                const mouseMoveEvent = new MouseEvent('mousemove', {
+                    clientX: rect.left + rect.width / 2,
+                    clientY: rect.top + rect.height / 2,
+                    bubbles: true
+                });
+                turnstileElement.dispatchEvent(mouseMoveEvent);
+                
+                // 模拟点击
+                const clickEvent = new MouseEvent('click', {
+                    bubbles: true,
+                    cancelable: true
+                });
+                turnstileElement.dispatchEvent(clickEvent);
+            }
+        }
+        
+        // 立即模拟交互
+        simulateInteraction();
+        
+        // 等待并检查 token
+        let attempts = 0;
+        const maxAttempts = 25;
+        
+        function waitForToken() {
+            attempts++;
+            console.log(`等待 token (${attempts}/${maxAttempts})`);
+            
+            const hiddenInput = document.querySelector('input[name="cf-turnstile-response"]');
+            if (hiddenInput && hiddenInput.value) {
+                console.log('备用方法检测到 token');
+                resolve({success: true, token: hiddenInput.value});
+                return;
+            }
+            
+            // 每5次尝试重新模拟交互
+            if (attempts % 5 === 0) {
+                simulateInteraction();
+            }
+            
+            if (attempts >= maxAttempts) {
+                console.log('备用方法超时');
+                resolve({success: false, error: '备用方法超时'});
+                return;
+            }
+            
+            setTimeout(waitForToken, 2000);
+        }
+        
+        waitForToken();
+    });
+}
+
+return alternativeTurnstileHandler();
 """
 
 # 重试装饰器
@@ -207,6 +227,16 @@ class CacheManager:
             return False
 
     @staticmethod
+    def load_turnstile_cache(site_name):
+        """加载 Turnstile 验证缓存"""
+        return CacheManager.load_site_cache(site_name, 'turnstile')
+
+    @staticmethod
+    def save_turnstile_cache(data, site_name):
+        """保存 Turnstile 验证缓存"""
+        return CacheManager.save_site_cache(data, site_name, 'turnstile')
+    
+    @staticmethod
     def load_cf_cookies(site_name):
         """加载 Cloudflare cookies 缓存"""
         return CacheManager.load_site_cache(site_name, 'cf_cookies')
@@ -216,13 +246,67 @@ class CacheManager:
         """保存 Cloudflare cookies 缓存"""
         return CacheManager.save_site_cache(data, site_name, 'cf_cookies')
 
+class HumanBehaviorSimulator:
+    """模拟人类行为"""
+    
+    @staticmethod
+    def random_delay(min_seconds=1.0, max_seconds=3.0):
+        """随机延迟"""
+        delay = random.uniform(min_seconds, max_seconds)
+        time.sleep(delay)
+
+    @staticmethod
+    def simulate_typing(element, text):
+        """模拟人类打字"""
+        for char in text:
+            element.input(char)
+            time.sleep(random.uniform(0.05, 0.2))
+
+    @staticmethod
+    def simulate_mouse_movement(page):
+        """模拟鼠标移动"""
+        try:
+            for _ in range(random.randint(2, 5)):
+                x = random.randint(100, 800)
+                y = random.randint(100, 600)
+                page.run_js(f"""
+                var elem = document.elementFromPoint({x}, {y});
+                if (elem) {{
+                    var event = new MouseEvent('mousemove', {{
+                        clientX: {x},
+                        clientY: {y},
+                        bubbles: true
+                    }});
+                    elem.dispatchEvent(event);
+                }}
+                """)
+                time.sleep(random.uniform(0.1, 0.5))
+        except Exception as e:
+            logger.debug(f"模拟鼠标移动失败: {str(e)}")
+
+    @staticmethod
+    def simulate_scroll_behavior(page):
+        """模拟滚动行为"""
+        try:
+            scroll_steps = random.randint(5, 10)
+            for i in range(scroll_steps):
+                scroll_amount = random.randint(300, 700)
+                page.scroll.down(scroll_amount)
+                time.sleep(random.uniform(0.5, 2.0))
+                
+                if random.random() < 0.2:
+                    page.scroll.up(random.randint(100, 300))
+                    time.sleep(random.uniform(0.3, 1.0))
+        except Exception as e:
+            logger.debug(f"模拟滚动失败: {str(e)}")
+
 class EnhancedBrowserManager:
     @staticmethod
     def init_browser(site_name):
         try:
             co = ChromiumOptions()
             
-            # 优化的浏览器参数
+            # 优化的浏览器参数 - 减少自动化特征
             browser_args = [
                 '--no-sandbox', 
                 '--disable-dev-shm-usage',
@@ -235,8 +319,10 @@ class EnhancedBrowserManager:
                 '--allow-running-insecure-content',
                 '--disable-features=VizDisplayCompositor',
                 '--disable-background-timer-throttling',
+                '--disable-backgrounding-occluded-windows',
                 '--disable-renderer-backgrounding',
-                '--disable-backgrounding-occluded-windows'
+                '--no-first-run',
+                '--no-default-browser-check'
             ]
             
             for arg in browser_args:
@@ -256,13 +342,13 @@ class EnhancedBrowserManager:
             page = ChromiumPage(addr_or_opts=co)
             page.set.timeouts(base=PAGE_TIMEOUT)
             
-            # 只加载 Cloudflare cookies 缓存
+            # 只加载 Cloudflare cookies 缓存，不加载登录状态缓存
             cf_cookies = CacheManager.load_cf_cookies(site_name)
             if cf_cookies:
                 page.set.cookies(cf_cookies)
                 logger.info(f"✅ 已加载 {len(cf_cookies)} 个 Cloudflare 缓存cookies")
             
-            # 反自动化检测
+            # 增强的反自动化检测
             page.run_js("""
             Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
             Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
@@ -275,6 +361,162 @@ class EnhancedBrowserManager:
         except Exception as e:
             logger.error(f"❌ 浏览器初始化失败: {str(e)}")
             raise
+
+class CloudflareTurnstileHandler:
+    """专门处理 Cloudflare Turnstile 验证"""
+    
+    @staticmethod
+    def wait_for_cloudflare(page, timeout=30):
+        """等待 Cloudflare 验证完成"""
+        logger.info("⏳ 等待 Cloudflare 验证...")
+        start_time = time.time()
+        
+        while time.time() - start_time < timeout:
+            try:
+                # 检查页面标题和URL
+                title = page.title.lower() if page.title else ""
+                current_url = page.url.lower()
+                
+                # 如果不再显示验证页面，说明验证通过
+                if ("just a moment" not in title and "checking your browser" not in title 
+                    and "challenges" not in current_url):
+                    logger.success("✅ Cloudflare 验证已通过")
+                    return True
+                
+                time.sleep(2)
+                
+            except Exception as e:
+                logger.debug(f"等待 Cloudflare 时出错: {str(e)}")
+                time.sleep(2)
+        
+        logger.warning("⚠️ Cloudflare 等待超时，继续执行")
+        return False
+
+    @staticmethod
+    def detect_turnstile_challenge(page):
+        """检测 Turnstile 验证"""
+        try:
+            turnstile_selectors = [
+                'iframe[src*="challenges.cloudflare.com"]',
+                'iframe[src*="turnstile"]',
+                'div[class*="turnstile"]',
+                'input[name="cf-turnstile-response"]',
+                '.cf-turnstile',
+                '[data-sitekey]'
+            ]
+            
+            for selector in turnstile_selectors:
+                elements = page.eles(selector)
+                if elements:
+                    logger.info(f"✅ 检测到 Turnstile 元素: {selector}")
+                    return True
+            
+            # 检查页面内容
+            page_text = page.html.lower()
+            turnstile_keywords = ['cloudflare', 'turnstile', 'challenge', 'verifying', 'captcha']
+            if any(keyword in page_text for keyword in turnstile_keywords):
+                logger.info("✅ 检测到 Turnstile 相关关键词")
+                return True
+                
+            return False
+        except Exception as e:
+            logger.debug(f"检测 Turnstile 验证失败: {str(e)}")
+            return False
+
+    @staticmethod
+    def handle_turnstile_automated(page):
+        """自动化处理 Turnstile 验证"""
+        try:
+            logger.info("🔄 开始自动化处理 Turnstile 验证...")
+            
+            # 等待 Turnstile 加载
+            time.sleep(5)
+            
+            # 首先尝试主脚本
+            logger.info("🔄 尝试主 Turnstile 处理脚本...")
+            result = page.run_js(TURNSTILE_SCRIPT)
+            
+            if result and result.get('success'):
+                token = result.get('token')
+                logger.info(f"✅ 成功获取 Turnstile token: {token[:20]}...")
+                
+                # 设置 token 到表单
+                set_script = f"""
+                var input = document.querySelector('input[name="cf-turnstile-response"]');
+                if (input) {{
+                    input.value = '{token}';
+                    input.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                }}
+                """
+                page.run_js(set_script)
+                
+                # 保存到缓存
+                turnstile_data = {
+                    'token': token,
+                    'timestamp': datetime.now().isoformat(),
+                    'site': 'current'
+                }
+                CacheManager.save_turnstile_cache(turnstile_data, 'current')
+                logger.info("💾 Turnstile token 已保存到缓存")
+                
+                return True
+            
+            # 如果主脚本失败，尝试备用脚本
+            logger.info("🔄 尝试备用 Turnstile 处理脚本...")
+            result2 = page.run_js(TURNSTILE_SCRIPT_ALTERNATIVE)
+            
+            if result2 and result2.get('success'):
+                token = result2.get('token')
+                logger.info(f"✅ 备用脚本成功获取 Turnstile token: {token[:20]}...")
+                
+                # 设置 token 到表单
+                set_script = f"""
+                var input = document.querySelector('input[name="cf-turnstile-response"]');
+                if (input) {{
+                    input.value = '{token}';
+                    input.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                }}
+                """
+                page.run_js(set_script)
+                
+                return True
+            
+            # 如果都失败，尝试等待自动完成
+            logger.info("🔄 尝试等待 Turnstile 自动完成...")
+            return CloudflareTurnstileHandler.wait_for_turnstile_auto_complete(page)
+                
+        except Exception as e:
+            logger.error(f"❌ 处理 Turnstile 验证时发生异常: {str(e)}")
+            return False
+
+    @staticmethod
+    def wait_for_turnstile_auto_complete(page, timeout=40):
+        """等待 Turnstile 自动完成"""
+        logger.info("⏳ 等待 Turnstile 自动完成验证...")
+        start_time = time.time()
+        
+        while time.time() - start_time < timeout:
+            try:
+                # 检查是否还有 Turnstile 元素
+                if not CloudflareTurnstileHandler.detect_turnstile_challenge(page):
+                    logger.success("✅ Turnstile 验证似乎已完成")
+                    return True
+                
+                # 检查是否有 token
+                token_input = page.ele('input[name="cf-turnstile-response"]', timeout=0)
+                if token_input and token_input.value:
+                    logger.info("✅ 检测到自动填充的 Turnstile token")
+                    return True
+                
+                logger.info(f"⏳ 等待 Turnstile 完成... ({int(time.time() - start_time)}/{timeout}秒)")
+                time.sleep(3)
+                
+            except Exception as e:
+                logger.debug(f"等待 Turnstile 时出错: {str(e)}")
+                time.sleep(3)
+        
+        logger.error("❌ Turnstile 等待超时")
+        return False
 
 class EnhancedSiteAutomator:
     def __init__(self, site_config):
@@ -316,7 +558,7 @@ class EnhancedSiteAutomator:
         for attempt in range(RETRY_TIMES):
             logger.info(f"🔄 登录尝试 {attempt + 1}/{RETRY_TIMES}")
             
-            if self.enhanced_login_process_with_turnstile():
+            if self.enhanced_login_process():
                 return True
 
             if attempt < RETRY_TIMES - 1:
@@ -326,323 +568,191 @@ class EnhancedSiteAutomator:
 
         return False
 
-    def enhanced_login_process_with_turnstile(self):
-        """增强的登录流程，专门处理 Turnstile 验证"""
+    def enhanced_login_process(self):
+        """增强的登录流程"""
         try:
-            logger.info("🔐 开始完整登录流程（含 Turnstile 处理）")
+            logger.info("🔐 开始完整登录流程")
             
             # 清除可能的旧会话
             self.page.get("about:blank")
             time.sleep(2)
             
             self.page.get(self.site_config['login_url'])
-            time.sleep(8)
+            time.sleep(5)
 
-            # 分析登录页面状态
-            self.analyze_login_page()
-
-            # 检查是否有 Cloudflare Turnstile 验证
-            turnstile_detected = self.detect_turnstile_challenge()
-            if turnstile_detected:
+            # 等待 Cloudflare 验证
+            CloudflareTurnstileHandler.wait_for_cloudflare(self.page)
+            
+            # 检查并处理 Turnstile 验证
+            if CloudflareTurnstileHandler.detect_turnstile_challenge(self.page):
                 logger.info("🛡️ 检测到 Cloudflare Turnstile 验证")
-                if self.enhanced_turnstile_handler():
-                    logger.info("✅ Turnstile 验证处理成功")
-                else:
+                if not CloudflareTurnstileHandler.handle_turnstile_automated(self.page):
                     logger.error("❌ Turnstile 验证处理失败")
                     return False
+                else:
+                    logger.info("✅ Turnstile 验证处理成功")
 
-            if not self.wait_for_login_form():
-                logger.error("❌ 登录表单未加载完成")
+            # 查找登录表单元素
+            username_field = self.find_login_field('username')
+            password_field = self.find_login_field('password')
+            login_button = self.find_login_button()
+
+            if not all([username_field, password_field, login_button]):
+                logger.error("❌ 登录表单元素未找到")
                 return False
 
             username = self.credentials['username']
             password = self.credentials['password']
 
-            # 使用更健壮的元素定位
-            username_field = self.page.ele("@id=login-account-name", timeout=20)
-            password_field = self.page.ele("@id=login-account-password", timeout=20)
-            login_button = self.page.ele("@id=login-button", timeout=20)
-
-            if not all([username_field, password_field, login_button]):
-                logger.error("❌ 登录表单元素未找到")
-                return self.alternative_login_method()
-
             # 模拟人类输入
-            self.human_like_input(username_field, username)
-            time.sleep(random.uniform(1, 3))
-            self.human_like_input(password_field, password)
-            time.sleep(random.uniform(1, 2))
+            HumanBehaviorSimulator.simulate_mouse_movement(self.page)
+            self.fill_field_safely(username_field, username)
+            HumanBehaviorSimulator.random_delay(1, 2)
+            self.fill_field_safely(password_field, password)
+            HumanBehaviorSimulator.random_delay(1, 2)
 
-            # 再次检查是否有 Turnstile 验证
-            if self.detect_turnstile_challenge():
+            # 再次检查是否有新的 Turnstile 验证
+            if CloudflareTurnstileHandler.detect_turnstile_challenge(self.page):
                 logger.info("🛡️ 输入后检测到 Turnstile 验证")
-                if self.enhanced_turnstile_handler():
-                    logger.info("✅ 输入后 Turnstile 验证处理成功")
+                CloudflareTurnstileHandler.handle_turnstile_automated(self.page)
 
-            # 点击登录按钮
+            # 点击登录
             login_button.click()
-            time.sleep(10)
+            time.sleep(8)
 
-            # 严格检查登录结果
-            return self.strict_check_login_status()
+            # 验证登录结果
+            return self.verify_login_result()
 
         except Exception as e:
             logger.error(f"登录流程异常: {str(e)}")
             traceback.print_exc()
             return False
 
-    def analyze_login_page(self):
-        """分析登录页面状态"""
-        try:
-            logger.info("🔍 分析登录页面状态...")
-            
-            # 检查机器人验证元素
-            bot_detection_selectors = [
-                '.cf-turnstile',
-                '.g-recaptcha',
-                '[data-sitekey]',
-                '.h-captcha',
-                '.challenge-form',
-                '#cf-challenge',
-                '.verification-form',
-                'iframe[src*="challenges.cloudflare.com"]',
-                'iframe[src*="turnstile"]'
-            ]
-            
-            found_bot_elements = []
-            for selector in bot_detection_selectors:
-                elements = self.page.eles(selector)
-                if elements:
-                    found_bot_elements.append(selector)
-                    logger.warning(f"🚨 发现机器人验证元素: {selector}")
-            
-            if found_bot_elements:
-                logger.warning(f"🚨 页面包含以下机器人验证: {', '.join(found_bot_elements)}")
-            else:
-                logger.info("✅ 未发现明显的机器人验证元素")
-            
-            # 检查登录相关元素
-            login_selectors = [
+    def find_login_field(self, field_type):
+        """查找登录字段"""
+        selectors_map = {
+            'username': [
                 '#login-account-name',
                 '#username', 
                 'input[name="username"]',
                 'input[type="text"]',
+                'input[placeholder*="用户名"]',
+                'input[placeholder*="email"]'
+            ],
+            'password': [
                 '#login-account-password',
-                '#password',
+                '#password', 
                 'input[name="password"]',
                 'input[type="password"]',
-                '#login-button',
-                'button[type="submit"]',
-                'input[type="submit"]'
+                'input[placeholder*="密码"]'
             ]
-            
-            found_login_elements = []
-            for selector in login_selectors:
-                elements = self.page.eles(selector)
-                if elements:
-                    found_login_elements.append(selector)
-                    logger.info(f"✅ 发现登录元素: {selector}")
-            
-            logger.info(f"📊 登录页面分析完成，发现 {len(found_login_elements)} 个登录相关元素")
-            
-        except Exception as e:
-            logger.error(f"登录页面分析失败: {str(e)}")
-
-    def detect_turnstile_challenge(self):
-        """检测是否存在 Cloudflare Turnstile 验证"""
-        try:
-            turnstile_selectors = [
-                'iframe[src*="challenges.cloudflare.com"]',
-                'div[class*="turnstile"]',
-                'input[name="cf-turnstile-response"]',
-                '.cf-turnstile',
-                '[data-sitekey]'
-            ]
-            
-            for selector in turnstile_selectors:
-                elements = self.page.eles(selector)
-                if elements:
-                    logger.info(f"🛡️ 检测到 Turnstile 元素: {selector}")
-                    return True
-            
-            page_text = self.page.html.lower()
-            turnstile_keywords = ['cloudflare', 'turnstile', 'challenge', 'verifying', 'captcha']
-            if any(keyword in page_text for keyword in turnstile_keywords):
-                logger.info("🛡️ 检测到 Turnstile 相关关键词")
-                return True
-                
-            return False
-        except Exception as e:
-            logger.debug(f"检测 Turnstile 验证失败: {str(e)}")
-            return False
-
-    def enhanced_turnstile_handler(self):
-        """增强的 Turnstile 验证处理器"""
-        try:
-            logger.info("🔄 开始处理 Turnstile 验证...")
-            
-            time.sleep(8)
-            
-            logger.info("🔄 尝试 Turnstile 处理脚本...")
-            result = self.page.run_js(TURNSTILE_SCRIPT)
-            
-            if result and result.get('success'):
-                token = result.get('token')
-                logger.info(f"✅ 成功获取 Turnstile token: {token[:20]}...")
-                return True
-            else:
-                error_msg = result.get('error', '未知错误') if result else '无结果'
-                logger.warning(f"⚠️ 脚本失败: {error_msg}")
-                return self.manual_turnstile_wait()
-                
-        except Exception as e:
-            logger.error(f"❌ 处理 Turnstile 验证时发生异常: {str(e)}")
-            return False
-
-    def manual_turnstile_wait(self):
-        """手动等待 Turnstile 验证完成"""
-        try:
-            logger.info("⏳ 手动等待 Turnstile 验证完成...")
-            
-            for i in range(15):
-                time.sleep(2)
-                
-                if not self.detect_turnstile_challenge():
-                    logger.info("✅ Turnstile 验证似乎已完成")
-                    return True
-                    
-                try:
-                    token_input = self.page.ele('@name=cf-turnstile-response')
-                    if token_input and token_input.value:
-                        logger.info("✅ 检测到自动填充的 Turnstile token")
-                        return True
-                except:
-                    pass
-                    
-                logger.info(f"⏳ 等待 Turnstile 完成... ({i+1}/15)")
-            
-            logger.error("❌ 手动等待 Turnstile 超时")
-            return False
-            
-        except Exception as e:
-            logger.error(f"❌ 手动等待失败: {str(e)}")
-            return False
-
-    def wait_for_login_form(self, max_wait=30):
-        """等待登录表单加载"""
-        logger.info("⏳ 等待登录表单...")
-        start_time = time.time()
+        }
         
-        while time.time() - start_time < max_wait:
+        for selector in selectors_map[field_type]:
             try:
-                username_selectors = [
-                    '#login-account-name',
-                    '#username',
-                    'input[name="username"]',
-                    'input[type="text"]'
-                ]
-                
-                for selector in username_selectors:
-                    element = self.page.ele(selector)
-                    if element and element.is_displayed():
-                        logger.success(f"✅ 找到登录表单: {selector}")
-                        return True
-                
-                time.sleep(2)
-                
-            except Exception as e:
-                logger.debug(f"等待登录表单时出错: {str(e)}")
-                time.sleep(2)
+                element = self.page.ele(selector, timeout=5)
+                if element and element.displayed:
+                    logger.info(f"✅ 找到{field_type}字段: {selector}")
+                    return element
+            except:
+                continue
         
-        logger.error("❌ 登录表单等待超时")
-        return False
+        logger.error(f"❌ 未找到{field_type}字段")
+        return None
 
-    def alternative_login_method(self):
-        """备用登录方法"""
-        try:
-            logger.info("🔄 尝试备用登录方法")
-            username = self.credentials['username']
-            password = self.credentials['password']
-            
-            username_field = self.page.ele('@name=username', timeout=15)
-            password_field = self.page.ele('@name=password', timeout=15)
-            login_button = self.page.ele('@type=submit', timeout=15)
-            
-            if all([username_field, password_field, login_button]):
-                self.human_like_input(username_field, username)
-                time.sleep(1)
-                self.human_like_input(password_field, password)
-                time.sleep(1)
-                login_button.click()
-                time.sleep(10)
-                return self.strict_check_login_status()
-                
-            return False
-        except Exception as e:
-            logger.debug(f"备用登录方法失败: {str(e)}")
-            return False
+    def find_login_button(self):
+        """查找登录按钮"""
+        button_selectors = [
+            '#login-button',
+            'button[type="submit"]',
+            'input[type="submit"]',
+            'button:has-text("登录")',
+            'button:has-text("Log In")',
+            'button:has-text("Sign In")'
+        ]
+        
+        for selector in button_selectors:
+            try:
+                button = self.page.ele(selector, timeout=5)
+                if button and button.displayed:
+                    logger.info(f"✅ 找到登录按钮: {selector}")
+                    return button
+            except:
+                continue
+        
+        logger.error("❌ 未找到登录按钮")
+        return None
 
-    def human_like_input(self, element, text):
-        """模拟人类输入"""
+    def fill_field_safely(self, element, text):
+        """安全地填写字段"""
         try:
             element.clear()
             time.sleep(0.5)
-            for char in text:
-                element.input(char)
-                time.sleep(random.uniform(0.05, 0.2))
+            HumanBehaviorSimulator.simulate_typing(element, text)
         except Exception as e:
-            logger.warning(f"输入时发生错误: {str(e)}")
+            logger.warning(f"填写字段失败，使用备用方法: {str(e)}")
             element.input(text)
 
-    def strict_check_login_status(self):
-        """严格检查登录状态 - 必须检测到用户名"""
+    def verify_login_result(self):
+        """验证登录结果"""
+        logger.info("🔍 验证登录结果...")
+        
+        # 检查错误信息
+        error_selectors = ['.alert-error', '.error', '.flash-error', '.alert-danger']
+        for selector in error_selectors:
+            error_element = self.page.ele(selector, timeout=0)
+            if error_element:
+                error_text = error_element.text
+                logger.error(f"❌ 登录错误: {error_text}")
+                return False
+        
+        return self.check_login_status()
+
+    def check_login_status(self):
+        """检查登录状态"""
         username = self.credentials['username']
-        logger.info(f"🔍 严格检查登录状态，查找用户名: {username}")
+        logger.info(f"🔍 检查登录状态，查找用户名: {username}")
 
-        time.sleep(3)
+        # 方法1: 检查用户菜单或用户名显示
+        user_indicators = [
+            '@id=current-user',
+            '.current-user',
+            '.user-menu',
+            f'a[href*="/u/{username}"]'
+        ]
+        
+        for selector in user_indicators:
+            try:
+                element = self.page.ele(selector, timeout=5)
+                if element:
+                    element_text = element.text.lower() if element.text else ""
+                    if username.lower() in element_text:
+                        logger.info(f"✅ 通过用户菜单验证登录成功: {selector}")
+                        return True
+            except:
+                continue
 
-        # 方法1: 检查用户菜单
-        try:
-            user_menu = self.page.ele("@id=current-user", timeout=10)
-            if user_menu:
-                user_text = user_menu.text
-                if username.lower() in user_text.lower():
-                    logger.success("✅ 通过用户菜单验证登录成功")
-                    return True
-        except:
-            pass
-
-        # 方法2: 在页面内容中搜索用户名
-        content = self.page.html
-        if username.lower() in content.lower():
-            logger.success(f"✅ 在页面内容中找到用户名: {username}")
-            return True
-
-        # 方法3: 访问个人资料页面验证
+        # 方法2: 访问个人资料页面
         try:
             profile_url = f"{self.site_config['base_url']}/u/{username}"
             self.page.get(profile_url)
             time.sleep(3)
             
-            profile_content = self.page.html
-            if username.lower() in profile_content.lower():
-                logger.success(f"✅ 在个人资料页面验证用户名: {username}")
+            profile_content = self.page.html.lower()
+            if username.lower() in profile_content:
+                logger.info("✅ 通过个人资料页面验证登录成功")
+                # 返回最新主题页面
                 self.page.get(self.site_config['latest_topics_url'])
                 return True
         except Exception as e:
             logger.debug(f"个人资料页面验证失败: {str(e)}")
 
-        # 方法4: 检查当前URL是否还在登录页面
-        current_url = self.page.url.lower()
-        if 'login' in current_url:
-            logger.error("❌ 仍然在登录页面，登录失败")
-            return False
-
-        logger.error(f"❌ 未在页面中找到用户名: {username}")
+        logger.error(f"❌ 登录状态检查失败")
         return False
 
+    # 其余方法保持不变（浏览操作、连接信息获取等）
     def perform_browsing_actions_improved(self):
-        """改进的浏览操作，确保被网站记录"""
+        """改进的浏览操作"""
         try:
             logger.info("🌐 开始浏览操作...")
             
@@ -664,7 +774,7 @@ class EnhancedSiteAutomator:
             
             for i, topic in enumerate(selected_topics, 1):
                 logger.info(f"📖 浏览进度: {i}/{browse_count}")
-                if self.click_one_topic(topic):
+                if self.browse_topic_safe(topic):
                     self.successful_browsed += 1
                 
                 if i < browse_count:
@@ -678,17 +788,15 @@ class EnhancedSiteAutomator:
             logger.error(f"浏览操作失败: {str(e)}")
 
     def get_topic_list_improved(self):
-        """改进的主题列表获取"""
+        """获取主题列表"""
         try:
-            # 使用 @id=list-area 选择器
             list_area = self.page.ele("@id=list-area", timeout=10)
             if list_area:
                 topics = list_area.eles(".:title")
                 if topics:
-                    logger.info(f"✅ 使用 @id=list-area 找到 {len(topics)} 个主题")
+                    logger.info(f"✅ 使用主要选择器找到 {len(topics)} 个主题")
                     return topics
             
-            # 备用方法: 直接查找所有主题链接
             all_links = self.page.eles('tag:a')
             topic_links = []
             for link in all_links:
@@ -707,8 +815,8 @@ class EnhancedSiteAutomator:
             logger.error(f"获取主题列表失败: {str(e)}")
             return []
 
-    def click_one_topic(self, topic):
-        """点击并浏览单个主题 - 修复了 to_tab 问题"""
+    def browse_topic_safe(self, topic):
+        """安全浏览主题"""
         try:
             topic_href = topic.attr("href")
             if not topic_href:
@@ -721,15 +829,18 @@ class EnhancedSiteAutomator:
                 
             logger.info(f"🔗 访问: {full_url}")
             
-            # 使用 new_tab 而不是 to_tab
             new_tab = self.page.new_tab()
             new_tab.get(full_url)
             time.sleep(3)
             
-            # 执行浏览
-            self.browse_post(new_tab)
+            # 模拟浏览行为
+            HumanBehaviorSimulator.simulate_scroll_behavior(new_tab)
+            HumanBehaviorSimulator.simulate_mouse_movement(new_tab)
             
-            # 关闭标签页
+            # 随机点赞
+            if random.random() < 0.002:
+                self.safe_like_action(new_tab)
+            
             new_tab.close()
             logger.info(f"✅ 成功浏览主题")
             return True
@@ -743,108 +854,47 @@ class EnhancedSiteAutomator:
                 pass
             return False
 
-    def browse_post(self, page):
-        """浏览帖子内容 - 模拟真实用户行为"""
-        scroll_actions = random.randint(8, 15)
-        
-        for i in range(scroll_actions):
-            # 随机滚动距离 550-650 像素
-            scroll_pixels = random.randint(550, 650)
-            page.scroll.down(scroll_pixels)
-            
-            read_time = random.uniform(2, 4)
-            time.sleep(read_time)
-            
-            if random.random() < 0.15:
-                self.random_interaction(page)
-            
-            # 检查是否到达底部
-            at_bottom = page.run_js(
-                "return window.innerHeight + window.scrollY >= document.body.scrollHeight - 100"
-            )
-            
-            if at_bottom and random.random() < 0.7:
-                logger.info("📄 到达页面底部，停止滚动")
-                break
-                
-            if random.random() < 0.08:
-                logger.info("🎲 随机提前退出浏览")
-                break
-
-    def random_interaction(self, page):
-        """随机互动"""
+    def safe_like_action(self, page):
+        """安全点赞"""
         try:
-            x = random.randint(50, 800)
-            y = random.randint(50, 600)
-            page.run_js(f"""
-            var elem = document.elementFromPoint({x}, {y});
-            if (elem) {{
-                var event = new MouseEvent('mousemove', {{
-                    clientX: {x},
-                    clientY: {y},
-                    bubbles: true
-                }});
-                elem.dispatchEvent(event);
-            }}
-            """)
+            like_buttons = page.eles('.like-button, .discourse-reactions-reaction-button')
+            for button in like_buttons:
+                class_attr = button.attr('class', '')
+                if class_attr and 'has-like' not in class_attr:
+                    button.click()
+                    logger.info("👍 执行点赞")
+                    time.sleep(1)
+                    break
         except:
             pass
 
     def get_connect_info_fixed(self):
-        """修复的连接信息获取"""
+        """获取连接信息"""
         logger.info("🔗 获取连接信息")
         
-        if not self.strict_check_login_status():
-            logger.warning("⚠️ 连接信息页面访问前需要重新登录")
-            if not self.enhanced_login_process_with_turnstile():
-                logger.error("❌ 重新登录失败，无法获取连接信息")
+        if not self.check_login_status():
+            logger.warning("⚠️ 需要重新登录")
+            if not self.enhanced_login_process():
+                logger.error("❌ 重新登录失败")
                 return
         
         try:
             logger.info(f"🔗 访问连接信息页面: {self.site_config['connect_url']}")
             self.page.get(self.site_config['connect_url'])
-            time.sleep(8)
+            time.sleep(5)
             
-            current_url = self.page.url
-            page_title = self.page.title
-            
-            logger.info(f"🌐 当前URL: {current_url}")
-            logger.info(f"📄 页面标题: {page_title}")
-            
-            if 'login' in current_url or '登录' in page_title:
-                logger.warning("⚠️ 被重定向到登录页面，需要重新登录")
-                if not self.enhanced_login_process_with_turnstile():
-                    logger.error("❌ 重新登录失败，无法获取连接信息")
-                    return
-                
-                self.page.get(self.site_config['connect_url'])
-                time.sleep(8)
-            
-            # 保存页面HTML用于调试
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            html_path = f"connect_fixed_{self.site_config['name']}_{timestamp}.html"
-            with open(html_path, "w", encoding="utf-8") as f:
-                f.write(self.page.html)
-            logger.info(f"💾 已保存HTML: {html_path}")
-            
-            # 提取连接信息
+            # 简单提取表格数据
             info = self.extract_connect_data_simple(self.page)
             if info:
                 self.display_connect_info(info, "简单提取")
-                return
-            
-            info = self.extract_connect_data_advanced(self.page)
-            if info:
-                self.display_connect_info(info, "高级提取")
-                return
-            
-            logger.error("💥 无法获取连接信息")
+            else:
+                logger.warning("❌ 未找到连接信息")
                 
         except Exception as e:
             logger.error(f"获取连接信息失败: {str(e)}")
 
     def extract_connect_data_simple(self, page):
-        """简单提取连接数据"""
+        """提取连接数据"""
         try:
             tables = page.eles("tag:table")
             
@@ -853,10 +903,6 @@ class EnhancedSiteAutomator:
                 info = []
                 
                 for row in rows:
-                    th_cells = row.eles("tag:th")
-                    if th_cells and len(th_cells) >= 3:
-                        continue
-                        
                     cells = row.eles("tag:td")
                     if len(cells) >= 3:
                         project = cells[0].text.strip()
@@ -874,59 +920,6 @@ class EnhancedSiteAutomator:
             logger.debug(f"简单提取失败: {str(e)}")
             return []
 
-    def extract_connect_data_advanced(self, page):
-        """高级提取连接数据"""
-        try:
-            all_text = page.run_js("return document.body.innerText")
-            
-            keywords = ['访问次数', '回复的话题', '浏览的话题', '已读帖子', '点赞', '获赞']
-            found_keywords = [kw for kw in keywords if kw in all_text]
-            
-            if found_keywords:
-                logger.info(f"✅ 找到连接信息关键词: {found_keywords}")
-            else:
-                logger.warning("❌ 未找到连接信息关键词")
-                return []
-            
-            info = []
-            all_elements = page.eles("tag:tr, tag:div, tag:li, tag:p")
-            
-            for elem in all_elements:
-                try:
-                    text = elem.text.strip()
-                    if any(keyword in text for keyword in keywords):
-                        lines = [line.strip() for line in text.split('\n') if line.strip()]
-                        
-                        if len(lines) >= 2:
-                            project = lines[0]
-                            current = ""
-                            requirement = ""
-                            
-                            for line in lines[1:]:
-                                if any(indicator in line for indicator in ['%', '/', '≥', '>', '<']):
-                                    current = line
-                                elif '要求' in line or '需要' in line or '至少' in line:
-                                    requirement = line
-                            
-                            if project and (current or requirement):
-                                info.append([project, current, requirement])
-                except:
-                    continue
-            
-            unique_info = []
-            seen = set()
-            for item in info:
-                key = tuple(item)
-                if key not in seen:
-                    seen.add(key)
-                    unique_info.append(item)
-            
-            return unique_info
-            
-        except Exception as e:
-            logger.debug(f"高级提取失败: {str(e)}")
-            return []
-
     def display_connect_info(self, info, method):
         """显示连接信息"""
         print("=" * 60)
@@ -934,10 +927,10 @@ class EnhancedSiteAutomator:
         print("=" * 60)
         print(tabulate(info, headers=["项目", "当前", "要求"], tablefmt="grid"))
         print("=" * 60)
-        logger.success(f"✅ 连接信息获取成功 ({method}) - 找到 {len(info)} 个项目")
+        logger.success(f"✅ 连接信息获取成功 - 找到 {len(info)} 个项目")
 
     def save_verification_data_only(self):
-        """只保存验证数据，不保存登录状态"""
+        """只保存验证数据"""
         try:
             cookies = self.page.cookies()
             if cookies:
@@ -951,7 +944,7 @@ class EnhancedSiteAutomator:
                     CacheManager.save_cf_cookies(cf_cookies, self.site_config['name'])
                     logger.info(f"💾 保存 {len(cf_cookies)} 个 Cloudflare 验证cookies")
             
-            logger.success(f"✅ 验证数据已保存 (发现主题: {self.topic_count}, 成功浏览: {self.successful_browsed})")
+            logger.success(f"✅ 验证数据已保存")
 
         except Exception as e:
             logger.error(f"保存验证数据失败: {str(e)}")
@@ -971,10 +964,8 @@ def main():
         level="INFO"
     )
 
-    logger.info("🚀 LinuxDo自动化脚本启动 - Turnstile验证增强版")
-    logger.info(f"🔧 平台: {PLATFORM_IDENTIFIER}")
-    logger.info(f"🔧 User-Agent: {USER_AGENT}")
-    logger.info(f"🔧 扩展状态: {'已启用' if EXTENSION_ENABLED else '未启用'}")
+    logger.info("🚀 LinuxDo自动化脚本启动 - 改进版")
+    logger.info(f"🔧 GitHub Actions 环境: {'是' if IS_GITHUB_ACTIONS else '否'}")
 
     target_sites = SITES
     results = []
@@ -996,6 +987,7 @@ def main():
                 logger.info(f"⏳ 等待 {delay:.1f} 秒后处理下一个站点...")
                 time.sleep(delay)
 
+        # 输出结果
         logger.info("📊 执行结果汇总:")
         table_data = [[r['site'], "✅ 成功" if r['success'] else "❌ 失败"] for r in results]
         print(tabulate(table_data, headers=['站点', '状态'], tablefmt='grid'))
