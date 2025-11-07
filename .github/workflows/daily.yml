@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       site_selector:
-        description: '选择要运行的站点'
+        description: '选择要运行的站点' 
         required: false
         default: 'all'
         type: choice
