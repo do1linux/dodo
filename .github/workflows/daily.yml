@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       site_selector:
-        description: '选择要运行的站点' 
+        description: '选择要运行的站点'
         required: false
         default: 'all'
         type: choice
@@ -32,7 +32,7 @@ jobs:
       with:
         python-version: ${{ env.PYTHON_VERSION }}
 
-    - name: Install system dependencies
+    - name: Install system dependencies for Chromium
       run: |
         sudo apt-get update
         sudo apt-get install -y \
@@ -48,18 +48,7 @@ jobs:
           libasound2 \
           libatspi2.0-0 \
           libcups2 \
-          libx11-xcb1 \
-          wget \
-          unzip
-
-    - name: Install Chrome
-      run: |
-        # 安装 Google Chrome
-        wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
-        echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
-        sudo apt-get update
-        sudo apt-get install -y google-chrome-stable
-        echo "Chrome版本: $(google-chrome --version)"
+          libx11-xcb1
 
     - name: Install Python dependencies
       run: |
@@ -71,27 +60,25 @@ jobs:
       uses: actions/download-artifact@v4
       with:
         name: linuxdo-session-data
-        path: cache/
+        path: ./
       continue-on-error: true
 
     - name: Display cache status
       run: |
         echo "📦 缓存文件状态:"
-        echo "缓存目录内容:"
-        ls -la cache/ 2>/dev/null || echo "缓存目录不存在"
+        echo "cf_cookies 文件:"
+        ls -la cf_cookies_*.json 2>/dev/null || echo "未找到 cf_cookies 文件"
         echo ""
-        echo "各站点缓存文件:"
-        for site in linux_do idcflare; do
-          echo "=== $site ==="
-          ls -la cache/${site}_cookies.json 2>/dev/null || echo "  - ${site}_cookies.json: 不存在"
-          ls -la cache/browser_state_${site}.json 2>/dev/null || echo "  - browser_state_${site}.json: 不存在"
-        done
-
-    - name: Create cache directory
+        echo "browser_state 文件:"
+        ls -la browser_state_*.json 2>/dev/null || echo "未找到 browser_state 文件"
+        echo ""
+    - name: Create turnstilePatch extension
       run: |
-        mkdir -p cache
-        echo "📁 创建缓存目录"
-
+        echo "🔧 创建turnstilePatch扩展..."
+        python setup_directories.py
+        echo "📁 检查扩展目录:"
+        ls -la turnstilePatch/
+        
     - name: Run automation script
       env:
         LINUXDO_USERNAME: ${{ secrets.LINUXDO_USERNAME }}
@@ -99,8 +86,6 @@ jobs:
         IDCFLARE_USERNAME: ${{ secrets.IDCFLARE_USERNAME }}
         IDCFLARE_PASSWORD: ${{ secrets.IDCFLARE_PASSWORD }}
         GITHUB_ACTIONS: 'true'
-        BROWSE_ENABLED: 'true'
-        HEADLESS: 'true'
       run: |
         echo "开始执行自动化脚本..."
         echo "站点选择: ${{ github.event.inputs.site_selector || 'all' }}"
@@ -108,52 +93,16 @@ jobs:
         echo "缓存检查:"
         python -c "
         import os, json
-        from datetime import datetime
         sites = ['linux_do', 'idcflare']
         for site in sites:
-            cookie_file = f'cache/{site}_cookies.json'
-            state_file = f'cache/browser_state_{site}.json'
-            cookie_exists = os.path.exists(cookie_file)
+            cf_file = f'cf_cookies_{site}.json'
+            state_file = f'browser_state_{site}.json'
+            cf_exists = os.path.exists(cf_file)
             state_exists = os.path.exists(state_file)
-            
-            if cookie_exists:
-                try:
-                    with open(cookie_file, 'r') as f:
-                        data = json.load(f)
-                    cache_time = data.get('cache_time', '')
-                    if cache_time:
-                        cache_dt = datetime.fromisoformat(cache_time)
-                        now = datetime.now()
-                        age = (now - cache_dt).days
-                        print(f'{site}: cookies=存在 (已缓存{age}天), browser_state={state_exists}')
-                    else:
-                        print(f'{site}: cookies=存在 (无时间信息), browser_state={state_exists}')
-                except Exception as e:
-                    print(f'{site}: cookies=损坏 ({e}), browser_state={state_exists}')
-            else:
-                print(f'{site}: cookies=不存在, browser_state={state_exists}')
+            print(f'{site}: cf_cookies={cf_exists}, browser_state={state_exists}')
         "
         python main.py
         echo "脚本执行完成"
-
-    - name: Generate browser state files
-      run: |
-        echo "📝 生成浏览器状态文件..."
-        current_time=$(date -Iseconds)
-        for site in linux_do idcflare; do
-          state_file="cache/browser_state_${site}.json"
-          cat > "$state_file" << EOF
-{
-  "site": "${site}",
-  "last_updated": "${current_time}",
-  "status": "completed",
-  "version": "1.0",
-  "browse_count": 5,
-  "login_success": true
-}
-EOF
-          echo "生成: $state_file"
-        done
 
     - name: Upload session data
       uses: actions/upload-artifact@v4
@@ -161,39 +110,21 @@ EOF
       with:
         name: linuxdo-session-data
         path: |
-          cache/linux_do_cookies.json
-          cache/idcflare_cookies.json
-          cache/browser_state_linux_do.json
-          cache/browser_state_idcflare.json
+          cf_cookies_linux_do.json
+          cf_cookies_idcflare.json
+          browser_state_linux_do.json
+          browser_state_idcflare.json
         retention-days: 7
         overwrite: true
 
     - name: Display uploaded artifacts
       run: |
         echo "📤 上传的缓存文件:"
-        echo "缓存目录内容:"
-        ls -la cache/ 2>/dev/null || echo "缓存目录不存在"
+        echo "cf_cookies 文件:"
+        ls -la cf_cookies_*.json 2>/dev/null || echo "未生成 cf_cookies 文件"
         echo ""
-        echo "各站点文件详情:"
-        for site in linux_do idcflare; do
-          echo "=== $site ==="
-          cookie_file="cache/${site}_cookies.json"
-          state_file="cache/browser_state_${site}.json"
-          
-          if [ -f "$cookie_file" ]; then
-            size=$(stat -c%s "$cookie_file" 2>/dev/null || echo "未知")
-            echo "  - ${site}_cookies.json: ${size} 字节"
-          else
-            echo "  - ${site}_cookies.json: 不存在"
-          fi
-          
-          if [ -f "$state_file" ]; then
-            size=$(stat -c%s "$state_file" 2>/dev/null || echo "未知")
-            echo "  - browser_state_${site}.json: ${size} 字节"
-          else
-            echo "  - browser_state_${site}.json: 不存在"
-          fi
-        done
+        echo "browser_state 文件:"
+        ls -la browser_state_*.json 2>/dev/null || echo "未生成 browser_state 文件"
 
     - name: Notify on failure
       if: failure()
@@ -212,3 +143,12 @@ EOF
             
             请查看 Action 日志获取详细错误信息。`
           });
+    - name: Upload debug files
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: connect-debug-files
+        path: |
+          connect_debug_*.html
+          connect_debug_*.png
+        retention-days: 7
