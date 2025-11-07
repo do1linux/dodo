@@ -12,6 +12,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from webdriver_manager.chrome import ChromeDriverManager
 from loguru import logger
 
 # ======================== 配置常量 ========================
@@ -158,31 +159,35 @@ class CloudflareHandler:
         """处理Cloudflare验证"""
         start_time = time.time()
         logger.info("🛡️ 开始处理 Cloudflare验证")
-        # 完整验证流程
-        logger.info("🔄 开始完整Cloudflare验证流程")
+        
         for attempt in range(max_attempts):
             try:
                 current_url = driver.current_url
                 page_title = driver.title
+                
                 # 检查页面是否已经正常加载
-                if page_title and page_title != "请稍候…" and "Checking" not in page_title:
+                if page_title and page_title != "请稍候…" and "Checking" not in page_title and "Just a moment" not in page_title:
                     logger.success("✅ 页面已正常加载，Cloudflare验证通过")
                     return True
+                
                 # 等待验证
                 wait_time = random.uniform(8, 15)
                 logger.info(f"⏳ 等待Cloudflare验证完成 ({wait_time:.1f}秒) - 尝试 {attempt + 1}/{max_attempts}")
                 time.sleep(wait_time)
+                
                 # 检查超时
                 if time.time() - start_time > timeout:
                     logger.warning("⚠️ Cloudflare处理超时")
                     break
+                    
             except Exception as e:
                 logger.error(f"Cloudflare处理异常 (尝试 {attempt + 1}): {str(e)}")
                 time.sleep(10)
+        
         # 最终检查
         try:
             page_title = driver.title
-            if page_title and page_title != "请稍候…" and "Checking" not in page_title:
+            if page_title and page_title != "请稍候…" and "Checking" not in page_title and "Just a moment" not in page_title:
                 logger.success("✅ 最终验证: Cloudflare验证通过")
                 return True
             else:
@@ -219,22 +224,36 @@ class LinuxDoBrowser:
         self.login_attempts = 0
         self.max_login_attempts = 2
         
-        # Chrome配置
+        # Chrome配置 - 使用webdriver-manager自动管理驱动
         chrome_options = Options()
         if HEADLESS:
-            chrome_options.add_argument('--headless')
+            chrome_options.add_argument('--headless=new')
         chrome_options.add_argument('--no-sandbox')
+        chrome_options.add_argument('--disable-dev-shm-usage')
         chrome_options.add_argument('--disable-blink-features=AutomationControlled')
+        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        chrome_options.add_experimental_option('useAutomationExtension', False)
         chrome_options.add_argument('--disable-features=VizDisplayCompositor')
         chrome_options.add_argument('--disable-background-timer-throttling')
         chrome_options.add_argument('--disable-backgrounding-occluded-windows')
         chrome_options.add_argument('--disable-renderer-backgrounding')
-        chrome_options.add_argument('--disable-dev-shm-usage')
         chrome_options.add_argument('--lang=zh-CN,zh;q=0.9,en;q=0.8')
         chrome_options.add_argument(f'--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36')
         
-        # 启动浏览器
-        self.driver = webdriver.Chrome(options=chrome_options)
+        try:
+            # 使用webdriver-manager自动下载和管理ChromeDriver
+            service = Service(ChromeDriverManager().install())
+            self.driver = webdriver.Chrome(service=service, options=chrome_options)
+            self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+        except Exception as e:
+            logger.error(f"Chrome驱动初始化失败: {str(e)}")
+            # 备用方案：尝试直接使用系统Chrome
+            try:
+                self.driver = webdriver.Chrome(options=chrome_options)
+            except Exception as e2:
+                logger.error(f"备用Chrome驱动也失败: {str(e2)}")
+                raise
+        
         self.wait = WebDriverWait(self.driver, 20)
 
     def get_all_cookies(self):
@@ -726,6 +745,7 @@ class LinuxDoBrowser:
 def main():
     """主函数"""
     logger.info("🎯 Linux.Do 多站点自动化脚本启动 (Selenium版)")
+    
     # 设置环境变量
     os.environ.pop("DISPLAY", None)
     success_sites = []
