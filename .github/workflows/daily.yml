@@ -5,7 +5,7 @@ on:
     inputs:
       site_selector:
         description: '选择要运行的站点'
-        required: false
+        required: true
         default: 'all'
         type: choice
         options:
@@ -54,9 +54,6 @@ jobs:
 
     - name: Install Chrome
       run: |
-        sudo apt-get update
-        sudo apt-get install -y google-chrome-stable || true
-        # 如果上面的命令失败，使用备用安装方法
         wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
         echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
         sudo apt-get update
@@ -102,9 +99,10 @@ jobs:
         GITHUB_ACTIONS: 'true'
         BROWSE_ENABLED: 'true'
         HEADLESS: 'true'
+        SITE_SELECTOR: ${{ github.event.inputs.site_selector || 'all' }}
       run: |
         echo "开始执行自动化脚本..."
-        echo "站点选择: ${{ github.event.inputs.site_selector || 'all' }}"
+        echo "站点选择: $SITE_SELECTOR"
         echo "当前时间: $(date)"
         echo "缓存检查:"
         python -c "
@@ -212,6 +210,7 @@ EOF
             
             工作流运行: ${context.runId}
             触发时间: ${new Date().toISOString()}
+            选择的站点: '${{ github.event.inputs.site_selector || 'all' }}'
             
             请查看 Action 日志获取详细错误信息。`
           });
