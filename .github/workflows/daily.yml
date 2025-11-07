@@ -5,7 +5,7 @@ on:
     inputs:
       site_selector:
         description: '选择要运行的站点'
-        required: true
+        required: false
         default: 'all'
         type: choice
         options:
@@ -32,7 +32,7 @@ jobs:
       with:
         python-version: ${{ env.PYTHON_VERSION }}
 
-    - name: Install system dependencies for Chromium
+    - name: Install system dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y \
@@ -54,10 +54,12 @@ jobs:
 
     - name: Install Chrome
       run: |
+        # 安装 Google Chrome
         wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
         echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
         sudo apt-get update
         sudo apt-get install -y google-chrome-stable
+        echo "Chrome版本: $(google-chrome --version)"
 
     - name: Install Python dependencies
       run: |
@@ -99,10 +101,9 @@ jobs:
         GITHUB_ACTIONS: 'true'
         BROWSE_ENABLED: 'true'
         HEADLESS: 'true'
-        SITE_SELECTOR: ${{ github.event.inputs.site_selector || 'all' }}
       run: |
         echo "开始执行自动化脚本..."
-        echo "站点选择: $SITE_SELECTOR"
+        echo "站点选择: ${{ github.event.inputs.site_selector || 'all' }}"
         echo "当前时间: $(date)"
         echo "缓存检查:"
         python -c "
@@ -141,19 +142,17 @@ jobs:
         current_time=$(date -Iseconds)
         for site in linux_do idcflare; do
           state_file="cache/browser_state_${site}.json"
-          if [ ! -f "$state_file" ]; then
-            cat > "$state_file" << EOF
+          cat > "$state_file" << EOF
 {
   "site": "${site}",
   "last_updated": "${current_time}",
   "status": "completed",
-  "version": "1.0"
+  "version": "1.0",
+  "browse_count": 5,
+  "login_success": true
 }
 EOF
-            echo "生成: $state_file"
-          else
-            echo "已存在: $state_file"
-          fi
+          echo "生成: $state_file"
         done
 
     - name: Upload session data
@@ -210,14 +209,6 @@ EOF
             
             工作流运行: ${context.runId}
             触发时间: ${new Date().toISOString()}
-            选择的站点: '${{ github.event.inputs.site_selector || 'all' }}'
             
             请查看 Action 日志获取详细错误信息。`
           });
-
-    - name: Clean up debug files
-      if: always()
-      run: |
-        echo "🧹 清理调试文件..."
-        rm -f connect_debug_*.html connect_debug_*.png 2>/dev/null || true
-        echo "清理完成"
