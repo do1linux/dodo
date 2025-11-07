@@ -56,49 +56,99 @@ EXTENSION_PATH = os.path.abspath(
 # 检查扩展目录是否存在
 EXTENSION_ENABLED = os.path.exists(EXTENSION_PATH)
 
-# Cloudflare Turnstile 处理相关常量
+# 改进的 Cloudflare Turnstile 处理脚本
 TURNSTILE_SCRIPT = """
-// 尝试获取 Turnstile token
+// 改进的 Turnstile token 获取函数
 function getTurnstileToken() {
     return new Promise((resolve, reject) => {
-        // 方法1: 直接检查 turnstile 对象
+        console.log('开始获取 Turnstile token...');
+        
+        // 方法1: 检查全局 turnstile 对象
         if (window.turnstile) {
-            const response = window.turnstile.getResponse();
-            if (response && response.length > 0) {
-                resolve(response);
-                return;
+            console.log('检测到 window.turnstile 对象');
+            try {
+                const response = window.turnstile.getResponse();
+                if (response && response.length > 0) {
+                    console.log('通过 turnstile.getResponse() 获取到 token');
+                    resolve(response);
+                    return;
+                }
+            } catch (e) {
+                console.log('turnstile.getResponse() 出错:', e);
             }
         }
         
-        // 方法2: 检查隐藏的 input 字段
+        // 方法2: 检查 iframe 中的 token
+        const iframes = document.querySelectorAll('iframe[src*="challenges.cloudflare.com"]');
+        if (iframes.length > 0) {
+            console.log('检测到 Cloudflare iframe');
+            // 等待 iframe 加载完成
+            setTimeout(() => {
+                const hiddenInput = document.querySelector('input[name="cf-turnstile-response"]');
+                if (hiddenInput && hiddenInput.value) {
+                    console.log('通过 iframe 获取到 token');
+                    resolve(hiddenInput.value);
+                } else {
+                    reject(new Error('iframe 中未找到 token'));
+                }
+            }, 3000);
+            return;
+        }
+        
+        // 方法3: 检查隐藏的 input 字段
         const hiddenInput = document.querySelector('input[name="cf-turnstile-response"]');
         if (hiddenInput && hiddenInput.value) {
+            console.log('通过隐藏字段获取到 token');
             resolve(hiddenInput.value);
             return;
         }
         
-        // 方法3: 等待一段时间后重试
-        setTimeout(() => {
+        // 方法4: 轮询等待 token 出现
+        let attempts = 0;
+        const maxAttempts = 10;
+        
+        function pollForToken() {
+            attempts++;
+            console.log(`轮询等待 token (${attempts}/${maxAttempts})`);
+            
+            // 检查所有可能的方式
             if (window.turnstile) {
-                const response = window.turnstile.getResponse();
-                if (response && response.length > 0) {
-                    resolve(response);
-                } else {
-                    reject(new Error('无法获取 Turnstile token'));
-                }
-            } else {
-                reject(new Error('Turnstile 对象未找到'));
+                try {
+                    const response = window.turnstile.getResponse();
+                    if (response && response.length > 0) {
+                        resolve(response);
+                        return;
+                    }
+                } catch (e) {}
             }
-        }, 3000);
+            
+            const input = document.querySelector('input[name="cf-turnstile-response"]');
+            if (input && input.value) {
+                resolve(input.value);
+                return;
+            }
+            
+            if (attempts >= maxAttempts) {
+                reject(new Error(`轮询 ${maxAttempts} 次后仍未获取到 token`));
+                return;
+            }
+            
+            setTimeout(pollForToken, 2000);
+        }
+        
+        pollForToken();
     });
 }
 
 // 设置 Turnstile token 到表单
 function setTurnstileToken(token) {
+    console.log('设置 Turnstile token 到表单');
+    
     // 查找现有的 cf-turnstile-response 字段
     let existingInput = document.querySelector('input[name="cf-turnstile-response"]');
     if (existingInput) {
         existingInput.value = token;
+        console.log('已设置到现有字段');
     } else {
         // 创建新的隐藏字段
         const newInput = document.createElement('input');
@@ -110,6 +160,10 @@ function setTurnstileToken(token) {
         const form = document.querySelector('form');
         if (form) {
             form.appendChild(newInput);
+            console.log('已创建新字段并添加到表单');
+        } else {
+            console.log('未找到表单，无法设置 token');
+            return false;
         }
     }
     return true;
@@ -120,7 +174,7 @@ async function handleTurnstile() {
     try {
         console.log('开始处理 Turnstile 验证...');
         const token = await getTurnstileToken();
-        console.log('获取到 Turnstile token:', token.substring(0, 20) + '...');
+        console.log('成功获取 Turnstile token:', token.substring(0, 20) + '...');
         
         const success = setTurnstileToken(token);
         if (success) {
@@ -136,7 +190,113 @@ async function handleTurnstile() {
 }
 
 // 执行处理
-handleTurnstile();
+return handleTurnstile();
+"""
+
+# 备用 Turnstile 处理脚本
+TURNSTILE_SCRIPT_ALTERNATIVE = """
+// 备用方法：直接模拟用户交互
+function simulateUserInteraction() {
+    console.log('开始模拟用户交互...');
+    
+    // 查找 Turnstile 容器
+    const turnstileContainer = document.querySelector('.cf-turnstile, [data-sitekey]');
+    if (turnstileContainer) {
+        console.log('找到 Turnstile 容器，模拟点击');
+        // 模拟点击事件
+        const clickEvent = new MouseEvent('click', {
+            bubbles: true,
+            cancelable: true,
+            view: window
+        });
+        turnstileContainer.dispatchEvent(clickEvent);
+        
+        // 模拟鼠标移动
+        const rect = turnstileContainer.getBoundingClientRect();
+        const mouseMoveEvent = new MouseEvent('mousemove', {
+            clientX: rect.left + rect.width / 2,
+            clientY: rect.top + rect.height / 2,
+            bubbles: true,
+            cancelable: true
+        });
+        turnstileContainer.dispatchEvent(mouseMoveEvent);
+    }
+    
+    return true;
+}
+
+// 等待并获取 token
+function waitForToken() {
+    return new Promise((resolve, reject) => {
+        let attempts = 0;
+        const maxAttempts = 15;
+        
+        function check() {
+            attempts++;
+            console.log(`检查 token (${attempts}/${maxAttempts})`);
+            
+            // 检查 token 是否可用
+            if (window.turnstile) {
+                try {
+                    const response = window.turnstile.getResponse();
+                    if (response && response.length > 0) {
+                        resolve(response);
+                        return;
+                    }
+                } catch (e) {}
+            }
+            
+            const input = document.querySelector('input[name="cf-turnstile-response"]');
+            if (input && input.value) {
+                resolve(input.value);
+                return;
+            }
+            
+            if (attempts >= maxAttempts) {
+                reject(new Error('等待 token 超时'));
+                return;
+            }
+            
+            // 每2秒检查一次
+            setTimeout(check, 2000);
+        }
+        
+        check();
+    });
+}
+
+async function alternativeTurnstileHandler() {
+    try {
+        console.log('使用备用方法处理 Turnstile...');
+        
+        // 首先模拟用户交互
+        simulateUserInteraction();
+        
+        // 等待 token
+        const token = await waitForToken();
+        console.log('备用方法获取到 token:', token.substring(0, 20) + '...');
+        
+        // 设置 token
+        let existingInput = document.querySelector('input[name="cf-turnstile-response"]');
+        if (existingInput) {
+            existingInput.value = token;
+        } else {
+            const newInput = document.createElement('input');
+            newInput.type = 'hidden';
+            newInput.name = 'cf-turnstile-response';
+            newInput.value = token;
+            const form = document.querySelector('form');
+            if (form) form.appendChild(newInput);
+        }
+        
+        return { success: true, token: token };
+    } catch (error) {
+        console.error('备用方法失败:', error);
+        return { success: false, error: error.message };
+    }
+}
+
+return alternativeTurnstileHandler();
 """
 
 # 重试装饰器
@@ -204,7 +364,7 @@ class EnhancedBrowserManager:
         try:
             co = ChromiumOptions()
             
-            # 优化的浏览器参数
+            # 优化的浏览器参数 - 减少自动化特征
             browser_args = [
                 '--no-sandbox', 
                 '--disable-dev-shm-usage',
@@ -214,7 +374,11 @@ class EnhancedBrowserManager:
                 '--disable-extensions',
                 '--disable-plugins',
                 '--disable-web-security',
-                '--allow-running-insecure-content'
+                '--allow-running-insecure-content',
+                '--disable-features=VizDisplayCompositor',
+                '--disable-background-timer-throttling',
+                '--disable-renderer-backgrounding',
+                '--disable-backgrounding-occluded-windows'
             ]
             
             for arg in browser_args:
@@ -246,6 +410,7 @@ class EnhancedBrowserManager:
             Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
             Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh', 'en'] });
             window.chrome = { runtime: {} };
+            delete navigator.__proto__.webdriver;
             """)
             
             return page
@@ -314,13 +479,19 @@ class EnhancedSiteAutomator:
         """增强的登录流程，专门处理 Turnstile 验证"""
         try:
             logger.info("🔐 开始完整登录流程（含 Turnstile 处理）")
+            
+            # 清除可能的旧会话
+            self.page.get("about:blank")
+            time.sleep(2)
+            
             self.page.get(self.site_config['login_url'])
-            time.sleep(5)
+            time.sleep(8)  # 增加初始等待时间
 
             # 检查是否有 Cloudflare Turnstile 验证
-            if self.detect_turnstile_challenge():
+            turnstile_detected = self.detect_turnstile_challenge()
+            if turnstile_detected:
                 logger.info("🛡️ 检测到 Cloudflare Turnstile 验证")
-                if self.handle_turnstile_challenge():
+                if self.enhanced_turnstile_handler():
                     logger.info("✅ Turnstile 验证处理成功")
                 else:
                     logger.error("❌ Turnstile 验证处理失败")
@@ -330,9 +501,9 @@ class EnhancedSiteAutomator:
             password = self.credentials['password']
 
             # 使用更健壮的元素定位
-            username_field = self.page.ele("@id=login-account-name", timeout=15)
-            password_field = self.page.ele("@id=login-account-password", timeout=15)
-            login_button = self.page.ele("@id=login-button", timeout=15)
+            username_field = self.page.ele("@id=login-account-name", timeout=20)
+            password_field = self.page.ele("@id=login-account-password", timeout=20)
+            login_button = self.page.ele("@id=login-button", timeout=20)
 
             if not all([username_field, password_field, login_button]):
                 logger.error("❌ 登录表单元素未找到")
@@ -340,24 +511,26 @@ class EnhancedSiteAutomator:
 
             # 模拟人类输入
             self.human_like_input(username_field, username)
-            time.sleep(random.uniform(1, 2))
+            time.sleep(random.uniform(1, 3))
             self.human_like_input(password_field, password)
             time.sleep(random.uniform(1, 2))
 
             # 再次检查是否有 Turnstile 验证（可能在输入后出现）
             if self.detect_turnstile_challenge():
                 logger.info("🛡️ 输入后检测到 Turnstile 验证")
-                if self.handle_turnstile_challenge():
+                if self.enhanced_turnstile_handler():
                     logger.info("✅ 输入后 Turnstile 验证处理成功")
 
+            # 点击登录按钮
             login_button.click()
-            time.sleep(8)
+            time.sleep(10)
 
             # 检查登录结果
             return self.check_login_status()
 
         except Exception as e:
             logger.error(f"登录流程异常: {str(e)}")
+            traceback.print_exc()
             return False
 
     def detect_turnstile_challenge(self):
@@ -368,7 +541,8 @@ class EnhancedSiteAutomator:
                 'iframe[src*="challenges.cloudflare.com"]',
                 'div[class*="turnstile"]',
                 'input[name="cf-turnstile-response"]',
-                '.cf-turnstile'
+                '.cf-turnstile',
+                '[data-sitekey]'
             ]
             
             for selector in turnstile_selectors:
@@ -379,7 +553,7 @@ class EnhancedSiteAutomator:
             
             # 检查页面内容中是否包含 Turnstile 相关文本
             page_text = self.page.html.lower()
-            turnstile_keywords = ['cloudflare', 'turnstile', 'challenge', 'verifying']
+            turnstile_keywords = ['cloudflare', 'turnstile', 'challenge', 'verifying', 'captcha']
             if any(keyword in page_text for keyword in turnstile_keywords):
                 logger.info("✅ 检测到 Turnstile 相关关键词")
                 return True
@@ -389,15 +563,16 @@ class EnhancedSiteAutomator:
             logger.debug(f"检测 Turnstile 验证失败: {str(e)}")
             return False
 
-    def handle_turnstile_challenge(self):
-        """处理 Cloudflare Turnstile 验证"""
+    def enhanced_turnstile_handler(self):
+        """增强的 Turnstile 验证处理器"""
         try:
             logger.info("🔄 开始处理 Turnstile 验证...")
             
             # 等待 Turnstile 加载完成
-            time.sleep(5)
+            time.sleep(8)
             
-            # 注入并执行 Turnstile 处理脚本
+            # 首先尝试主脚本
+            logger.info("🔄 尝试主 Turnstile 处理脚本...")
             result = self.page.run_js(TURNSTILE_SCRIPT)
             
             if result and result.get('success'):
@@ -416,11 +591,67 @@ class EnhancedSiteAutomator:
                 return True
             else:
                 error_msg = result.get('error', '未知错误') if result else '无结果'
-                logger.error(f"❌ 获取 Turnstile token 失败: {error_msg}")
-                return False
+                logger.warning(f"⚠️ 主脚本失败: {error_msg}")
+                
+                # 尝试备用脚本
+                logger.info("🔄 尝试备用 Turnstile 处理脚本...")
+                result2 = self.page.run_js(TURNSTILE_SCRIPT_ALTERNATIVE)
+                
+                if result2 and result2.get('success'):
+                    token = result2.get('token')
+                    logger.info(f"✅ 备用脚本成功获取 Turnstile token: {token[:20]}...")
+                    
+                    # 保存到缓存
+                    turnstile_data = {
+                        'token': token,
+                        'timestamp': datetime.now().isoformat(),
+                        'site': self.site_config['name']
+                    }
+                    CacheManager.save_turnstile_cache(turnstile_data, self.site_config['name'])
+                    logger.info("💾 Turnstile token 已保存到缓存")
+                    return True
+                else:
+                    error_msg2 = result2.get('error', '未知错误') if result2 else '无结果'
+                    logger.error(f"❌ 备用脚本也失败: {error_msg2}")
+                    
+                    # 最后尝试：手动等待并检查
+                    logger.info("🔄 尝试手动等待 Turnstile 完成...")
+                    return self.manual_turnstile_wait()
                 
         except Exception as e:
             logger.error(f"❌ 处理 Turnstile 验证时发生异常: {str(e)}")
+            return False
+
+    def manual_turnstile_wait(self):
+        """手动等待 Turnstile 验证完成"""
+        try:
+            logger.info("⏳ 手动等待 Turnstile 验证完成...")
+            
+            # 等待最多30秒
+            for i in range(15):
+                time.sleep(2)
+                
+                # 检查是否还有 Turnstile 元素
+                if not self.detect_turnstile_challenge():
+                    logger.info("✅ Turnstile 验证似乎已完成")
+                    return True
+                    
+                # 检查是否有 token
+                try:
+                    token_input = self.page.ele('@name=cf-turnstile-response')
+                    if token_input and token_input.value:
+                        logger.info("✅ 检测到自动填充的 Turnstile token")
+                        return True
+                except:
+                    pass
+                    
+                logger.info(f"⏳ 等待 Turnstile 完成... ({i+1}/15)")
+            
+            logger.error("❌ 手动等待 Turnstile 超时")
+            return False
+            
+        except Exception as e:
+            logger.error(f"❌ 手动等待失败: {str(e)}")
             return False
 
     def alternative_login_method(self):
@@ -431,9 +662,9 @@ class EnhancedSiteAutomator:
             password = self.credentials['password']
             
             # 尝试通过name属性查找
-            username_field = self.page.ele('@name=username', timeout=10)
-            password_field = self.page.ele('@name=password', timeout=10)
-            login_button = self.page.ele('@type=submit', timeout=10)
+            username_field = self.page.ele('@name=username', timeout=15)
+            password_field = self.page.ele('@name=password', timeout=15)
+            login_button = self.page.ele('@type=submit', timeout=15)
             
             if all([username_field, password_field, login_button]):
                 self.human_like_input(username_field, username)
@@ -441,7 +672,7 @@ class EnhancedSiteAutomator:
                 self.human_like_input(password_field, password)
                 time.sleep(1)
                 login_button.click()
-                time.sleep(8)
+                time.sleep(10)
                 return self.check_login_status()
                 
             return False
@@ -451,24 +682,43 @@ class EnhancedSiteAutomator:
 
     def human_like_input(self, element, text):
         """模拟人类输入"""
-        for char in text:
-            element.input(char)
-            time.sleep(random.uniform(0.05, 0.15))
+        try:
+            element.clear()
+            time.sleep(0.5)
+            for char in text:
+                element.input(char)
+                time.sleep(random.uniform(0.05, 0.2))
+        except Exception as e:
+            logger.warning(f"输入时发生错误: {str(e)}")
+            # 备用输入方法
+            element.input(text)
 
     def check_login_status(self):
         username = self.credentials['username']
         logger.info(f"🔍 检查登录状态，查找用户名: {username}")
 
+        # 等待页面稳定
+        time.sleep(3)
+
         # 方法1: 检查用户菜单
         try:
-            user_menu = self.page.ele("@id=current-user", timeout=8)
+            user_menu = self.page.ele("@id=current-user", timeout=10)
             if user_menu:
                 logger.info("✅ 通过用户菜单验证登录成功")
                 return True
         except:
             pass
 
-        # 方法2: 访问个人资料页面验证
+        # 方法2: 检查登出按钮
+        try:
+            logout_btn = self.page.ele('@text=退出', timeout=8)
+            if logout_btn:
+                logger.info("✅ 通过退出按钮验证登录成功")
+                return True
+        except:
+            pass
+
+        # 方法3: 访问个人资料页面验证
         try:
             profile_url = f"{self.site_config['base_url']}/u/{username}"
             self.page.get(profile_url)
@@ -484,9 +734,16 @@ class EnhancedSiteAutomator:
         except Exception as e:
             logger.debug(f"个人资料页面验证失败: {str(e)}")
 
+        # 方法4: 检查当前URL是否还在登录页面
+        current_url = self.page.url.lower()
+        if 'login' in current_url:
+            logger.error("❌ 仍然在登录页面，登录可能失败")
+            return False
+
         logger.error(f"❌ 登录状态检查失败")
         return False
 
+    # 其余方法保持不变（perform_browsing_actions_improved, get_topic_list_improved等）
     def perform_browsing_actions_improved(self):
         """改进的浏览操作，确保被网站记录"""
         try:
