@@ -205,6 +205,43 @@ class LinuxDoBrowser:
             logger.error(f"❌ 清除cookies失败: {e}")
             return False
 
+    def wait_for_login_elements(self, timeout=30):
+        """等待登录页面元素加载完成"""
+        logger.info("⏳ 等待登录页面元素加载...")
+        
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            try:
+                # 检测登录表单元素
+                username_fields = self.page.eles('@id=login-account-name, @name=username, input[type="text"]')
+                password_fields = self.page.eles('@id=login-account-password, @name=password, input[type="password"]')
+                login_buttons = self.page.eles('@id=login-button, button[type="submit"]')
+                
+                if username_fields and password_fields and login_buttons:
+                    logger.info("✅ 登录页面元素加载完成")
+                    return True
+                
+                # 检查是否有机器人验证
+                turnstile_elements = self.page.eles('[data-sitekey], .cf-turnstile, iframe[src*="challenges.cloudflare.com"]')
+                recaptcha_elements = self.page.eles('.g-recaptcha, iframe[src*="google.com/recaptcha"]')
+                
+                if turnstile_elements:
+                    logger.warning("🛡️ 检测到 Cloudflare Turnstile 验证，正在处理...")
+                    if self.handle_turnstile_verification():
+                        continue
+                
+                if recaptcha_elements:
+                    logger.warning("🛡️ 检测到 Google reCAPTCHA 验证")
+                
+                time.sleep(2)
+                
+            except Exception as e:
+                logger.warning(f"等待登录元素时出错: {e}")
+                time.sleep(2)
+        
+        logger.error("❌ 登录页面元素加载超时")
+        return False
+
     def detect_login_elements_and_bot_protections(self):
         """检测登录页面元素和机器人验证"""
         logger.info("🔍 检测登录页面元素和验证...")
@@ -253,7 +290,7 @@ class LinuxDoBrowser:
         """处理 Cloudflare Turnstile 验证"""
         logger.info("🛡️ 处理 Cloudflare Turnstile 验证...")
         
-        max_attempts = 8
+        max_attempts = 10
         for attempt in range(max_attempts):
             try:
                 # 检查是否存在 Turnstile
@@ -268,26 +305,53 @@ class LinuxDoBrowser:
                 token = self.page.run_js("""
                     try {
                         if (typeof turnstile !== 'undefined') {
+                            console.log('Turnstile found, getting response...');
                             return turnstile.getResponse();
+                        } else {
+                            console.log('Turnstile not found in global scope');
+                            // 尝试从 iframe 中获取
+                            const iframe = document.querySelector('iframe[src*="challenges.cloudflare.com"]');
+                            if (iframe && iframe.contentWindow && iframe.contentWindow.turnstile) {
+                                return iframe.contentWindow.turnstile.getResponse();
+                            }
                         }
                         return null;
                     } catch(e) {
+                        console.error('Error getting turnstile response:', e);
                         return null;
                     }
                 """)
                 
                 if token:
-                    logger.info(f"✅ 获取到 Turnstile token")
+                    logger.info(f"✅ 获取到 Turnstile token: {token[:20]}...")
                     
                     # 设置到表单字段
-                    cf_inputs = self.page.eles('@name=cf-turnstile-response')
+                    cf_inputs = self.page.eles('@name=cf-turnstile-response, input[name*="cf-turnstile"]')
                     if cf_inputs:
                         cf_inputs[0].input(token)
                         logger.info("✅ 已设置 cf-turnstile-response")
                         return True
+                    else:
+                        logger.warning("⚠️ 未找到 cf-turnstile-response 输入框")
                 
-                # 等待并重试
+                # 等待验证完成
                 time.sleep(3)
+                
+                # 检查验证是否自动完成
+                current_token = self.page.run_js("""
+                    try {
+                        if (typeof turnstile !== 'undefined') {
+                            return turnstile.getResponse() || 'empty';
+                        }
+                        return 'not_found';
+                    } catch(e) {
+                        return 'error: ' + e.message;
+                    }
+                """)
+                
+                if current_token and current_token != 'empty' and current_token != 'not_found':
+                    logger.info(f"✅ Turnstile 验证已完成，token: {current_token[:20]}...")
+                    return True
                 
             except Exception as e:
                 logger.warning(f"⚠️ 处理 Turnstile 时出错: {e}")
@@ -312,7 +376,9 @@ class LinuxDoBrowser:
             '.current-user', 
             '.user-menu',
             '[data-current-user]',
-            '[class*="current-user"]'
+            '[class*="current-user"]',
+            '.header-dropdown-toggle',
+            '.toggle-button[data-user-card]'
         ]
         
         for selector in user_selectors:
@@ -326,26 +392,34 @@ class LinuxDoBrowser:
             except:
                 continue
         
-        # 方法3: 尝试访问用户个人资料页面
+        # 方法3: 尝试访问用户个人资料页面（使用新标签页，避免切换问题）
         try:
             profile_url = f"{self.site_config['base_url']}/u/{self.username}"
-            current_tab = self.page.tab_id
+            
+            # 保存当前页面引用
+            current_page = self.page
+            
+            # 创建新标签页访问个人资料
             profile_tab = self.browser.new_tab()
             profile_tab.get(profile_url)
-            time.sleep(3)
+            time.sleep(5)
             
             profile_content = profile_tab.html
             if self.username and self.username.lower() in profile_content.lower():
                 logger.success(f"✅ 在个人资料页面找到用户名: {self.username}")
                 profile_tab.close()
-                # 切换回原来的标签页
-                self.browser.to_tab(current_tab)
+                # 重新激活原始页面
+                self.page = current_page
                 return True
             else:
                 profile_tab.close()
-                self.browser.to_tab(current_tab)
+                # 重新激活原始页面
+                self.page = current_page
         except Exception as e:
             logger.warning(f"访问个人资料页面失败: {e}")
+            # 确保页面引用正确
+            if 'current_page' in locals():
+                self.page = current_page
         
         logger.error(f"❌ 未找到用户名: {self.username}，登录失败")
         return False
@@ -360,6 +434,11 @@ class LinuxDoBrowser:
         # 访问登录页面
         self.page.get(self.site_config['login_url'])
         time.sleep(5)
+        
+        # 等待登录元素加载完成
+        if not self.wait_for_login_elements():
+            logger.error("❌ 登录页面元素加载失败")
+            return False
         
         # 检测登录元素和机器人验证
         if not self.detect_login_elements_and_bot_protections():
@@ -516,7 +595,7 @@ class LinuxDoBrowser:
         time.sleep(5)
         
         try:
-            # 定位主题列表
+            # 定位主题列表 - 使用 DrissionPage 的特殊选择器语法
             topic_list = self.page.ele("@id=list-area").eles(".:title")
             if not topic_list:
                 logger.warning("⚠️ 未找到主题列表，尝试备用选择器")
@@ -564,7 +643,7 @@ class LinuxDoBrowser:
             return False
 
     def print_connect_info(self):
-        """打印连接信息"""
+        """打印连接信息 - 不需要登录验证"""
         logger.info("🔗 获取连接信息")
         
         # 使用新标签页打开连接信息页面
