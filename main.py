@@ -238,7 +238,8 @@ class BrowserManager:
             else:
                 logger.warning("⚠️ 扩展目录不存在，跳过扩展加载")
             
-            page = ChromiumPage(addr_driver_opts=co)
+            # 修复参数错误，使用正确的构造方式
+            page = ChromiumPage(addr_or_opts=co)
             page.set.timeouts(base=PAGE_TIMEOUT)
             
             # 仅加载 Cloudflare cookies
@@ -918,6 +919,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
