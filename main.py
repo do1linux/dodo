@@ -706,9 +706,6 @@ class LinuxDoBrowser:
                 if i < browse_count - 1:
                     wait_time = random.uniform(5, 12)
                     time.sleep(wait_time)
-            except Exception as e:
-                logger.error(f"浏览主题失败: {str(e)}")
-                continue
 
             logger.info(f"📊 浏览完成: 成功 {success_count}/{browse_count} 个主题")
             return success_count > 0
