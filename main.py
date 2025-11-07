@@ -22,7 +22,7 @@ SITE_CREDENTIALS = {
     }
 }
 
-# 站点配置列表 - 修复名称问题
+# 站点配置列表
 SITES = [
     {
         'name': 'linux_do',
@@ -174,6 +174,37 @@ class LinuxDoBrowser:
         """
         self.page.run_js(stealth_script)
 
+    def clear_all_cookies_except_cf(self):
+        """清除所有cookies，除了Cloudflare相关的"""
+        try:
+            # 获取所有cookies
+            all_cookies = self.browser.get_cookies()
+            if not all_cookies:
+                return True
+                
+            # 只保留Cloudflare相关的cookies
+            cf_keywords = ['cf_', 'cloudflare', '__cf', '_cf', 'cf-bm', 'cf-cookie', 'cf_clearance']
+            cookies_to_keep = []
+            
+            for cookie in all_cookies:
+                cookie_name = cookie.get('name', '').lower()
+                if any(keyword in cookie_name for keyword in cf_keywords):
+                    cookies_to_keep.append(cookie)
+            
+            # 清除所有cookies
+            self.browser.clear_cookies()
+            
+            # 重新设置Cloudflare cookies
+            for cookie in cookies_to_keep:
+                self.browser.set_cookies(cookie)
+                
+            logger.info(f"✅ 已清除非Cloudflare cookies，保留了 {len(cookies_to_keep)} 个Cloudflare cookies")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ 清除cookies失败: {e}")
+            return False
+
     def detect_login_elements_and_bot_protections(self):
         """检测登录页面元素和机器人验证"""
         logger.info("🔍 检测登录页面元素和验证...")
@@ -307,11 +338,12 @@ class LinuxDoBrowser:
             if self.username and self.username.lower() in profile_content.lower():
                 logger.success(f"✅ 在个人资料页面找到用户名: {self.username}")
                 profile_tab.close()
-                self.page = self.browser.get_tab(current_tab)
+                # 切换回原来的标签页
+                self.browser.to_tab(current_tab)
                 return True
             else:
                 profile_tab.close()
-                self.page = self.browser.get_tab(current_tab)
+                self.browser.to_tab(current_tab)
         except Exception as e:
             logger.warning(f"访问个人资料页面失败: {e}")
         
@@ -322,8 +354,8 @@ class LinuxDoBrowser:
         """强制登录 - 每次运行都重新登录"""
         logger.info("🔐 开始强制登录流程")
         
-        # 清除所有cookies（除了Cloudflare）
-        self.browser.delete_cookies(excludes=['__cf', 'cf_', '_cf', 'cf-bm'])
+        # 清除所有非Cloudflare cookies
+        self.clear_all_cookies_except_cf()
         
         # 访问登录页面
         self.page.get(self.site_config['login_url'])
