@@ -87,10 +87,12 @@ jobs:
         IDCFLARE_USERNAME: ${{ secrets.IDCFLARE_USERNAME }}
         IDCFLARE_PASSWORD: ${{ secrets.IDCFLARE_PASSWORD }}
         GITHUB_ACTIONS: 'true'
+        DOH_SERVER: 'https://ld.ddd.oaifree.com/query-dns'
       run: |
         echo "开始执行自动化脚本..."
         echo "站点选择: ${{ github.event.inputs.site_selector || 'all' }}"
         echo "当前时间: $(date)"
+        echo "DoH服务器: $DOH_SERVER"
         echo "缓存检查:"
         python -c "
         import os, json
@@ -135,6 +137,8 @@ jobs:
         path: |
           connect_debug_*.html
           connect_debug_*.png
+          login_debug_*.html
+          login_error_*.html
         retention-days: 7
 
     - name: Notify on failure
