@@ -1,7 +1,6 @@
 import os
 import random
 import time
-import functools
 import sys
 import json
 import requests
@@ -43,19 +42,25 @@ SITES = [
     }
 ]
 
+# 配置项
 BROWSE_ENABLED = os.environ.get("BROWSE_ENABLED", "true").strip().lower() not in ["false", "0", "off"]
 HEADLESS = os.environ.get("HEADLESS", "true").strip().lower() not in ["false", "0", "off"]
+# 强制每次登录（已固定为True）
+FORCE_LOGIN_EVERY_TIME = True
 
 # DoH 服务器配置
 DOH_SERVER = os.environ.get("DOH_SERVER", "https://ld.ddd.oaifree.com/query-dns")
 
-# ======================== 修复的缓存管理器 ========================
+# turnstilePatch 扩展路径（与GitHub Actions中创建的目录匹配）
+TURNSTILE_PATCH_PATH = os.path.abspath("turnstilePatch")
+
+# ======================== 缓存管理器 ========================
 class CacheManager:
-    """修复的缓存管理类 - 保存到当前目录"""
+    """缓存管理类 - 仅缓存Cloudflare相关Cookies"""
     
     @staticmethod
     def get_cache_directory():
-        """获取缓存目录 - 修复为当前目录"""
+        """获取缓存目录（当前目录）"""
         return os.path.dirname(os.path.abspath(__file__))
 
     @staticmethod
@@ -87,7 +92,7 @@ class CacheManager:
                 json.dump(data, f, ensure_ascii=False, indent=2)
             logger.info(f"💾 缓存已保存: {file_name}")
             
-            # 验证文件确实保存了
+            # 验证文件保存结果
             if os.path.exists(file_path):
                 file_size = os.path.getsize(file_path)
                 logger.info(f"✅ 缓存文件验证: {file_name} ({file_size} 字节)")
@@ -101,7 +106,7 @@ class CacheManager:
 
     @staticmethod
     def load_cookies(site_name):
-        """加载cookies缓存并检查有效期"""
+        """加载cookies缓存并检查有效期（仅Cloudflare相关）"""
         cache_data = CacheManager.load_cache(f"cf_cookies_{site_name}.json")
         if not cache_data:
             return None
@@ -110,8 +115,9 @@ class CacheManager:
         if cache_time_str:
             try:
                 cache_time = datetime.fromisoformat(cache_time_str)
+                # Cloudflare Cookies有效期设为7天
                 if datetime.now() - cache_time > timedelta(days=7):
-                    logger.warning("🕒 Cookies已过期")
+                    logger.warning("🕒 Cloudflare Cookies已过期")
                     return None
             except Exception as e:
                 logger.warning(f"缓存时间解析失败: {str(e)}")
@@ -119,15 +125,17 @@ class CacheManager:
 
     @staticmethod
     def save_cookies(cookies, site_name):
-        """保存cookies到缓存"""
+        """保存cookies到缓存（仅保留Cloudflare相关）"""
+        # 过滤仅保留Cloudflare相关Cookies（包含cf_前缀）
+        cf_cookies = [cookie for cookie in cookies if 'cf_' in cookie['name'].lower()]
         cache_data = {
-            'cookies': cookies,
+            'cookies': cf_cookies,
             'cache_time': datetime.now().isoformat(),
             'site': site_name
         }
         return CacheManager.save_cache(cache_data, f"cf_cookies_{site_name}.json")
 
-# ======================== 修复的主浏览器类 ========================
+# ======================== 主浏览器类 ========================
 class LinuxDoBrowser:
     def __init__(self, site_config, credentials):
         self.site_config = site_config
@@ -136,14 +144,23 @@ class LinuxDoBrowser:
         self.password = credentials['password']
         
         chrome_options = Options()
+        # 配置Headless模式
         if HEADLESS:
             chrome_options.add_argument('--headless=new')
+        # 基础配置
         chrome_options.add_argument('--no-sandbox')
         chrome_options.add_argument('--disable-dev-shm-usage')
         chrome_options.add_argument('--disable-blink-features=AutomationControlled')
         chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
         chrome_options.add_experimental_option('useAutomationExtension', False)
         chrome_options.add_argument('--lang=zh-CN,zh;q=0.9,en;q=0.8')
+        
+        # 加载turnstilePatch扩展（关键配置）
+        if os.path.exists(TURNSTILE_PATCH_PATH):
+            chrome_options.add_argument(f'--load-extension={TURNSTILE_PATCH_PATH}')
+            logger.info(f"✅ 已加载turnstilePatch扩展: {TURNSTILE_PATCH_PATH}")
+        else:
+            logger.warning(f"⚠️ 未找到turnstilePatch扩展目录: {TURNSTILE_PATCH_PATH}")
         
         try:
             self.driver = webdriver.Chrome(options=chrome_options)
@@ -172,17 +189,17 @@ class LinuxDoBrowser:
             logger.error(f"生成浏览器状态文件失败: {str(e)}")
 
     def ensure_logged_in(self):
-        """确保用户已登录 - 强制每次登录"""
-        logger.info("🎯 开始登录流程")
+        """确保用户已登录 - 强制每次登录（忽略缓存）"""
+        logger.info("🎯 强制执行登录流程（每次运行都重新登录）")
         return self.attempt_login()
 
     def attempt_login(self):
         """尝试登录"""
-        logger.info("🔐 尝试登录...")
+        logger.info("🔐 开始登录流程...")
         self.driver.get(self.site_config['login_url'])
         time.sleep(3)
 
-        # 使用带DoH的Cloudflare处理
+        # 处理Cloudflare验证
         cf_success = CloudflareHandler.handle_cloudflare_with_doh(
             self.driver, 
             doh_server=DOH_SERVER,
@@ -191,7 +208,7 @@ class LinuxDoBrowser:
         )
         
         if not cf_success:
-            logger.warning("⚠️ Cloudflare验证可能未完全通过，但继续登录流程")
+            logger.warning("⚠️ Cloudflare验证可能未完全通过，继续登录流程")
 
         # 填写登录信息
         try:
@@ -202,7 +219,7 @@ class LinuxDoBrowser:
             page_title = self.driver.title
             logger.info(f"📄 当前页面: {page_title} | {current_url}")
 
-            # 如果被重定向到其他页面，尝试回到登录页面
+            # 如果被重定向，回到登录页面
             if 'login' not in current_url:
                 logger.info("🔄 被重定向，尝试回到登录页面")
                 self.driver.get(self.site_config['login_url'])
@@ -247,7 +264,7 @@ class LinuxDoBrowser:
                 except:
                     continue
 
-            # 如果通过CSS选择器没找到，尝试通过文本查找按钮
+            # 备选：通过文本查找登录按钮
             if not login_button:
                 try:
                     buttons = self.driver.find_elements(By.TAG_NAME, "button")
@@ -294,14 +311,14 @@ class LinuxDoBrowser:
             logger.info("⏳ 等待登录完成...")
             time.sleep(10)
 
-            # 处理登录后的Cloudflare验证（如果需要）
+            # 处理登录后的Cloudflare验证
             CloudflareHandler.handle_cloudflare_with_doh(self.driver)
 
             # 检查登录是否成功
             login_success = self.enhanced_strict_check_login_status()
             if login_success:
                 logger.success("✅ 登录成功")
-                # 保存cookies
+                # 保存Cloudflare Cookies
                 self.save_cookies_to_cache()
                 return True
             else:
@@ -313,8 +330,8 @@ class LinuxDoBrowser:
             return False
 
     def enhanced_strict_check_login_status(self):
-        """增强的严格登录状态验证"""
-        logger.info("🔍 增强严格验证登录状态...")
+        """增强的登录状态验证"""
+        logger.info("🔍 验证登录状态...")
         try:
             if not self.driver.current_url.endswith('/latest'):
                 self.driver.get(self.site_config['latest_url'])
@@ -327,7 +344,7 @@ class LinuxDoBrowser:
                 logger.success(f"✅ 在页面内容中找到用户名: {self.username}")
                 return True
 
-            logger.info("🔄 尝试访问用户个人资料页面验证...")
+            # 尝试访问个人资料页验证
             try:
                 profile_url = f"{self.site_config['base_url']}/u/{self.username}"
                 self.driver.get(profile_url)
@@ -348,40 +365,39 @@ class LinuxDoBrowser:
                 self.driver.get(self.site_config['latest_url'])
                 time.sleep(3)
 
-            logger.error(f"❌ 所有验证方法都失败，未找到用户名: {self.username}")
+            logger.error(f"❌ 未找到用户名: {self.username}，登录失败")
             return False
         except Exception as e:
             logger.error(f"登录状态检查失败: {str(e)}")
             return False
 
     def save_cookies_to_cache(self):
-        """保存cookies到缓存 - 只保存Cloudflare cookies"""
+        """保存Cookies到缓存（仅保留Cloudflare相关）"""
         try:
             time.sleep(3)
             cookies = self.driver.get_cookies()
             if cookies:
-                logger.info(f"🔍 成功获取到 {len(cookies)} 个cookies")
-                # 只保存Cloudflare相关的cookies
-                cf_cookies = [cookie for cookie in cookies if 'cf_' in cookie['name'].lower()]
-                success = CacheManager.save_cookies(cf_cookies, self.site_name)
+                logger.info(f"🔍 获取到 {len(cookies)} 个Cookies")
+                # 只保存Cloudflare相关Cookies（已在CacheManager中处理）
+                success = CacheManager.save_cookies(cookies, self.site_name)
                 if success:
-                    logger.info("✅ Cloudflare Cookies缓存已保存")
+                    logger.info("✅ Cloudflare Cookies已保存")
                 else:
-                    logger.warning("⚠️ Cookies缓存保存失败")
+                    logger.warning("⚠️ Cookies保存失败")
             else:
-                logger.warning("⚠️ 无法获取cookies")
+                logger.warning("⚠️ 无法获取Cookies")
             return True
         except Exception as e:
-            logger.error(f"保存缓存失败: {str(e)}")
+            logger.error(f"保存Cookies失败: {str(e)}")
             return False
 
     def click_topic(self):
-        """点击浏览主题 - 返回成功数量"""
+        """浏览主题"""
         if not BROWSE_ENABLED:
             logger.info("⏭️ 浏览功能已禁用，跳过")
             return 0
 
-        logger.info("🌐 开始浏览主题 - 模拟真实用户行为")
+        logger.info("🌐 开始浏览主题...")
         if not self.driver.current_url.endswith('/latest'):
             self.driver.get(self.site_config['latest_url'])
             time.sleep(5)
@@ -396,7 +412,7 @@ class LinuxDoBrowser:
             selected_topics = random.sample(topic_elements, browse_count)
             success_count = 0
 
-            logger.info(f"发现 {len(topic_elements)} 个主题帖，随机选择 {browse_count} 个进行浏览")
+            logger.info(f"发现 {len(topic_elements)} 个主题，随机浏览 {browse_count} 个")
 
             for i, topic in enumerate(selected_topics):
                 topic_url = topic.get_attribute("href")
@@ -430,10 +446,8 @@ class LinuxDoBrowser:
         
         try:
             time.sleep(3)
-            
-            # 真实用户浏览行为
+            # 模拟真实滚动浏览
             self.browse_post()
-            
             self.driver.close()
             self.driver.switch_to.window(original_window)
             return True
@@ -447,7 +461,7 @@ class LinuxDoBrowser:
             return False
 
     def browse_post(self):
-        """浏览帖子内容 - 真实用户滚动行为模拟"""
+        """模拟真实用户滚动行为"""
         for i in range(8):
             scroll_distance = random.randint(400, 800)
             self.driver.execute_script(f"window.scrollBy(0, {scroll_distance})")
@@ -465,7 +479,7 @@ class LinuxDoBrowser:
             time.sleep(wait_time)
 
     def print_connect_info(self):
-        """修复的连接信息获取"""
+        """获取并打印连接信息"""
         logger.info("🔗 获取连接信息")
         try:
             self.driver.get(self.site_config['connect_url'])
@@ -525,23 +539,23 @@ class LinuxDoBrowser:
             logger.error(f"获取连接信息失败: {str(e)}")
 
     def run(self):
-        """执行完整的自动化流程"""
+        """执行完整自动化流程"""
         try:
             logger.info(f"🚀 开始处理站点: {self.site_name}")
 
-            # 1. 强制登录
+            # 1. 强制登录（忽略缓存）
             if not self.ensure_logged_in():
                 logger.error(f"❌ {self.site_name} 登录失败")
                 self.generate_browser_state(False, 0)
                 return False
 
-            # 2. 浏览主题并获取成功数量
+            # 2. 浏览主题
             browse_success_count = self.click_topic()
 
-            # 3. 打印连接信息
+            # 3. 获取连接信息
             self.print_connect_info()
 
-            # 4. 生成浏览器状态文件
+            # 4. 生成状态文件
             self.generate_browser_state(True, browse_success_count)
 
             logger.success(f"✅ {self.site_name} 处理完成")
@@ -560,7 +574,7 @@ class LinuxDoBrowser:
 class CloudflareHandler:
     @staticmethod
     def query_doh(domain, doh_server=DOH_SERVER):
-        """通过DoH服务器查询DNS记录"""
+        """通过DoH服务器查询DNS"""
         try:
             query_url = f"{doh_server}?name={domain}&type=A"
             headers = {
@@ -586,9 +600,9 @@ class CloudflareHandler:
     def handle_cloudflare_with_doh(driver, doh_server=DOH_SERVER, max_attempts=12, timeout=240):
         """使用DoH处理Cloudflare验证"""
         start_time = time.time()
-        logger.info(f"🛡️ 开始处理 Cloudflare验证 (使用DoH: {doh_server})")
+        logger.info(f"🛡️ 开始处理Cloudflare验证 (DoH: {doh_server})")
         
-        # 首先尝试通过DoH解析关键域名
+        # 解析关键域名
         critical_domains = [
             'linux.do',
             'idcflare.com', 
@@ -604,17 +618,15 @@ class CloudflareHandler:
                 current_url = driver.current_url
                 page_title = driver.title.lower() if driver.title else ""
                 
-                # 检查页面状态
+                # 检查验证状态
                 if page_title and "just a moment" not in page_title and "checking" not in page_title and "please wait" not in page_title:
-                    # 检查是否重定向到目标页面
                     if any(x in current_url for x in ['/latest', '/login', 'connect.']):
-                        logger.success("✅ Cloudflare验证通过，已跳转到目标页面")
+                        logger.success("✅ Cloudflare验证通过")
                         return True
                     
-                    # 检查页面内容是否正常加载
                     page_source = driver.page_source.lower()
                     if len(page_source) > 1000:
-                        logger.success("✅ 页面内容已正常加载，Cloudflare验证通过")
+                        logger.success("✅ 页面正常加载，验证通过")
                         return True
 
                 # 动态等待时间
@@ -627,19 +639,19 @@ class CloudflareHandler:
                 wait_time = random.uniform(base_wait, base_wait + 5)
                 elapsed = time.time() - start_time
                 
-                logger.info(f"⏳ 等待Cloudflare验证 ({wait_time:.1f}秒) - 尝试 {attempt + 1}/{max_attempts} [已耗时: {elapsed:.0f}秒]")
+                logger.info(f"⏳ 等待验证 ({wait_time:.1f}秒) - 尝试 {attempt + 1}/{max_attempts} [耗时: {elapsed:.0f}秒]")
                 time.sleep(wait_time)
                 
-                # 检查超时
+                # 超时检查
                 if time.time() - start_time > timeout:
                     logger.warning(f"⚠️ Cloudflare处理超时 ({timeout}秒)")
                     break
                     
-                # 偶尔刷新页面
+                # 定期刷新
                 if attempt % 3 == 2:
                     try:
                         driver.refresh()
-                        logger.info("🔄 刷新页面以重新触发验证")
+                        logger.info("🔄 刷新页面")
                         time.sleep(3)
                     except:
                         pass
@@ -648,14 +660,13 @@ class CloudflareHandler:
                 logger.error(f"Cloudflare处理异常 (尝试 {attempt + 1}): {str(e)}")
                 time.sleep(10)
 
-        # 最终检查 - 即使验证未完全通过也尝试继续
+        # 最终检查
         try:
             final_url = driver.current_url
             final_title = driver.title.lower() if driver.title else ""
             
             if "just a moment" in final_title or "checking" in final_title:
-                logger.warning("⚠️ Cloudflare验证仍未通过，但强制继续流程")
-                # 尝试强制跳转到登录页面
+                logger.warning("⚠️ 验证未通过，强制继续")
                 if "linux.do" in final_url:
                     driver.get("https://linux.do/login")
                 elif "idcflare.com" in final_url:
@@ -663,16 +674,16 @@ class CloudflareHandler:
                 time.sleep(5)
                 return True
             else:
-                logger.success("✅ 最终检查: 页面已加载，继续流程")
+                logger.success("✅ 最终检查通过")
                 return True
                 
         except Exception as e:
-            logger.warning(f"⚠️ 最终检查异常: {str(e)}，强制继续流程")
+            logger.warning(f"⚠️ 最终检查异常: {str(e)}")
             return True
 
     @staticmethod
     def handle_cloudflare(driver, max_attempts=8, timeout=180):
-        """保持原有接口兼容性"""
+        """兼容旧接口"""
         return CloudflareHandler.handle_cloudflare_with_doh(
             driver, 
             doh_server=DOH_SERVER,
@@ -683,12 +694,26 @@ class CloudflareHandler:
 # ======================== 主函数 ========================
 def main():
     """主函数"""
-    logger.info("🎯 Linux.Do 多站点自动化脚本启动 (Selenium版) - 真实用户行为模拟")
+    logger.info("🎯 Linux.Do 多站点自动化脚本启动 (Selenium版)")
     os.environ.pop("DISPLAY", None)
     success_sites = []
     failed_sites = []
 
-    for site_config in SITES:
+    # 处理站点选择（支持GitHub Actions的输入参数）
+    site_selector = os.environ.get("SITE_SELECTOR", "all")
+    logger.info(f"🔍 站点选择: {site_selector}")
+
+    # 筛选需要处理的站点
+    target_sites = []
+    if site_selector == "all":
+        target_sites = SITES
+    else:
+        for site in SITES:
+            if site['name'] == site_selector:
+                target_sites.append(site)
+                break
+
+    for site_config in target_sites:
         site_name = site_config['name']
         credentials = SITE_CREDENTIALS.get(site_name, {})
 
@@ -709,7 +734,7 @@ def main():
             logger.error(f"❌ {site_name} 执行异常: {str(e)}")
             failed_sites.append(site_name)
 
-        if site_config != SITES[-1]:
+        if site_config != target_sites[-1]:
             wait_time = random.uniform(10, 30)
             logger.info(f"⏳ 等待 {wait_time:.1f} 秒后处理下一个站点...")
             time.sleep(wait_time)
