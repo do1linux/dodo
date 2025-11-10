@@ -45,13 +45,12 @@ SITES = [
 # 配置项
 BROWSE_ENABLED = os.environ.get("BROWSE_ENABLED", "true").strip().lower() not in ["false", "0", "off"]
 HEADLESS = os.environ.get("HEADLESS", "true").strip().lower() not in ["false", "0", "off"]
-# 强制每次登录（已固定为True）
 FORCE_LOGIN_EVERY_TIME = True
 
 # DoH 服务器配置
 DOH_SERVER = os.environ.get("DOH_SERVER", "https://ld.ddd.oaifree.com/query-dns")
 
-# turnstilePatch 扩展路径（与GitHub Actions中创建的目录匹配）
+# turnstilePatch 扩展路径
 TURNSTILE_PATCH_PATH = os.path.abspath("turnstilePatch")
 
 # ======================== 缓存管理器 ========================
@@ -134,6 +133,122 @@ class CacheManager:
             'site': site_name
         }
         return CacheManager.save_cache(cache_data, f"cf_cookies_{site_name}.json")
+
+# ======================== Cloudflare处理器 ========================
+class CloudflareHandler:
+    @staticmethod
+    def query_doh(domain, doh_server=DOH_SERVER):
+        """通过DoH服务器查询DNS"""
+        try:
+            query_url = f"{doh_server}?name={domain}&type=A"
+            headers = {
+                'Accept': 'application/dns-json',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            }
+            
+            response = requests.get(query_url, headers=headers, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                if 'Answer' in data:
+                    ips = [answer['data'] for answer in data['Answer'] if answer['type'] == 1]
+                    if ips:
+                        logger.info(f"✅ DoH解析 {domain} -> {ips[0]}")
+                        return ips
+            logger.warning(f"⚠️ DoH无法解析 {domain}")
+            return None
+        except Exception as e:
+            logger.warning(f"DoH查询失败 {domain}: {str(e)}")
+            return None
+
+    @staticmethod
+    def handle_cloudflare_with_doh(driver, doh_server=DOH_SERVER, max_attempts=12, timeout=240):
+        """使用DoH处理Cloudflare验证"""
+        start_time = time.time()
+        logger.info(f"🛡️ 开始处理Cloudflare验证 (DoH: {doh_server})")
+        
+        # 解析关键域名
+        critical_domains = [
+            'linux.do',
+            'idcflare.com', 
+            'challenges.cloudflare.com',
+            'cloudflare.com'
+        ]
+        
+        for domain in critical_domains:
+            CloudflareHandler.query_doh(domain, doh_server)
+
+        for attempt in range(max_attempts):
+            try:
+                current_url = driver.current_url
+                page_title = driver.title.lower() if driver.title else ""
+                page_source = driver.page_source.lower() if driver.page_source else ""
+                
+                # 更严格的验证通过检查
+                cloudflare_indicators = ["just a moment", "checking", "please wait", "ddos protection", "cloudflare"]
+                is_cloudflare_page = any(indicator in page_title for indicator in cloudflare_indicators) or any(indicator in page_source for indicator in cloudflare_indicators)
+                
+                if not is_cloudflare_page:
+                    if len(page_source) > 1000:  # 页面内容足够长
+                        logger.success("✅ Cloudflare验证通过")
+                        return True
+                    elif any(x in current_url for x in ['/latest', '/login', 'connect.', 'u/']):
+                        logger.success("✅ Cloudflare验证通过 (目标页面)")
+                        return True
+
+                # 动态等待时间
+                base_wait = random.uniform(5, 8)
+                if attempt > 4:
+                    base_wait = random.uniform(8, 12)
+                if attempt > 8:
+                    base_wait = random.uniform(12, 18)
+                    
+                elapsed = time.time() - start_time
+                
+                logger.info(f"⏳ 等待验证 ({base_wait:.1f}秒) - 尝试 {attempt + 1}/{max_attempts} [耗时: {elapsed:.0f}秒]")
+                time.sleep(base_wait)
+                
+                # 超时检查
+                if time.time() - start_time > timeout:
+                    logger.warning(f"⚠️ Cloudflare处理超时 ({timeout}秒)")
+                    break
+                    
+                # 定期刷新
+                if attempt % 3 == 2:
+                    try:
+                        driver.refresh()
+                        logger.info("🔄 刷新页面")
+                        time.sleep(3)
+                    except:
+                        pass
+                        
+            except Exception as e:
+                logger.error(f"Cloudflare处理异常 (尝试 {attempt + 1}): {str(e)}")
+                time.sleep(10)
+
+        # 最终检查
+        try:
+            final_url = driver.current_url
+            final_title = driver.title.lower() if driver.title else ""
+            final_source = driver.page_source.lower()
+            
+            cloudflare_indicators = ["just a moment", "checking", "please wait", "ddos protection"]
+            is_stuck = any(indicator in final_title for indicator in cloudflare_indicators) or any(indicator in final_source for indicator in cloudflare_indicators)
+            
+            if is_stuck:
+                logger.warning("⚠️ 验证未通过，强制继续")
+                if "linux.do" in final_url:
+                    driver.get("https://linux.do/latest")
+                elif "idcflare.com" in final_url:
+                    driver.get("https://idcflare.com/latest")
+                time.sleep(5)
+                return True
+            else:
+                logger.success("✅ 最终检查通过")
+                return True
+                
+        except Exception as e:
+            logger.warning(f"⚠️ 最终检查异常: {str(e)}")
+            return True
 
 # ======================== 主浏览器类 ========================
 class LinuxDoBrowser:
@@ -296,15 +411,22 @@ class LinuxDoBrowser:
             # 模拟真实输入
             logger.info("⌨️ 输入用户名...")
             username_field.clear()
+            time.sleep(0.5)
             for char in self.username:
                 username_field.send_keys(char)
-                time.sleep(random.uniform(0.05, 0.15))
+                time.sleep(random.uniform(0.08, 0.2))  # 更真实的输入速度
             
             logger.info("⌨️ 输入密码...")
             password_field.clear()
+            time.sleep(0.5)
             for char in self.password:
                 password_field.send_keys(char)
-                time.sleep(random.uniform(0.05, 0.15))
+                time.sleep(random.uniform(0.08, 0.2))
+
+            # 随机思考时间
+            think_time = random.uniform(1, 3)
+            logger.info(f"🤔 思考 {think_time:.1f} 秒...")
+            time.sleep(think_time)
 
             # 点击登录按钮
             logger.info("🖱️ 点击登录按钮...")
@@ -312,7 +434,7 @@ class LinuxDoBrowser:
             
             # 等待登录完成
             logger.info("⏳ 等待登录完成...")
-            time.sleep(10)
+            time.sleep(8)
 
             # 处理登录后的Cloudflare验证
             CloudflareHandler.handle_cloudflare_with_doh(self.driver)
@@ -335,44 +457,77 @@ class LinuxDoBrowser:
     def enhanced_strict_check_login_status(self):
         """增强的登录状态验证"""
         logger.info("🔍 验证登录状态...")
-        try:
-            if not self.driver.current_url.endswith('/latest'):
-                self.driver.get(self.site_config['latest_url'])
-                time.sleep(3)
-
-            CloudflareHandler.handle_cloudflare_with_doh(self.driver)
-            page_content = self.driver.page_source
-            
-            if self.username and self.username.lower() in page_content.lower():
-                logger.success(f"✅ 在页面内容中找到用户名: {self.username}")
-                return True
-
-            # 尝试访问个人资料页验证
+        max_retries = 3
+        
+        for retry in range(max_retries):
             try:
-                profile_url = f"{self.site_config['base_url']}/u/{self.username}"
-                self.driver.get(profile_url)
-                time.sleep(3)
-                profile_content = self.driver.page_source
-                
-                if self.username and self.username.lower() in profile_content.lower():
-                    logger.success(f"✅ 在个人资料页面找到用户名: {self.username}")
+                # 首先尝试访问最新页面
+                if not self.driver.current_url.endswith('/latest'):
                     self.driver.get(self.site_config['latest_url'])
                     time.sleep(3)
-                    return True
-                else:
-                    logger.warning("❌ 个人资料页面验证失败")
-                    self.driver.get(self.site_config['latest_url'])
-                    time.sleep(3)
-            except Exception as e:
-                logger.warning(f"访问个人资料页面失败: {str(e)}")
-                self.driver.get(self.site_config['latest_url'])
-                time.sleep(3)
 
-            logger.error(f"❌ 未找到用户名: {self.username}，登录失败")
-            return False
-        except Exception as e:
-            logger.error(f"登录状态检查失败: {str(e)}")
-            return False
+                CloudflareHandler.handle_cloudflare_with_doh(self.driver)
+                
+                # 检查方法1：查找用户菜单或头像
+                user_indicators = [
+                    f"a[href*='/u/{self.username}']",
+                    ".header-dropdown-toggle",
+                    ".current-user",
+                    ".user-menu"
+                ]
+                
+                for indicator in user_indicators:
+                    try:
+                        element = self.driver.find_element(By.CSS_SELECTOR, indicator)
+                        if element.is_displayed():
+                            logger.success(f"✅ 找到用户菜单元素: {indicator}")
+                            return True
+                    except:
+                        continue
+
+                # 检查方法2：在页面内容中搜索用户名
+                page_content = self.driver.page_source.lower()
+                username_lower = self.username.lower()
+                
+                if username_lower in page_content:
+                    logger.success(f"✅ 在页面内容中找到用户名: {self.username}")
+                    return True
+
+                # 检查方法3：直接访问个人资料页
+                try:
+                    profile_url = f"{self.site_config['base_url']}/u/{self.username}"
+                    self.driver.get(profile_url)
+                    time.sleep(3)
+                    
+                    profile_content = self.driver.page_source
+                    if self.username.lower() in profile_content.lower():
+                        logger.success(f"✅ 在个人资料页面找到用户名: {self.username}")
+                        # 返回到最新页面
+                        self.driver.get(self.site_config['latest_url'])
+                        time.sleep(3)
+                        return True
+                    else:
+                        logger.warning(f"❌ 个人资料页面验证失败 (尝试 {retry + 1}/{max_retries})")
+                        self.driver.get(self.site_config['latest_url'])
+                        time.sleep(3)
+                except Exception as e:
+                    logger.warning(f"访问个人资料页面失败: {str(e)}")
+                    self.driver.get(self.site_config['latest_url'])
+                    time.sleep(3)
+
+                # 重试前等待
+                if retry < max_retries - 1:
+                    wait_time = random.uniform(5, 10)
+                    logger.info(f"🔄 等待 {wait_time:.1f} 秒后重试验证...")
+                    time.sleep(wait_time)
+
+            except Exception as e:
+                logger.error(f"登录状态检查失败 (尝试 {retry + 1}): {str(e)}")
+                if retry < max_retries - 1:
+                    time.sleep(5)
+
+        logger.error(f"❌ 未找到用户名: {self.username}，登录失败")
+        return False
 
     def save_cookies_to_cache(self):
         """保存Cookies到缓存（仅保留Cloudflare相关）"""
@@ -395,7 +550,7 @@ class LinuxDoBrowser:
             return False
 
     def click_topic(self):
-        """浏览主题"""
+        """浏览主题 - 增强版人类行为模拟"""
         if not BROWSE_ENABLED:
             logger.info("⏭️ 浏览功能已禁用，跳过")
             return 0
@@ -411,7 +566,8 @@ class LinuxDoBrowser:
                 logger.error("❌ 没有找到主题列表")
                 return 0
 
-            browse_count = min(random.randint(5, 8), len(topic_elements))
+            # 随机选择要浏览的主题数量 (4-7个)
+            browse_count = min(random.randint(4, 7), len(topic_elements))
             selected_topics = random.sample(topic_elements, browse_count)
             success_count = 0
 
@@ -428,8 +584,10 @@ class LinuxDoBrowser:
                 if self.click_one_topic(topic_url):
                     success_count += 1
 
+                # 在主题间添加随机等待时间
                 if i < browse_count - 1:
-                    wait_time = random.uniform(5, 12)
+                    wait_time = random.uniform(8, 15)
+                    logger.info(f"⏳ 浏览间隔等待 {wait_time:.1f} 秒...")
                     time.sleep(wait_time)
 
             logger.info(f"📊 浏览完成: 成功 {success_count}/{browse_count} 个主题")
@@ -439,8 +597,10 @@ class LinuxDoBrowser:
             return 0
 
     def click_one_topic(self, topic_url):
-        """浏览单个主题"""
+        """浏览单个主题 - 增强版人类行为"""
         original_window = self.driver.current_window_handle
+        
+        # 在新标签页打开
         self.driver.execute_script(f"window.open('{topic_url}', '_blank');")
         for handle in self.driver.window_handles:
             if handle != original_window:
@@ -448,12 +608,22 @@ class LinuxDoBrowser:
                 break
         
         try:
+            # 等待页面加载
             time.sleep(3)
-            # 模拟真实滚动浏览
-            self.browse_post()
-            self.driver.close()
-            self.driver.switch_to.window(original_window)
-            return True
+            
+            # 模拟真实浏览行为
+            browse_success = self.enhanced_browse_post()
+            
+            # 随机决定是否关闭标签页 (80%概率关闭，20%概率留在当前页)
+            if random.random() < 0.8:
+                self.driver.close()
+                self.driver.switch_to.window(original_window)
+            else:
+                logger.info("🔖 保留当前标签页浏览")
+                # 回到原窗口继续操作
+                self.driver.switch_to.window(original_window)
+                
+            return browse_success
         except Exception as e:
             logger.error(f"浏览主题失败: {str(e)}")
             try:
@@ -463,32 +633,95 @@ class LinuxDoBrowser:
                 pass
             return False
 
-    def browse_post(self):
-        """模拟真实用户滚动行为"""
-        for i in range(8):
-            scroll_distance = random.randint(400, 800)
-            self.driver.execute_script(f"window.scrollBy(0, {scroll_distance})")
+    def enhanced_browse_post(self):
+        """增强版模拟真实用户滚动和阅读行为"""
+        try:
+            # 初始等待，模拟页面加载观察
+            initial_wait = random.uniform(2, 4)
+            time.sleep(initial_wait)
             
-            if random.random() < 0.03:
-                break
+            # 获取页面高度
+            total_height = self.driver.execute_script("return document.body.scrollHeight")
+            viewport_height = self.driver.execute_script("return window.innerHeight")
+            
+            current_position = 0
+            scroll_actions = random.randint(6, 12)  # 随机滚动次数
+            
+            logger.info(f"📄 页面浏览开始 (高度: {total_height}px, 计划滚动: {scroll_actions}次)")
+            
+            for i in range(scroll_actions):
+                # 随机滚动距离 (更自然的滚动)
+                if current_position + viewport_height >= total_height:
+                    break  # 已经到底部
+                    
+                # 动态滚动距离
+                if i == 0:
+                    # 第一次滚动较小
+                    scroll_distance = random.randint(300, 500)
+                elif i == scroll_actions - 1:
+                    # 最后一次滚动可能到底部
+                    scroll_distance = random.randint(400, 600)
+                else:
+                    # 中间滚动随机距离
+                    scroll_distance = random.randint(400, 800)
                 
-            at_bottom = self.driver.execute_script(
-                "return window.scrollY + window.innerHeight >= document.body.scrollHeight"
-            )
-            if at_bottom:
-                break
+                # 确保不会滚动超过底部
+                max_scroll = total_height - current_position - 100
+                if scroll_distance > max_scroll:
+                    scroll_distance = max_scroll
                 
-            wait_time = random.uniform(2, 4)
-            time.sleep(wait_time)
+                if scroll_distance <= 0:
+                    break
+                
+                # 执行滚动
+                self.driver.execute_script(f"window.scrollBy(0, {scroll_distance})")
+                current_position += scroll_distance
+                
+                # 随机阅读停顿 (模拟阅读内容)
+                if random.random() < 0.3:  # 30%概率有较长阅读停顿
+                    read_time = random.uniform(3, 8)
+                    logger.info(f"👀 阅读停顿 {read_time:.1f} 秒...")
+                    time.sleep(read_time)
+                else:
+                    # 短停顿
+                    pause_time = random.uniform(1, 3)
+                    time.sleep(pause_time)
+                
+                # 随机小概率回滚 (模拟重新查看)
+                if random.random() < 0.1:  # 10%概率回滚
+                    back_scroll = random.randint(100, 300)
+                    self.driver.execute_script(f"window.scrollBy(0, -{back_scroll})")
+                    current_position -= back_scroll
+                    time.sleep(random.uniform(1, 2))
+            
+            # 最终可能的小幅度随机滚动
+            if random.random() < 0.5:
+                final_scrolls = random.randint(1, 3)
+                for _ in range(final_scrolls):
+                    small_scroll = random.randint(50, 200)
+                    self.driver.execute_script(f"window.scrollBy(0, {small_scroll})")
+                    time.sleep(0.5)
+            
+            # 随机决定是否滚动到顶部
+            if random.random() < 0.3:
+                self.driver.execute_script("window.scrollTo(0, 0)")
+                time.sleep(1)
+            
+            logger.info("✅ 页面浏览完成")
+            return True
+            
+        except Exception as e:
+            logger.error(f"页面浏览异常: {str(e)}")
+            return False
 
     def print_connect_info(self):
-        """打印连接信息（修复表格查找+添加Cloudflare处理+tabulate兼容）"""
+        """打印连接信息（增强版表格查找）"""
         logger.info("🔗 获取连接信息")
         try:
             self.driver.get(self.site_config['connect_url'])
             time.sleep(5)
         
-            # 关键：处理connect页面的Cloudflare验证（之前漏掉了）
+            # 处理connect页面的Cloudflare验证
             CloudflareHandler.handle_cloudflare_with_doh(self.driver)
             time.sleep(8)
 
@@ -502,7 +735,9 @@ class LinuxDoBrowser:
                 ".wrap table",
                 "#content table",
                 ".post-body table",
-                "div.table-responsive table"
+                "div.table-responsive table",
+                ".d-table",  # Discourse 表格类
+                ".topic-list table"
             ]
         
             table = None
@@ -599,127 +834,6 @@ class LinuxDoBrowser:
             except:
                 pass
 
-# ======================== Cloudflare处理器 ========================
-class CloudflareHandler:
-    @staticmethod
-    def query_doh(domain, doh_server=DOH_SERVER):
-        """通过DoH服务器查询DNS"""
-        try:
-            query_url = f"{doh_server}?name={domain}&type=A"
-            headers = {
-                'Accept': 'application/dns-json',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-            }
-            
-            response = requests.get(query_url, headers=headers, timeout=10)
-            if response.status_code == 200:
-                data = response.json()
-                if 'Answer' in data:
-                    ips = [answer['data'] for answer in data['Answer'] if answer['type'] == 1]
-                    if ips:
-                        logger.info(f"✅ DoH解析 {domain} -> {ips[0]}")
-                        return ips
-            logger.warning(f"⚠️ DoH无法解析 {domain}")
-            return None
-        except Exception as e:
-            logger.warning(f"DoH查询失败 {domain}: {str(e)}")
-            return None
-
-    @staticmethod
-    def handle_cloudflare_with_doh(driver, doh_server=DOH_SERVER, max_attempts=12, timeout=240):
-        """使用DoH处理Cloudflare验证"""
-        start_time = time.time()
-        logger.info(f"🛡️ 开始处理Cloudflare验证 (DoH: {doh_server})")
-        
-        # 解析关键域名
-        critical_domains = [
-            'linux.do',
-            'idcflare.com', 
-            'challenges.cloudflare.com',
-            'cloudflare.com'
-        ]
-        
-        for domain in critical_domains:
-            CloudflareHandler.query_doh(domain, doh_server)
-
-        for attempt in range(max_attempts):
-            try:
-                current_url = driver.current_url
-                page_title = driver.title.lower() if driver.title else ""
-                
-                # 检查验证状态
-                if page_title and "just a moment" not in page_title and "checking" not in page_title and "please wait" not in page_title:
-                    if any(x in current_url for x in ['/latest', '/login', 'connect.']):
-                        logger.success("✅ Cloudflare验证通过")
-                        return True
-                    
-                    page_source = driver.page_source.lower()
-                    if len(page_source) > 1000:
-                        logger.success("✅ 页面正常加载，验证通过")
-                        return True
-
-                # 动态等待时间
-                base_wait = 5
-                if attempt > 5:
-                    base_wait = 10
-                if attempt > 8:
-                    base_wait = 15
-                    
-                wait_time = random.uniform(base_wait, base_wait + 5)
-                elapsed = time.time() - start_time
-                
-                logger.info(f"⏳ 等待验证 ({wait_time:.1f}秒) - 尝试 {attempt + 1}/{max_attempts} [耗时: {elapsed:.0f}秒]")
-                time.sleep(wait_time)
-                
-                # 超时检查
-                if time.time() - start_time > timeout:
-                    logger.warning(f"⚠️ Cloudflare处理超时 ({timeout}秒)")
-                    break
-                    
-                # 定期刷新
-                if attempt % 3 == 2:
-                    try:
-                        driver.refresh()
-                        logger.info("🔄 刷新页面")
-                        time.sleep(3)
-                    except:
-                        pass
-                        
-            except Exception as e:
-                logger.error(f"Cloudflare处理异常 (尝试 {attempt + 1}): {str(e)}")
-                time.sleep(10)
-
-        # 最终检查
-        try:
-            final_url = driver.current_url
-            final_title = driver.title.lower() if driver.title else ""
-            
-            if "just a moment" in final_title or "checking" in final_title:
-                logger.warning("⚠️ 验证未通过，强制继续")
-                if "linux.do" in final_url:
-                    driver.get("https://linux.do/login")
-                elif "idcflare.com" in final_url:
-                    driver.get("https://idcflare.com/login")
-                time.sleep(5)
-                return True
-            else:
-                logger.success("✅ 最终检查通过")
-                return True
-                
-        except Exception as e:
-            logger.warning(f"⚠️ 最终检查异常: {str(e)}")
-            return True
-
-    @staticmethod
-    def handle_cloudflare(driver, max_attempts=8, timeout=180):
-        """兼容旧接口"""
-        return CloudflareHandler.handle_cloudflare_with_doh(
-            driver, 
-            doh_server=DOH_SERVER,
-            max_attempts=max_attempts, 
-            timeout=timeout
-        )
-
 # ======================== 主函数 ========================
 def main():
     """主函数"""
@@ -764,7 +878,7 @@ def main():
             failed_sites.append(site_name)
 
         if site_config != target_sites[-1]:
-            wait_time = random.uniform(10, 30)
+            wait_time = random.uniform(15, 30)
             logger.info(f"⏳ 等待 {wait_time:.1f} 秒后处理下一个站点...")
             time.sleep(wait_time)
 
@@ -781,5 +895,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
