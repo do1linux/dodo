@@ -31,6 +31,7 @@ SITES = [
         'base_url': 'https://linux.do',
         'login_url': 'https://linux.do/login',
         'latest_url': 'https://linux.do/latest',
+        'dashboard_url': 'https://linux.do/dash',
         'connect_url': 'https://connect.linux.do'
     },
     {
@@ -38,6 +39,7 @@ SITES = [
         'base_url': 'https://idcflare.com',
         'login_url': 'https://idcflare.com/login',
         'latest_url': 'https://idcflare.com/latest',
+        'dashboard_url': 'https://idcflare.com/dash',
         'connect_url': 'https://connect.idcflare.com'
     }
 ]
@@ -191,7 +193,7 @@ class CloudflareHandler:
                     if len(page_source) > 1000:  # 页面内容足够长
                         logger.success("✅ Cloudflare验证通过")
                         return True
-                    elif any(x in current_url for x in ['/latest', '/login', 'connect.', 'u/']):
+                    elif any(x in current_url for x in ['/latest', '/login', 'connect.', 'u/', '/dash']):
                         logger.success("✅ Cloudflare验证通过 (目标页面)")
                         return True
 
@@ -414,7 +416,7 @@ class LinuxDoBrowser:
             time.sleep(0.5)
             for char in self.username:
                 username_field.send_keys(char)
-                time.sleep(random.uniform(0.08, 0.2))  # 更真实的输入速度
+                time.sleep(random.uniform(0.08, 0.2))
             
             logger.info("⌨️ 输入密码...")
             password_field.clear()
@@ -455,65 +457,47 @@ class LinuxDoBrowser:
             return False
 
     def enhanced_strict_check_login_status(self):
-        """增强的登录状态验证"""
+        """增强的登录状态验证 - 通过仪表板确认登录状态"""
         logger.info("🔍 验证登录状态...")
         max_retries = 3
         
         for retry in range(max_retries):
             try:
-                # 首先尝试访问最新页面
-                if not self.driver.current_url.endswith('/latest'):
-                    self.driver.get(self.site_config['latest_url'])
-                    time.sleep(3)
+                # 尝试访问仪表板页面
+                self.driver.get(self.site_config['dashboard_url'])
+                time.sleep(5)
 
                 CloudflareHandler.handle_cloudflare_with_doh(self.driver)
                 
-                # 检查方法1：查找用户菜单或头像
-                user_indicators = [
-                    f"a[href*='/u/{self.username}']",
-                    ".header-dropdown-toggle",
-                    ".current-user",
-                    ".user-menu"
-                ]
+                # 检查方法1：在页面内容中搜索用户名
+                page_content = self.driver.page_source
+                username_lower = self.username.lower()
                 
-                for indicator in user_indicators:
+                if username_lower in page_content.lower():
+                    logger.success(f"✅ 在仪表板页面找到用户名: {self.username}")
+                    return True
+
+                # 检查方法2：查找信任级别表格
+                try:
+                    trust_table = self.driver.find_element(By.TAG_NAME, "table")
+                    if trust_table.is_displayed():
+                        logger.success("✅ 找到信任级别表格")
+                        return True
+                except:
+                    pass
+
+                # 检查方法3：查找用户欢迎信息
+                welcome_selectors = ["h1", ".user-welcome", ".dashboard-header"]
+                for selector in welcome_selectors:
                     try:
-                        element = self.driver.find_element(By.CSS_SELECTOR, indicator)
-                        if element.is_displayed():
-                            logger.success(f"✅ 找到用户菜单元素: {indicator}")
+                        element = self.driver.find_element(By.CSS_SELECTOR, selector)
+                        if element.is_displayed() and self.username.lower() in element.text.lower():
+                            logger.success(f"✅ 在欢迎信息中找到用户名: {self.username}")
                             return True
                     except:
                         continue
 
-                # 检查方法2：在页面内容中搜索用户名
-                page_content = self.driver.page_source.lower()
-                username_lower = self.username.lower()
-                
-                if username_lower in page_content:
-                    logger.success(f"✅ 在页面内容中找到用户名: {self.username}")
-                    return True
-
-                # 检查方法3：直接访问个人资料页
-                try:
-                    profile_url = f"{self.site_config['base_url']}/u/{self.username}"
-                    self.driver.get(profile_url)
-                    time.sleep(3)
-                    
-                    profile_content = self.driver.page_source
-                    if self.username.lower() in profile_content.lower():
-                        logger.success(f"✅ 在个人资料页面找到用户名: {self.username}")
-                        # 返回到最新页面
-                        self.driver.get(self.site_config['latest_url'])
-                        time.sleep(3)
-                        return True
-                    else:
-                        logger.warning(f"❌ 个人资料页面验证失败 (尝试 {retry + 1}/{max_retries})")
-                        self.driver.get(self.site_config['latest_url'])
-                        time.sleep(3)
-                except Exception as e:
-                    logger.warning(f"访问个人资料页面失败: {str(e)}")
-                    self.driver.get(self.site_config['latest_url'])
-                    time.sleep(3)
+                logger.warning(f"❌ 登录状态验证失败 (尝试 {retry + 1}/{max_retries})")
 
                 # 重试前等待
                 if retry < max_retries - 1:
@@ -566,8 +550,8 @@ class LinuxDoBrowser:
                 logger.error("❌ 没有找到主题列表")
                 return 0
 
-            # 随机选择要浏览的主题数量 (4-7个)
-            browse_count = min(random.randint(4, 7), len(topic_elements))
+            # 随机选择要浏览的主题数量 (3-5个，减少数量但增加每个主题的浏览时间)
+            browse_count = min(random.randint(3, 5), len(topic_elements))
             selected_topics = random.sample(topic_elements, browse_count)
             success_count = 0
 
@@ -586,7 +570,7 @@ class LinuxDoBrowser:
 
                 # 在主题间添加随机等待时间
                 if i < browse_count - 1:
-                    wait_time = random.uniform(8, 15)
+                    wait_time = random.uniform(15, 25)
                     logger.info(f"⏳ 浏览间隔等待 {wait_time:.1f} 秒...")
                     time.sleep(wait_time)
 
@@ -611,11 +595,11 @@ class LinuxDoBrowser:
             # 等待页面加载
             time.sleep(3)
             
-            # 模拟真实浏览行为
+            # 模拟真实浏览行为 (延长到30-60秒)
             browse_success = self.enhanced_browse_post()
             
-            # 随机决定是否关闭标签页 (80%概率关闭，20%概率留在当前页)
-            if random.random() < 0.8:
+            # 随机决定是否关闭标签页 (70%概率关闭，30%概率留在当前页)
+            if random.random() < 0.7:
                 self.driver.close()
                 self.driver.switch_to.window(original_window)
             else:
@@ -634,10 +618,11 @@ class LinuxDoBrowser:
             return False
 
     def enhanced_browse_post(self):
-        """增强版模拟真实用户滚动和阅读行为"""
+        """增强版模拟真实用户滚动和阅读行为 - 延长浏览时间"""
         try:
             # 初始等待，模拟页面加载观察
-            initial_wait = random.uniform(2, 4)
+            initial_wait = random.uniform(3, 6)
+            logger.info(f"👀 初始观察等待 {initial_wait:.1f} 秒...")
             time.sleep(initial_wait)
             
             # 获取页面高度
@@ -645,7 +630,7 @@ class LinuxDoBrowser:
             viewport_height = self.driver.execute_script("return window.innerHeight")
             
             current_position = 0
-            scroll_actions = random.randint(6, 12)  # 随机滚动次数
+            scroll_actions = random.randint(8, 15)  # 增加滚动次数
             
             logger.info(f"📄 页面浏览开始 (高度: {total_height}px, 计划滚动: {scroll_actions}次)")
             
@@ -657,13 +642,13 @@ class LinuxDoBrowser:
                 # 动态滚动距离
                 if i == 0:
                     # 第一次滚动较小
-                    scroll_distance = random.randint(300, 500)
+                    scroll_distance = random.randint(200, 400)
                 elif i == scroll_actions - 1:
                     # 最后一次滚动可能到底部
-                    scroll_distance = random.randint(400, 600)
+                    scroll_distance = random.randint(300, 500)
                 else:
                     # 中间滚动随机距离
-                    scroll_distance = random.randint(400, 800)
+                    scroll_distance = random.randint(300, 700)
                 
                 # 确保不会滚动超过底部
                 max_scroll = total_height - current_position - 100
@@ -678,34 +663,40 @@ class LinuxDoBrowser:
                 current_position += scroll_distance
                 
                 # 随机阅读停顿 (模拟阅读内容)
-                if random.random() < 0.3:  # 30%概率有较长阅读停顿
-                    read_time = random.uniform(3, 8)
+                if random.random() < 0.4:  # 40%概率有较长阅读停顿
+                    read_time = random.uniform(5, 12)
                     logger.info(f"👀 阅读停顿 {read_time:.1f} 秒...")
                     time.sleep(read_time)
                 else:
                     # 短停顿
-                    pause_time = random.uniform(1, 3)
+                    pause_time = random.uniform(2, 5)
                     time.sleep(pause_time)
                 
                 # 随机小概率回滚 (模拟重新查看)
-                if random.random() < 0.1:  # 10%概率回滚
+                if random.random() < 0.15:  # 15%概率回滚
                     back_scroll = random.randint(100, 300)
                     self.driver.execute_script(f"window.scrollBy(0, -{back_scroll})")
                     current_position -= back_scroll
-                    time.sleep(random.uniform(1, 2))
+                    time.sleep(random.uniform(1, 3))
             
             # 最终可能的小幅度随机滚动
-            if random.random() < 0.5:
-                final_scrolls = random.randint(1, 3)
+            if random.random() < 0.6:
+                final_scrolls = random.randint(1, 4)
                 for _ in range(final_scrolls):
                     small_scroll = random.randint(50, 200)
-                    self.driver.execute_script(f"window.scrollBy(0, {small_scroll})")
-                    time.sleep(0.5)
+                    direction = 1 if random.random() < 0.7 else -1  # 70%概率向下
+                    self.driver.execute_script(f"window.scrollBy(0, {small_scroll * direction})")
+                    time.sleep(0.8)
             
             # 随机决定是否滚动到顶部
             if random.random() < 0.3:
                 self.driver.execute_script("window.scrollTo(0, 0)")
-                time.sleep(1)
+                time.sleep(2)
+            
+            # 最终观察时间
+            final_observe = random.uniform(3, 8)
+            logger.info(f"👀 最终观察 {final_observe:.1f} 秒...")
+            time.sleep(final_observe)
             
             logger.info("✅ 页面浏览完成")
             return True
@@ -714,30 +705,25 @@ class LinuxDoBrowser:
             logger.error(f"页面浏览异常: {str(e)}")
             return False
 
-    def print_connect_info(self):
-        """打印连接信息（增强版表格查找）"""
-        logger.info("🔗 获取连接信息")
+    def print_trust_level_info(self):
+        """从仪表板页面获取信任级别信息"""
+        logger.info("🔗 获取信任级别信息")
         try:
-            self.driver.get(self.site_config['connect_url'])
+            # 访问仪表板页面
+            self.driver.get(self.site_config['dashboard_url'])
             time.sleep(5)
         
-            # 处理connect页面的Cloudflare验证
+            # 处理Cloudflare验证
             CloudflareHandler.handle_cloudflare_with_doh(self.driver)
             time.sleep(8)
 
-            # 扩展表格选择器，提高查找成功率
+            # 查找信任级别表格
             table_selectors = [
                 "table",
-                ".table",
-                "table.table",
-                ".topic-list",
-                ".container table",
-                ".wrap table",
-                "#content table",
-                ".post-body table",
-                "div.table-responsive table",
-                ".d-table",  # Discourse 表格类
-                ".topic-list table"
+                ".bg-white table",
+                ".rounded-lg table",
+                ".shadow table",
+                "div > table"
             ]
         
             table = None
@@ -745,61 +731,85 @@ class LinuxDoBrowser:
                 try:
                     table = self.driver.find_element(By.CSS_SELECTOR, selector)
                     if table.is_displayed():
-                        logger.info(f"✅ 找到连接信息表格: {selector}")
+                        logger.info(f"✅ 找到信任级别表格: {selector}")
                         break
                 except NoSuchElementException:
                     continue
         
             if not table:
-                logger.warning("⚠️ 无法找到连接信息表格")
+                logger.warning("⚠️ 无法找到信任级别表格")
                 # 保存页面源码用于调试
-                with open(f"connect_debug_{self.site_name}.html", "w", encoding='utf-8') as f:
+                with open(f"dashboard_debug_{self.site_name}.html", "w", encoding='utf-8') as f:
                     f.write(self.driver.page_source)
-                logger.info(f"📄 已保存页面源码到 connect_debug_{self.site_name}.html")
+                logger.info(f"📄 已保存页面源码到 dashboard_debug_{self.site_name}.html")
                 return
 
+            # 解析表格数据
             rows = table.find_elements(By.TAG_NAME, "tr")
             info = []
-
+            
             for row in rows:
                 cells = row.find_elements(By.TAG_NAME, "td")
-                # 兼容<th>标签（有些表格表头用th，内容用td）
-                if len(cells) < 3:
-                    cells = row.find_elements(By.TAG_NAME, "th")
-            
                 if len(cells) >= 3:
                     project = cells[0].text.strip()
                     current = cells[1].text.strip()
                     requirement = cells[2].text.strip()
-                    # 过滤空行（避免无效数据）
-                    if project and current:
+                    
+                    # 过滤空行和表头
+                    if project and project not in ['项目', 'Item'] and current:
+                        # 简化显示内容
+                        if '访问次数' in project or 'Visits' in project:
+                            project = '访问次数'
+                        elif '回复的话题' in project or 'Replied Topics' in project:
+                            project = '回复话题'
+                        elif '浏览的话题' in project or 'Viewed Topics' in project:
+                            project = '浏览话题'
+                        elif '已读帖子' in project or 'Read Posts' in project:
+                            project = '已读帖子'
+                        elif '点赞' in project or 'Likes Given' in project:
+                            project = '点赞'
+                        elif '获赞' in project or 'Likes Received' in project:
+                            project = '获赞'
+                        
                         info.append([project, current, requirement])
 
             if info:
-                print("\n" + "="*50)
-                print(f"📊 {self.site_name.upper()} 连接信息")
-                print("="*50)
+                print("\n" + "="*60)
+                print(f"📊 {self.site_name.upper()} 信任级别信息")
+                print("="*60)
                 # 兼容tabulate库，确保格式正常
                 try:
                     from tabulate import tabulate
-                    print(tabulate(info, headers=["项目", "当前", "要求"], tablefmt="pretty"))
+                    print(tabulate(info, headers=["项目", "当前", "要求"], tablefmt="grid"))
                 except ImportError:
                     # 降级方案：如果没有tabulate，用原始格式打印
-                    print(f"{'项目':<20} {'当前':<15} {'要求':<15}")
-                    print("-" * 50)
+                    print(f"{'项目':<15} {'当前':<20} {'要求':<20}")
+                    print("-" * 60)
                     for item in info:
-                        print(f"{item[0]:<20} {item[1]:<15} {item[2]:<15}")
-                print("="*50 + "\n")
+                        print(f"{item[0]:<15} {item[1]:<20} {item[2]:<20}")
+                print("="*60 + "\n")
+                
+                # 分析完成状态
+                completed = 0
+                total = len(info)
+                for item in info:
+                    current = item[1]
+                    # 简单判断是否完成（绿色文本或包含✓等）
+                    if 'text-green-500' in self.driver.page_source or '✓' in current or '≥' in current:
+                        completed += 1
+                
+                logger.info(f"📈 信任级别进度: {completed}/{total} 项已完成")
+                
             else:
-                logger.warning("⚠️ 表格中未找到有效连接信息")
+                logger.warning("⚠️ 表格中未找到有效信任级别信息")
                 # 保存页面源码用于调试
-                with open(f"connect_empty_{self.site_name}.html", "w", encoding='utf-8') as f:
+                with open(f"dashboard_empty_{self.site_name}.html", "w", encoding='utf-8') as f:
                     f.write(self.driver.page_source)
 
         except Exception as e:
-            logger.error(f"获取连接信息失败: {str(e)}")
+            logger.error(f"获取信任级别信息失败: {str(e)}")
             # 保存错误页面源码，方便排查
-            with open(f"connect_error_{self.site_name}.html", "w", encoding='utf-8') as f:
+            with open(f"dashboard_error_{self.site_name}.html", "w", encoding='utf-8') as f:
                 f.write(self.driver.page_source)
 
     def run(self):
@@ -816,8 +826,8 @@ class LinuxDoBrowser:
             # 2. 浏览主题
             browse_success_count = self.click_topic()
 
-            # 3. 获取连接信息
-            self.print_connect_info()
+            # 3. 获取信任级别信息（替代原来的连接信息）
+            self.print_trust_level_info()
 
             # 4. 生成状态文件
             self.generate_browser_state(True, browse_success_count)
@@ -878,7 +888,7 @@ def main():
             failed_sites.append(site_name)
 
         if site_config != target_sites[-1]:
-            wait_time = random.uniform(15, 30)
+            wait_time = random.uniform(20, 40)
             logger.info(f"⏳ 等待 {wait_time:.1f} 秒后处理下一个站点...")
             time.sleep(wait_time)
 
