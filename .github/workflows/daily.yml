@@ -17,6 +17,8 @@ on:
 
 env:
   PYTHON_VERSION: '3.11'
+  # 缓存Cookies的目录（与脚本中一致）
+  COOKIES_CACHE_DIR: ${{ github.workspace }}
 
 jobs:
   automate:
@@ -26,6 +28,18 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
+
+    - name: 恢复Cloudflare Cookies缓存
+      uses: actions/cache@v3
+      id: cookies-cache
+      with:
+        path: |
+          cf_cookies_linux_do.json
+          cf_cookies_idcflare.json
+        key: ${{ runner.os }}-linuxdo-cookies-${{ github.sha }}
+        # 允许使用旧缓存（即使代码变动也可复用Cookies）
+        restore-keys: |
+          ${{ runner.os }}-linuxdo-cookies-
 
     - name: Setup Python
       uses: actions/setup-python@v4
@@ -56,23 +70,6 @@ jobs:
         pip install -r requirements.txt
         pip list
 
-    - name: Download previous session data
-      uses: actions/download-artifact@v4
-      with:
-        name: linuxdo-session-data
-        path: ./
-      continue-on-error: true
-
-    - name: Display cache status
-      run: |
-        echo "📦 缓存文件状态:"
-        echo "cf_cookies 文件:"
-        ls -la cf_cookies_*.json 2>/dev/null || echo "未找到 cf_cookies 文件"
-        echo ""
-        echo "browser_state 文件:"
-        ls -la browser_state_*.json 2>/dev/null || echo "未找到 browser_state 文件"
-        echo ""
-
     - name: Create turnstilePatch extension
       run: |
         echo "🔧 创建turnstilePatch扩展..."
@@ -88,26 +85,23 @@ jobs:
         IDCFLARE_PASSWORD: ${{ secrets.IDCFLARE_PASSWORD }}
         GITHUB_ACTIONS: 'true'
         DOH_SERVER: 'https://ld.ddd.oaifree.com/query-dns'
+        # 传递站点选择参数到脚本
+        SITE_SELECTOR: ${{ github.event.inputs.site_selector || 'all' }}
       run: |
         echo "开始执行自动化脚本..."
-        echo "站点选择: ${{ github.event.inputs.site_selector || 'all' }}"
+        echo "站点选择: $SITE_SELECTOR"
         echo "当前时间: $(date)"
         echo "DoH服务器: $DOH_SERVER"
-        echo "缓存检查:"
-        python -c "
-        import os, json
-        sites = ['linux_do', 'idcflare']
-        for site in sites:
-            cf_file = f'cf_cookies_{site}.json'
-            state_file = f'browser_state_{site}.json'
-            cf_exists = os.path.exists(cf_file)
-            state_exists = os.path.exists(state_file)
-            print(f'{site}: cf_cookies={cf_exists}, browser_state={state_exists}')
-        "
+        echo "Cookies缓存状态: ${{ steps.cookies-cache.outputs.cache-hit == 'true' && '已命中' || '未命中' }}"
         python main.py
         echo "脚本执行完成"
 
-    - name: Upload session data
+    - name: 显示缓存的Cookies文件（调试用）
+      run: |
+        echo "📋 当前目录下的Cookies文件:"
+        ls -la cf_cookies_*.json 2>/dev/null || echo "无Cookies文件"
+
+    - name: Upload session data（备份用）
       uses: actions/upload-artifact@v4
       if: always()
       with:
@@ -119,15 +113,6 @@ jobs:
           browser_state_idcflare.json
         retention-days: 7
         overwrite: true
-
-    - name: Display uploaded artifacts
-      run: |
-        echo "📤 上传的缓存文件:"
-        echo "cf_cookies 文件:"
-        ls -la cf_cookies_*.json 2>/dev/null || echo "未生成 cf_cookies 文件"
-        echo ""
-        echo "browser_state 文件:"
-        ls -la browser_state_*.json 2>/dev/null || echo "未生成 browser_state 文件"
 
     - name: Upload debug files
       uses: actions/upload-artifact@v4
