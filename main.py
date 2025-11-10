@@ -151,10 +151,13 @@ class LinuxDoBrowser:
         chrome_options.add_argument('--no-sandbox')
         chrome_options.add_argument('--disable-dev-shm-usage')
         chrome_options.add_argument('--disable-blink-features=AutomationControlled')
-        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        chrome_options.add_experimental_option('useAutomationExtension', False)
         chrome_options.add_argument('--lang=zh-CN,zh;q=0.9,en;q=0.8')
-        
+        chrome_options.add_argument('--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36')
+        chrome_options.add_argument('--window-size=1920,1080')
+        chrome_options.add_argument('--disable-gpu')
+        chrome_options.add_argument('--enable-javascript')
+        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
+        chrome_options.add_experimental_option('useAutomationExtension', False)
         # 加载turnstilePatch扩展（关键配置）
         if os.path.exists(TURNSTILE_PATCH_PATH):
             chrome_options.add_argument(f'--load-extension={TURNSTILE_PATCH_PATH}')
@@ -752,3 +755,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
