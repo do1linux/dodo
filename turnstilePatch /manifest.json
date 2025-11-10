@@ -1,14 +1,23 @@
 {
   "manifest_version": 3,
-  "name": "Turnstile Patch",
+  "name": "Turnstile Bypass Patch",
   "version": "1.0",
-  "description": "Patch for Cloudflare Turnstile challenges",
-  "permissions": [],
+  "description": "Bypass Cloudflare Turnstile for automation",
+  "permissions": ["scripting", "webRequest", "webRequestBlocking", "<all_urls>"],
+  "background": {
+    "service_worker": "script.js"
+  },
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["script.js"],
-      "run_at": "document_start"
+      "run_at": "document_start",
+      "js": ["content.js"]
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["*"],
+      "matches": ["<all_urls>"]
     }
   ]
 }
