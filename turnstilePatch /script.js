@@ -1,61 +1,30 @@
-// Turnstile Patch - Cloudflare Challenge Bypass
-(function() {
-    'use strict';
-    
-    // Patch turnstile if it exists
-    if (window.turnstile) {
-        const originalRender = window.turnstile.render;
-        const originalReset = window.turnstile.reset;
-        
-        window.turnstile.render = function(element, options) {
-            console.log('Turnstile render intercepted');
-            if (options && typeof options.callback === 'function') {
-                // Simulate successful challenge
-                setTimeout(() => {
-                    options.callback('fake_turnstile_token_' + Date.now());
-                }, 1000);
-            }
-            return 'fake_widget_id';
-        };
-        
-        window.turnstile.reset = function(widgetId) {
-            console.log('Turnstile reset intercepted');
-            return true;
-        };
-        
-        window.turnstile.getResponse = function(widgetId) {
-            return 'fake_turnstile_token_' + Date.now();
-        };
+// 拦截 Cloudflare 验证相关请求
+chrome.webRequest.onBeforeSendHeaders.addListener(
+  (details) => {
+    // 添加真实浏览器的请求头
+    const headers = details.requestHeaders || [];
+    headers.push(
+      { name: 'Sec-Fetch-Dest', value: 'document' },
+      { name: 'Sec-Fetch-Mode', value: 'navigate' },
+      { name: 'Sec-Fetch-Site', value: 'same-origin' },
+      { name: 'Sec-Fetch-User', value: '?1' },
+      { name: 'Upgrade-Insecure-Requests', value: '1' }
+    );
+    return { requestHeaders: headers };
+  },
+  { urls: ['<all_urls>'] },
+  ['blocking', 'requestHeaders', 'extraHeaders']
+);
+
+// 拦截验证响应，直接返回通过
+chrome.webRequest.onBeforeRequest.addListener(
+  (details) => {
+    if (details.url.includes('/cdn-cgi/challenge-platform/') || details.url.includes('turnstile/v2/')) {
+      return {
+        redirectUrl: 'data:text/plain;charset=utf-8,fake-valid-response'
+      };
     }
-    
-    // Intercept Cloudflare challenges
-    const originalFetch = window.fetch;
-    window.fetch = function(...args) {
-        const url = args[0];
-        if (typeof url === 'string' && url.includes('challenges')) {
-            console.log('Cloudflare challenge intercepted');
-            return Promise.resolve({
-                ok: true,
-                status: 200,
-                json: () => Promise.resolve({success: true}),
-                text: () => Promise.resolve('{"success": true}')
-            });
-        }
-        return originalFetch.apply(this, args);
-    };
-    
-    // Remove Cloudflare protection attributes
-    document.addEventListener('DOMContentLoaded', function() {
-        const elements = document.querySelectorAll('*');
-        elements.forEach(el => {
-            if (el.hasAttribute('data-cf-chl-completed')) {
-                el.setAttribute('data-cf-chl-completed', 'true');
-            }
-            if (el.hasAttribute('data-cf-modified')) {
-                el.setAttribute('data-cf-modified', 'true');
-            }
-        });
-    });
-    
-    console.log('Turnstile Patch loaded successfully');
-})();
+  },
+  { urls: ['<all_urls>'] },
+  ['blocking']
+);
