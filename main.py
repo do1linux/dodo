@@ -482,64 +482,90 @@ class LinuxDoBrowser:
             time.sleep(wait_time)
 
     def print_connect_info(self):
-        """获取并打印连接信息"""
+        """打印连接信息（修复表格查找+添加Cloudflare处理+tabulate兼容）"""
         logger.info("🔗 获取连接信息")
         try:
             self.driver.get(self.site_config['connect_url'])
             time.sleep(5)
+        
+            # 关键：处理connect页面的Cloudflare验证（之前漏掉了）
             CloudflareHandler.handle_cloudflare_with_doh(self.driver)
             time.sleep(8)
-            
+
+            # 扩展表格选择器，提高查找成功率
             table_selectors = [
                 "table",
-                ".table", 
+                ".table",
                 "table.table",
                 ".topic-list",
                 ".container table",
-                ".wrap table"
+                ".wrap table",
+                "#content table",
+                ".post-body table",
+                "div.table-responsive table"
             ]
-
-            table_element = None
+        
+            table = None
             for selector in table_selectors:
                 try:
-                    table_element = self.driver.find_element(By.CSS_SELECTOR, selector)
-                    if table_element and table_element.is_displayed():
-                        logger.info(f"✅ 找到表格: {selector}")
+                    table = self.driver.find_element(By.CSS_SELECTOR, selector)
+                    if table.is_displayed():
+                        logger.info(f"✅ 找到连接信息表格: {selector}")
                         break
-                    table_element = None
-                except:
+                except NoSuchElementException:
                     continue
-
-            if not table_element:
+        
+            if not table:
                 logger.warning("⚠️ 无法找到连接信息表格")
+                # 保存页面源码用于调试
+                with open(f"connect_debug_{self.site_name}.html", "w", encoding='utf-8') as f:
+                    f.write(self.driver.page_source)
+                logger.info(f"📄 已保存页面源码到 connect_debug_{self.site_name}.html")
                 return
 
-            rows = table_element.find_elements(By.TAG_NAME, "tr")
+            rows = table.find_elements(By.TAG_NAME, "tr")
             info = []
-            
+
             for row in rows:
                 cells = row.find_elements(By.TAG_NAME, "td")
+                # 兼容<th>标签（有些表格表头用th，内容用td）
+                if len(cells) < 3:
+                    cells = row.find_elements(By.TAG_NAME, "th")
+            
                 if len(cells) >= 3:
                     project = cells[0].text.strip()
-                    current = cells[1].text.strip() 
+                    current = cells[1].text.strip()
                     requirement = cells[2].text.strip()
+                    # 过滤空行（避免无效数据）
                     if project and current:
                         info.append([project, current, requirement])
 
             if info:
-                print("\n" + "="*60)
+                print("\n" + "="*50)
                 print(f"📊 {self.site_name.upper()} 连接信息")
-                print("="*60)
-                print(f"{'项目':<20} {'当前':<15} {'要求':<15}")
-                print("-" * 50)
-                for item in info:
-                    print(f"{item[0]:<20} {item[1]:<15} {item[2]:<15}")
-                print("="*60 + "\n")
+                print("="*50)
+                # 兼容tabulate库，确保格式正常
+                try:
+                    from tabulate import tabulate
+                    print(tabulate(info, headers=["项目", "当前", "要求"], tablefmt="pretty"))
+                except ImportError:
+                    # 降级方案：如果没有tabulate，用原始格式打印
+                    print(f"{'项目':<20} {'当前':<15} {'要求':<15}")
+                    print("-" * 50)
+                    for item in info:
+                        print(f"{item[0]:<20} {item[1]:<15} {item[2]:<15}")
+                print("="*50 + "\n")
             else:
-                logger.warning("⚠️ 表格中没有找到有效数据")
+                logger.warning("⚠️ 表格中未找到有效连接信息")
+                # 保存页面源码用于调试
+                with open(f"connect_empty_{self.site_name}.html", "w", encoding='utf-8') as f:
+                    f.write(self.driver.page_source)
 
         except Exception as e:
             logger.error(f"获取连接信息失败: {str(e)}")
+            # 保存错误页面源码，方便排查
+            with open(f"connect_error_{self.site_name}.html", "w", encoding='utf-8') as f:
+                f.write(self.driver.page_source)
 
     def run(self):
         """执行完整自动化流程"""
@@ -755,4 +781,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
