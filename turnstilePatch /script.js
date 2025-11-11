@@ -1,30 +1,47 @@
-// 拦截 Cloudflare 验证相关请求
-chrome.webRequest.onBeforeSendHeaders.addListener(
-  (details) => {
-    // 添加真实浏览器的请求头
-    const headers = details.requestHeaders || [];
-    headers.push(
-      { name: 'Sec-Fetch-Dest', value: 'document' },
-      { name: 'Sec-Fetch-Mode', value: 'navigate' },
-      { name: 'Sec-Fetch-Site', value: 'same-origin' },
-      { name: 'Sec-Fetch-User', value: '?1' },
-      { name: 'Upgrade-Insecure-Requests', value: '1' }
-    );
-    return { requestHeaders: headers };
-  },
-  { urls: ['<all_urls>'] },
-  ['blocking', 'requestHeaders', 'extraHeaders']
+// Service Worker脚本
+chrome.webRequest.onBeforeRequest.addListener(
+    function(details) {
+        const url = details.url;
+        
+        // 记录请求日志
+        console.log('[TurnstilePatch] 拦截请求:', url);
+        
+        // 拦截已知检测脚本
+        if (url.includes('challenges.cloudflare.com') || url.includes('turnstile')) {
+            console.log('[TurnstilePatch] 允许Turnstile请求');
+            return { cancel: false };
+        }
+        
+        // 修改请求头
+        const requestHeaders = details.requestHeaders || [];
+        requestHeaders.push({
+            name: 'X-Patched',
+            value: 'true'
+        });
+        
+        return { requestHeaders: requestHeaders };
+    },
+    { urls: ["*://*/*"] },
+    ["blocking", "requestHeaders"]
 );
 
-// 拦截验证响应，直接返回通过
-chrome.webRequest.onBeforeRequest.addListener(
-  (details) => {
-    if (details.url.includes('/cdn-cgi/challenge-platform/') || details.url.includes('turnstile/v2/')) {
-      return {
-        redirectUrl: 'data:text/plain;charset=utf-8,fake-valid-response'
-      };
+// 监听消息
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    if (request.action === "getTurnstileToken") {
+        // 模拟返回token
+        sendResponse({ token: "mock-token-" + Math.random().toString(36).substring(2, 15) });
     }
-  },
-  { urls: ['<all_urls>'] },
-  ['blocking']
-);
+});
+
+// 注入脚本到所有页面
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+    if (changeInfo.status === 'loading' && tab.url) {
+        chrome.scripting.executeScript({
+            target: { tabId: tabId },
+            files: ['content.js'],
+            injectImmediately: true
+        }).catch(() => {});
+    }
+});
+
+console.log('[TurnstilePatch] Service Worker 已加载');
