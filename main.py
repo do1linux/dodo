@@ -33,7 +33,6 @@ SITES = [
         'login_url': 'https://linux.do/login',
         'latest_url': 'https://linux.do/latest',
         'connect_url': 'https://connect.linux.do',
-        'dashboard_url': 'https://linux.do/dash',
         'user_url': 'https://linux.do/u'
     },
     {
@@ -42,7 +41,6 @@ SITES = [
         'login_url': 'https://idcflare.com/login',
         'latest_url': 'https://idcflare.com/latest',
         'connect_url': 'https://connect.idcflare.com',
-        'dashboard_url': 'https://idcflare.com/dash',
         'user_url': 'https://idcflare.com/u'
     }
 ]
@@ -1002,3 +1000,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
