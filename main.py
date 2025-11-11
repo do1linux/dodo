@@ -11,6 +11,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from selenium.webdriver.common.action_chains import ActionChains
 from loguru import logger
 
 # ======================== 配置常量 ========================
@@ -133,7 +134,7 @@ class CloudflareHandler:
 
     @staticmethod
     def handle_cloudflare_with_doh(driver, doh_server=DOH_SERVER, max_attempts=8, timeout=120):
-        """使用DoH处理Cloudflare验证 - 简化版本"""
+        """使用DoH处理Cloudflare验证 - 优化版本"""
         start_time = time.time()
         logger.info(f"🛡️ 开始处理Cloudflare验证 (DoH: {doh_server})")
         
@@ -162,20 +163,33 @@ class CloudflareHandler:
                     logger.success("✅ Cloudflare验证通过")
                     return True
 
-                # 等待时间
-                wait_time = random.uniform(3, 6)
+                # 智能等待时间 (随着尝试次数增加而增加)
+                base_wait = 3 + (attempt * 0.5)
+                wait_time = random.uniform(base_wait, base_wait + 3)
                 elapsed = time.time() - start_time
                 
                 logger.info(f"⏳ 等待验证 ({wait_time:.1f}秒) - 尝试 {attempt + 1}/{max_attempts} [耗时: {elapsed:.0f}秒]")
-                time.sleep(wait_time)
+                
+                # 模拟人类等待行为 - 随机小间隔
+                intervals = int(wait_time * 2)
+                for i in range(intervals):
+                    time.sleep(wait_time / intervals)
+                    # 随机移动鼠标 (如果可见)
+                    try:
+                        if random.random() < 0.3:  # 30%概率移动鼠标
+                            actions = ActionChains(driver)
+                            actions.move_by_offset(random.randint(-10, 10), random.randint(-10, 10))
+                            actions.perform()
+                    except:
+                        pass
                 
                 # 超时检查
                 if time.time() - start_time > timeout:
                     logger.warning(f"⚠️ Cloudflare处理超时 ({timeout}秒)")
                     break
                     
-                # 定期刷新
-                if attempt % 2 == 1:
+                # 智能刷新策略
+                if attempt % 2 == 1 and random.random() < 0.6:  # 60%概率在奇数尝试时刷新
                     try:
                         driver.refresh()
                         logger.info("🔄 刷新页面")
@@ -189,6 +203,93 @@ class CloudflareHandler:
 
         logger.warning("⚠️ Cloudflare验证可能未完全通过，强制继续")
         return True
+
+# ======================== 人类行为模拟器 ========================
+class HumanBehaviorSimulator:
+    """模拟真实人类浏览行为"""
+    
+    @staticmethod
+    def random_mouse_movement(driver):
+        """随机鼠标移动"""
+        try:
+            actions = ActionChains(driver)
+            # 小幅随机移动
+            for _ in range(random.randint(2, 5)):
+                x_offset = random.randint(-15, 15)
+                y_offset = random.randint(-15, 15)
+                actions.move_by_offset(x_offset, y_offset)
+                actions.pause(random.uniform(0.1, 0.3))
+            actions.perform()
+        except:
+            pass
+
+    @staticmethod
+    def human_like_scroll(driver, scroll_times=None):
+        """模拟人类滚动行为"""
+        if scroll_times is None:
+            scroll_times = random.randint(4, 8)
+            
+        viewport_height = driver.execute_script("return window.innerHeight")
+        
+        for i in range(scroll_times):
+            try:
+                # 随机滚动距离 (人类不会每次都滚到底)
+                scroll_amount = random.randint(int(viewport_height * 0.3), int(viewport_height * 0.8))
+                
+                # 随机滚动方向 (90%向下, 10%向上)
+                if random.random() < 0.9 or i == 0:
+                    scroll_direction = 1  # 向下
+                else:
+                    scroll_direction = -1  # 向上
+                
+                scroll_distance = scroll_amount * scroll_direction
+                
+                # 分段滚动模拟人类行为
+                segments = random.randint(2, 4)
+                segment_distance = scroll_distance / segments
+                
+                for segment in range(segments):
+                    driver.execute_script(f"window.scrollBy(0, {segment_distance})")
+                    # 随机间隔
+                    pause_time = random.uniform(0.2, 0.8)
+                    time.sleep(pause_time)
+                
+                # 阅读停顿
+                if random.random() < 0.6:  # 60%概率有阅读停顿
+                    read_time = random.uniform(2, 6)
+                    logger.debug(f"📖 阅读停顿 {read_time:.1f}秒")
+                    time.sleep(read_time)
+                    
+                    # 阅读时可能有小幅度滚动
+                    if random.random() < 0.3:
+                        small_scroll = random.randint(50, 150)
+                        driver.execute_script(f"window.scrollBy(0, {small_scroll})")
+                        time.sleep(0.5)
+                
+            except Exception as e:
+                logger.debug(f"滚动异常: {str(e)}")
+                break
+
+    @staticmethod
+    def random_reading_behavior(driver):
+        """随机阅读行为"""
+        behaviors = [
+            lambda: time.sleep(random.uniform(3, 8)),  # 单纯阅读
+            lambda: HumanBehaviorSimulator.human_like_scroll(driver, 2),  # 小范围滚动
+            lambda: HumanBehaviorSimulator.random_mouse_movement(driver),  # 鼠标移动
+        ]
+        
+        # 执行1-3个随机行为
+        selected_behaviors = random.sample(behaviors, random.randint(1, 3))
+        for behavior in selected_behaviors:
+            behavior()
+
+    @staticmethod
+    def simulate_typing(element, text):
+        """模拟人类输入"""
+        for char in text:
+            element.send_keys(char)
+            time.sleep(random.uniform(0.05, 0.2))  # 随机输入间隔
 
 # ======================== 主浏览器类 ========================
 class LinuxDoBrowser:
@@ -213,6 +314,12 @@ class LinuxDoBrowser:
         chrome_options.add_argument('--enable-javascript')
         chrome_options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
         chrome_options.add_experimental_option('useAutomationExtension', False)
+        
+        # 人类行为模拟配置
+        chrome_options.add_argument('--disable-web-security')
+        chrome_options.add_argument('--allow-running-insecure-content')
+        chrome_options.add_argument('--disable-notifications')
+        
         # 加载turnstilePatch扩展（关键配置）
         if os.path.exists(TURNSTILE_PATCH_PATH):
             chrome_options.add_argument(f'--load-extension={TURNSTILE_PATCH_PATH}')
@@ -223,11 +330,13 @@ class LinuxDoBrowser:
         try:
             self.driver = webdriver.Chrome(options=chrome_options)
             self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            # 设置更自然的页面加载超时
+            self.driver.set_page_load_timeout(30)
         except Exception as e:
             logger.error(f"Chrome驱动初始化失败: {str(e)}")
             raise
             
-        self.wait = WebDriverWait(self.driver, 15)
+        self.wait = WebDriverWait(self.driver, 20)
 
     def generate_browser_state(self, success=True, browse_count=0):
         """生成浏览器状态文件"""
@@ -252,17 +361,17 @@ class LinuxDoBrowser:
         return self.attempt_login()
 
     def attempt_login(self):
-        """尝试登录"""
+        """尝试登录 - 优化的人类行为版本"""
         logger.info("🔐 开始登录流程...")
         
         try:
             # 访问登录页面
             self.driver.get(self.site_config['login_url'])
-            time.sleep(3)
+            time.sleep(random.uniform(2, 4))
 
             # 处理Cloudflare验证
             CloudflareHandler.handle_cloudflare_with_doh(self.driver)
-            time.sleep(3)
+            time.sleep(random.uniform(2, 4))
 
             # 记录当前页面状态
             current_url = self.driver.current_url
@@ -273,7 +382,7 @@ class LinuxDoBrowser:
             if 'login' not in current_url:
                 logger.info("🔄 被重定向，尝试回到登录页面")
                 self.driver.get(self.site_config['login_url'])
-                time.sleep(3)
+                time.sleep(random.uniform(2, 4))
                 CloudflareHandler.handle_cloudflare_with_doh(self.driver)
 
             # 查找表单元素
@@ -345,33 +454,42 @@ class LinuxDoBrowser:
                 logger.error("❌ 找不到登录按钮")
                 return False
 
-            # 模拟真实输入
+            # 模拟真实人类输入行为
             logger.info("⌨️ 输入用户名...")
-            username_field.clear()
-            time.sleep(0.5)
-            username_field.send_keys(self.username)
+            username_field.click()
+            time.sleep(random.uniform(0.5, 1))
+            HumanBehaviorSimulator.simulate_typing(username_field, self.username)
             
-            logger.info("⌨️ 输入密码...")
-            password_field.clear()
-            time.sleep(0.5)
-            password_field.send_keys(self.password)
-
             # 随机思考时间
-            think_time = random.uniform(1, 2)
+            think_time = random.uniform(1, 3)
             logger.info(f"🤔 思考 {think_time:.1f} 秒...")
             time.sleep(think_time)
+            
+            logger.info("⌨️ 输入密码...")
+            password_field.click()
+            time.sleep(random.uniform(0.3, 0.7))
+            HumanBehaviorSimulator.simulate_typing(password_field, self.password)
 
+            # 再次思考时间
+            think_time2 = random.uniform(0.5, 2)
+            logger.info(f"🤔 再次思考 {think_time2:.1f} 秒...")
+            time.sleep(think_time2)
+
+            # 点击登录按钮前随机鼠标移动
+            HumanBehaviorSimulator.random_mouse_movement(self.driver)
+            
             # 点击登录按钮
             logger.info("🖱️ 点击登录按钮...")
             login_button.click()
             
-            # 等待登录完成
-            logger.info("⏳ 等待登录完成...")
-            time.sleep(5)
+            # 等待登录完成 - 使用随机等待时间
+            wait_time = random.uniform(4, 8)
+            logger.info(f"⏳ 等待登录完成 ({wait_time:.1f}秒)...")
+            time.sleep(wait_time)
 
             # 处理登录后的Cloudflare验证
             CloudflareHandler.handle_cloudflare_with_doh(self.driver)
-            time.sleep(3)
+            time.sleep(random.uniform(2, 4))
 
             # 检查登录是否成功 - 严格验证用户名
             login_success = self.strict_username_login_check()
@@ -407,11 +525,11 @@ class LinuxDoBrowser:
                     try:
                         logger.info(f"📍 检查页面: {check_url}")
                         self.driver.get(check_url)
-                        time.sleep(3)
+                        time.sleep(random.uniform(2, 4))
                         
                         # 处理可能的Cloudflare验证
                         CloudflareHandler.handle_cloudflare_with_doh(self.driver)
-                        time.sleep(2)
+                        time.sleep(random.uniform(1, 3))
                         
                         # 获取页面内容
                         page_content = self.driver.page_source
@@ -455,13 +573,13 @@ class LinuxDoBrowser:
             except Exception as e:
                 logger.error(f"登录状态检查异常: {str(e)}")
                 if retry < max_retries - 1:
-                    time.sleep(5)
+                    time.sleep(random.uniform(3, 7))
         
         logger.error(f"❌ 在所有页面中都未找到用户名: {self.username}")
         return False
 
     def click_topic(self):
-        """浏览主题 - 8-10个主题"""
+        """浏览主题 - 8-10个主题，模拟真实人类行为"""
         if not BROWSE_ENABLED:
             logger.info("⏭️ 浏览功能已禁用，跳过")
             return 0
@@ -471,13 +589,19 @@ class LinuxDoBrowser:
         try:
             # 访问最新页面
             self.driver.get(self.site_config['latest_url'])
-            time.sleep(3)
+            time.sleep(random.uniform(2, 4))
             
             CloudflareHandler.handle_cloudflare_with_doh(self.driver)
-            time.sleep(2)
+            time.sleep(random.uniform(1, 3))
 
             # 查找主题元素
             topic_elements = self.driver.find_elements(By.CSS_SELECTOR, ".title")
+            if not topic_elements:
+                # 尝试其他选择器
+                topic_elements = self.driver.find_elements(By.CSS_SELECTOR, "a.title")
+                if not topic_elements:
+                    topic_elements = self.driver.find_elements(By.CSS_SELECTOR, "[class*='topic'] a")
+            
             if not topic_elements:
                 logger.error("❌ 没有找到主题列表")
                 return 0
@@ -510,26 +634,24 @@ class LinuxDoBrowser:
                             break
                     
                     # 模拟真实浏览行为 - 延长浏览时间
-                    time.sleep(random.uniform(8, 12))
+                    browse_time = random.uniform(15, 30)
+                    logger.debug(f"⏱️ 计划浏览时间: {browse_time:.1f}秒")
+                    
+                    start_browse_time = time.time()
                     
                     # 多次滚动模拟阅读
-                    scroll_times = random.randint(3, 6)
-                    for scroll_idx in range(scroll_times):
-                        scroll_distance = random.randint(400, 800)
-                        self.driver.execute_script(f"window.scrollBy(0, {scroll_distance})")
-                        
-                        # 随机阅读停顿
-                        if random.random() < 0.3:  # 30%概率有阅读停顿
-                            read_time = random.uniform(3, 6)
-                            time.sleep(read_time)
-                        else:
-                            time.sleep(random.uniform(1, 2))
+                    HumanBehaviorSimulator.human_like_scroll(self.driver)
                     
-                    # 随机决定是否回滚
-                    if random.random() < 0.2:  # 20%概率回滚
-                        back_scroll = random.randint(200, 500)
-                        self.driver.execute_script(f"window.scrollBy(0, -{back_scroll})")
-                        time.sleep(2)
+                    # 随机阅读行为
+                    if random.random() < 0.7:  # 70%概率有额外阅读行为
+                        HumanBehaviorSimulator.random_reading_behavior(self.driver)
+                    
+                    # 确保最小浏览时间
+                    elapsed_time = time.time() - start_browse_time
+                    if elapsed_time < browse_time:
+                        remaining_time = browse_time - elapsed_time
+                        logger.debug(f"⏳ 补充浏览时间: {remaining_time:.1f}秒")
+                        time.sleep(remaining_time)
                     
                     # 关闭标签页
                     self.driver.close()
@@ -537,11 +659,17 @@ class LinuxDoBrowser:
                     
                     success_count += 1
                     
-                    # 主题间等待
+                    # 主题间等待 - 模拟人类思考间隔
                     if i < browse_count - 1:
-                        wait_time = random.uniform(8, 15)
+                        wait_time = random.uniform(8, 20)
                         logger.info(f"⏳ 浏览间隔等待 {wait_time:.1f} 秒...")
-                        time.sleep(wait_time)
+                        
+                        # 在等待期间模拟一些活动
+                        intervals = int(wait_time / 2)
+                        for j in range(intervals):
+                            time.sleep(2)
+                            if random.random() < 0.3:  # 30%概率有鼠标活动
+                                HumanBehaviorSimulator.random_mouse_movement(self.driver)
                         
                 except Exception as e:
                     logger.error(f"浏览主题失败: {str(e)}")
@@ -549,7 +677,12 @@ class LinuxDoBrowser:
                     try:
                         self.driver.switch_to.window(original_window)
                     except:
-                        pass
+                        # 如果恢复失败，重新访问最新页面
+                        try:
+                            self.driver.get(self.site_config['latest_url'])
+                            time.sleep(3)
+                        except:
+                            pass
                     continue
 
             logger.info(f"📊 浏览完成: 成功 {success_count}/{browse_count} 个主题")
@@ -563,7 +696,17 @@ class LinuxDoBrowser:
         """获取连接信息"""
         logger.info("🔗 获取连接信息")
         try:
-            # 直接使用已知的连接信息
+            # 访问连接页面
+            self.driver.get(f"{self.site_config['base_url']}/dash")
+            time.sleep(random.uniform(2, 4))
+            
+            CloudflareHandler.handle_cloudflare_with_doh(self.driver)
+            time.sleep(random.uniform(1, 3))
+
+            # 获取页面内容分析连接信息
+            page_content = self.driver.page_source
+            
+            # 直接使用已知的连接信息（基于您的日志）
             connect_info = []
             
             # 添加固定的连接信息
@@ -634,8 +777,17 @@ class LinuxDoBrowser:
 # ======================== 主函数 ========================
 def main():
     """主函数"""
+    logger.remove()  # 移除默认处理器
+    logger.add(sys.stdout, 
+               format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <level>{message}</level>",
+               level="INFO",
+               colorize=True)
+    
     logger.info("🎯 Linux.Do 多站点自动化脚本启动 (Selenium版)")
+    
+    # 设置环境变量
     os.environ.pop("DISPLAY", None)
+    
     success_sites = []
     failed_sites = []
 
@@ -675,11 +827,17 @@ def main():
             logger.error(f"❌ {site_name} 执行异常: {str(e)}")
             failed_sites.append(site_name)
 
-        # 站点间等待
+        # 站点间等待 - 模拟人类切换站点行为
         if site_config != target_sites[-1]:
-            wait_time = random.uniform(15, 25)
+            wait_time = random.uniform(15, 30)
             logger.info(f"⏳ 等待 {wait_time:.1f} 秒后处理下一个站点...")
-            time.sleep(wait_time)
+            
+            # 在等待期间模拟一些随机活动
+            intervals = int(wait_time / 3)
+            for i in range(intervals):
+                time.sleep(3)
+                if random.random() < 0.4:  # 40%概率有日志输出
+                    logger.debug("🔄 等待中...")
 
     logger.info("📊 执行总结:")
     logger.info(f"✅ 成功站点: {', '.join(success_sites) if success_sites else '无'}")
