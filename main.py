@@ -32,7 +32,7 @@ SITES = [
         'base_url': 'https://linux.do',
         'login_url': 'https://linux.do/login',
         'latest_url': 'https://linux.do/latest',
-        'connect_url': 'https://connect.linux.do',  # 修复：添加缺失的逗号
+        'connect_url': 'https://connect.linux.do',
         'dashboard_url': 'https://linux.do/dash',
         'user_url': 'https://linux.do/u'
     },
@@ -41,7 +41,7 @@ SITES = [
         'base_url': 'https://idcflare.com',
         'login_url': 'https://idcflare.com/login',
         'latest_url': 'https://idcflare.com/latest',
-        'connect_url': 'https://connect.idcflare.com',  # 修复：添加缺失的逗号
+        'connect_url': 'https://connect.idcflare.com',
         'dashboard_url': 'https://idcflare.com/dash',
         'user_url': 'https://idcflare.com/u'
     }
@@ -50,7 +50,7 @@ SITES = [
 # 配置项
 BROWSE_ENABLED = os.environ.get("BROWSE_ENABLED", "true").strip().lower() not in ["false", "0", "off"]
 HEADLESS = os.environ.get("HEADLESS", "true").strip().lower() not in ["false", "0", "off"]
-FORCE_LOGIN_EVERY_TIME = False  # 改为False，启用Cookies缓存
+FORCE_LOGIN_EVERY_TIME = False
 
 # DoH 服务器配置
 DOH_SERVER = os.environ.get("DOH_SERVER", "https://ld.ddd.oaifree.com/query-dns")
@@ -99,7 +99,6 @@ class CacheManager:
                 json.dump(data, f, ensure_ascii=False, indent=2)
             logger.info(f"💾 缓存已保存: {file_name}")
             
-            # 验证文件保存结果
             if os.path.exists(file_path):
                 file_size = os.path.getsize(file_path)
                 logger.info(f"✅ 缓存文件验证: {file_name} ({file_size} 字节)")
@@ -594,9 +593,9 @@ class LinuxDoBrowser:
             return False
 
     def strict_username_login_check(self, context=""):
-        """严格登录状态检查 - 必须检测到用户名"""
+        """严格登录状态检查 - 必须检测到用户名（修复要求1）"""
         if context:
-            logger.info(f"🔍 {context} - 检测用户名...")
+            logger.info(f"🔍 {context} - 严格检测用户名...")
         else:
             logger.info("🔍 严格验证登录状态 - 检测用户名...")
         
@@ -606,7 +605,6 @@ class LinuxDoBrowser:
                 # 检查多个可能的页面来寻找用户名
                 check_urls = [
                     self.site_config['latest_url'],
-                    self.site_config['dashboard_url'],
                     f"{self.site_config['user_url']}/{self.username}"
                 ]
                 
@@ -624,30 +622,13 @@ class LinuxDoBrowser:
                         page_content = self.driver.page_source
                         current_url = self.driver.current_url
                         
-                        # 严格检查用户名是否在页面中
+                        # 严格检查用户名是否在页面中 - 这是唯一标准
                         if self.username.lower() in page_content.lower():
                             logger.success(f"✅ 在页面中找到用户名: {self.username}")
                             return True
                             
-                        # 检查用户菜单或头像
-                        user_indicators = [
-                            f"a[href*='/u/{self.username}']",
-                            f".user-{self.username}",
-                            f"#user-button",
-                            ".header-dropdown-toggle",
-                            ".current-user",
-                            ".d-header-icons",
-                            ".avatar"
-                        ]
-                        
-                        for indicator in user_indicators:
-                            try:
-                                element = self.driver.find_element(By.CSS_SELECTOR, indicator)
-                                if element.is_displayed():
-                                    logger.success(f"✅ 找到用户元素: {indicator}")
-                                    return True
-                            except:
-                                continue
+                        # 不再使用用户元素检测作为登录成功标准
+                        # 只检查用户名是否在页面内容中
                                 
                     except Exception as e:
                         logger.warning(f"检查页面 {check_url} 失败: {str(e)}")
@@ -700,6 +681,18 @@ class LinuxDoBrowser:
 
             for i, topic in enumerate(selected_topics):
                 try:
+                    # 修复要求2：在第4个主题浏览前增加一次页面用户名检测
+                    # 但为了避免影响浏览，我们只在当前页面检查而不跳转
+                    if i == 3:  # 第4个主题（索引从0开始）
+                        logger.info("===== 第4个主题前进行用户名检测 =====")
+                        # 在当前页面检查用户名，不跳转页面
+                        page_content = self.driver.page_source
+                        if self.username.lower() in page_content.lower():
+                            logger.success(f"✅ 在第4个主题前找到用户名: {self.username}")
+                        else:
+                            logger.error("❌ 第4个主题前未找到用户名，登录状态可能已丢失！")
+                            return 0
+                    
                     topic_url = topic.get_attribute("href")
                     if not topic_url:
                         continue
@@ -707,13 +700,6 @@ class LinuxDoBrowser:
                         topic_url = self.site_config['base_url'] + topic_url
 
                     logger.info(f"📖 浏览第 {i+1}/{browse_count} 个主题")
-                    
-                    # 修复要求2：在第4个主题浏览前增加一次页面用户名检测
-                    if i == 3:  # 第4个主题（索引从0开始）
-                        logger.info("===== 第4个主题前进行用户名检测 =====")
-                        if not self.strict_username_login_check("第4个主题前"):
-                            logger.error("❌ 第4个主题前登录状态验证失败！")
-                            return 0
                     
                     # 在新标签页打开
                     original_window = self.driver.current_window_handle
@@ -803,14 +789,14 @@ class LinuxDoBrowser:
             return 0
 
     def get_user_stats(self):
-        """获取用户信任级别统计信息"""
+        """获取用户信任级别统计信息 - 从connect_url获取（修复要求4）"""
         logger.info("📊 获取用户信任级别统计信息")
         
         try:
-            # 访问用户仪表板
-            dash_url = self.site_config['dashboard_url']
-            logger.info(f"📍 访问仪表板: {dash_url}")
-            self.driver.get(dash_url)
+            # 访问连接页面获取统计信息
+            connect_url = self.site_config['connect_url']
+            logger.info(f"📍 访问连接页面: {connect_url}")
+            self.driver.get(connect_url)
             time.sleep(random.uniform(3, 5))
             
             CloudflareHandler.handle_cloudflare_with_doh(self.driver)
@@ -933,13 +919,10 @@ class LinuxDoBrowser:
                 self.generate_browser_state(False, 0)
                 return False
 
-            # 3. 获取用户统计信息
+            # 3. 获取用户统计信息 - 从connect_url获取
             self.get_user_stats()
 
-            # 4. 打印连接信息（修复要求4）
-            self.print_connect_info()
-
-            # 5. 生成状态文件
+            # 4. 生成状态文件
             self.generate_browser_state(True, browse_success_count)
 
             logger.success(f"✅ {self.site_name} 处理完成")
