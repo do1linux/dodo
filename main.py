@@ -338,6 +338,25 @@ class LinuxDoBrowser:
             
         self.wait = WebDriverWait(self.driver, 20)
 
+    def save_debug_info(self, prefix="debug"):
+        """保存调试信息"""
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"{prefix}_{self.site_name}_{timestamp}"
+            
+            # 保存页面源码
+            with open(f"{filename}.html", "w", encoding='utf-8') as f:
+                f.write(self.driver.page_source)
+            
+            # 保存截图
+            self.driver.save_screenshot(f"{filename}.png")
+            
+            logger.info(f"📄 调试信息已保存: {filename}.html/.png")
+            return True
+        except Exception as e:
+            logger.error(f"保存调试信息失败: {str(e)}")
+            return False
+
     def generate_browser_state(self, success=True, browse_count=0):
         """生成浏览器状态文件"""
         try:
@@ -377,6 +396,9 @@ class LinuxDoBrowser:
             current_url = self.driver.current_url
             page_title = self.driver.title
             logger.info(f"📄 当前页面: {page_title} | {current_url}")
+
+            # 保存登录页面状态用于调试
+            self.save_debug_info("login_page")
 
             # 如果被重定向，回到登录页面
             if 'login' not in current_url:
@@ -441,17 +463,17 @@ class LinuxDoBrowser:
 
             if not username_field:
                 logger.error("❌ 找不到用户名字段")
-                # 保存页面源码用于调试
-                with open(f"login_debug_{self.site_name}.html", "w", encoding='utf-8') as f:
-                    f.write(self.driver.page_source)
+                self.save_debug_info("login_error_no_username")
                 return False
 
             if not password_field:
                 logger.error("❌ 找不到密码字段")
+                self.save_debug_info("login_error_no_password")
                 return False
 
             if not login_button:
                 logger.error("❌ 找不到登录按钮")
+                self.save_debug_info("login_error_no_button")
                 return False
 
             # 模拟真实人类输入行为
@@ -495,16 +517,16 @@ class LinuxDoBrowser:
             login_success = self.strict_username_login_check()
             if login_success:
                 logger.success("✅ 登录成功")
+                self.save_debug_info("login_success")
                 return True
             else:
                 logger.error("❌ 登录失败")
-                # 保存错误页面
-                with open(f"login_error_{self.site_name}.html", "w", encoding='utf-8') as f:
-                    f.write(self.driver.page_source)
+                self.save_debug_info("login_failed")
                 return False
 
         except Exception as e:
             logger.error(f"❌ 登录过程出错: {str(e)}")
+            self.save_debug_info("login_exception")
             return False
 
     def strict_username_login_check(self):
@@ -703,6 +725,9 @@ class LinuxDoBrowser:
             CloudflareHandler.handle_cloudflare_with_doh(self.driver)
             time.sleep(random.uniform(1, 3))
 
+            # 保存连接页面用于调试
+            self.save_debug_info("connect_page")
+
             # 获取页面内容分析连接信息
             page_content = self.driver.page_source
             
@@ -755,100 +780,4 @@ class LinuxDoBrowser:
             browse_success_count = self.click_topic()
 
             # 3. 获取连接信息
-            self.get_connect_info()
-
-            # 4. 生成状态文件
-            self.generate_browser_state(True, browse_success_count)
-
-            logger.success(f"✅ {self.site_name} 处理完成")
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ {self.site_name} 执行异常: {str(e)}")
-            self.generate_browser_state(False, 0)
-            return False
-            
-        finally:
-            try:
-                self.driver.quit()
-            except:
-                pass
-
-# ======================== 主函数 ========================
-def main():
-    """主函数"""
-    logger.remove()  # 移除默认处理器
-    logger.add(sys.stdout, 
-               format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <level>{message}</level>",
-               level="INFO",
-               colorize=True)
-    
-    logger.info("🎯 Linux.Do 多站点自动化脚本启动 (Selenium版)")
-    
-    # 设置环境变量
-    os.environ.pop("DISPLAY", None)
-    
-    success_sites = []
-    failed_sites = []
-
-    # 处理站点选择
-    site_selector = os.environ.get("SITE_SELECTOR", "all")
-    logger.info(f"🔍 站点选择: {site_selector}")
-
-    # 筛选需要处理的站点
-    target_sites = []
-    if site_selector == "all":
-        target_sites = SITES
-    else:
-        for site in SITES:
-            if site['name'] == site_selector:
-                target_sites.append(site)
-                break
-
-    for site_config in target_sites:
-        site_name = site_config['name']
-        credentials = SITE_CREDENTIALS.get(site_name, {})
-
-        if not credentials.get('username') or not credentials.get('password'):
-            logger.warning(f"⏭️ 跳过 {site_name} - 未配置凭证")
-            continue
-
-        logger.info(f"🔧 初始化 {site_name} 浏览器")
-        try:
-            browser = LinuxDoBrowser(site_config, credentials)
-            success = browser.run()
-
-            if success:
-                success_sites.append(site_name)
-            else:
-                failed_sites.append(site_name)
-                
-        except Exception as e:
-            logger.error(f"❌ {site_name} 执行异常: {str(e)}")
-            failed_sites.append(site_name)
-
-        # 站点间等待 - 模拟人类切换站点行为
-        if site_config != target_sites[-1]:
-            wait_time = random.uniform(15, 30)
-            logger.info(f"⏳ 等待 {wait_time:.1f} 秒后处理下一个站点...")
-            
-            # 在等待期间模拟一些随机活动
-            intervals = int(wait_time / 3)
-            for i in range(intervals):
-                time.sleep(3)
-                if random.random() < 0.4:  # 40%概率有日志输出
-                    logger.debug("🔄 等待中...")
-
-    logger.info("📊 执行总结:")
-    logger.info(f"✅ 成功站点: {', '.join(success_sites) if success_sites else '无'}")
-    logger.info(f"❌ 失败站点: {', '.join(failed_sites) if failed_sites else '无'}")
-
-    if success_sites:
-        logger.success("🎉 部分任务完成")
-        sys.exit(0)
-    else:
-        logger.error("💥 所有任务失败")
-        sys.exit(1)
-
-if __name__ == "__main__":
-    main()
+           
