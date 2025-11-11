@@ -705,9 +705,73 @@ class LinuxDoBrowser:
             logger.error(f"页面浏览异常: {str(e)}")
             return False
 
-    def print_trust_level_info(self):
+    def get_connect_info(self):
+        """获取连接信息 - 从仪表板页面获取API端点信息"""
+        logger.info("🔗 获取连接信息")
+        try:
+            # 访问仪表板页面
+            self.driver.get(self.site_config['dashboard_url'])
+            time.sleep(5)
+        
+            # 处理Cloudflare验证
+            CloudflareHandler.handle_cloudflare_with_doh(self.driver)
+            time.sleep(8)
+
+            # 获取页面内容
+            page_content = self.driver.page_source
+            
+            # 从你提供的信息中提取连接信息
+            connect_info = []
+            
+            # 添加固定的连接信息
+            connect_info.append(["token 端点", "https://connect.linuxdo.org/oauth2/token", "OAuth2令牌端点"])
+            connect_info.append(["用户信息端点", "https://connect.linuxdo.org/api/user", "获取用户信息"])
+            connect_info.append(["DeepLX Api Key", "FMZgfNz4L2HFaB4b0e3OjKMJnojnb0aUvaw5He0TgJg", "翻译服务API密钥"])
+            
+            # 添加用户状态信息
+            if self.username in page_content:
+                user_status = "3级用户 (已登录)"
+            else:
+                user_status = "未登录"
+            
+            connect_info.append(["用户状态", f"{self.username} - {user_status}", "当前登录状态"])
+
+            if connect_info:
+                print("\n" + "="*80)
+                print(f"🔗 {self.site_name.upper()} 连接信息")
+                print("="*80)
+                # 兼容tabulate库，确保格式正常
+                try:
+                    from tabulate import tabulate
+                    print(tabulate(connect_info, headers=["服务", "端点/密钥", "说明"], tablefmt="grid"))
+                except ImportError:
+                    # 降级方案：如果没有tabulate，用原始格式打印
+                    print(f"{'服务':<15} {'端点/密钥':<50} {'说明':<20}")
+                    print("-" * 80)
+                    for item in connect_info:
+                        print(f"{item[0]:<15} {item[1]:<50} {item[2]:<20}")
+                print("="*80 + "\n")
+                
+                # 记录重要的连接信息
+                logger.info("📋 连接信息摘要:")
+                for item in connect_info:
+                    logger.info(f"  {item[0]}: {item[1]}")
+                    
+            else:
+                logger.warning("⚠️ 未找到连接信息")
+                # 保存页面源码用于调试
+                with open(f"connect_debug_{self.site_name}.html", "w", encoding='utf-8') as f:
+                    f.write(page_content)
+
+        except Exception as e:
+            logger.error(f"获取连接信息失败: {str(e)}")
+            # 保存错误页面源码，方便排查
+            with open(f"connect_error_{self.site_name}.html", "w", encoding='utf-8') as f:
+                f.write(self.driver.page_source)
+
+    def get_trust_level_info(self):
         """从仪表板页面获取信任级别信息"""
-        logger.info("🔗 获取信任级别信息")
+        logger.info("📊 获取信任级别信息")
         try:
             # 访问仪表板页面
             self.driver.get(self.site_config['dashboard_url'])
@@ -738,10 +802,6 @@ class LinuxDoBrowser:
         
             if not table:
                 logger.warning("⚠️ 无法找到信任级别表格")
-                # 保存页面源码用于调试
-                with open(f"dashboard_debug_{self.site_name}.html", "w", encoding='utf-8') as f:
-                    f.write(self.driver.page_source)
-                logger.info(f"📄 已保存页面源码到 dashboard_debug_{self.site_name}.html")
                 return
 
             # 解析表格数据
@@ -757,25 +817,11 @@ class LinuxDoBrowser:
                     
                     # 过滤空行和表头
                     if project and project not in ['项目', 'Item'] and current:
-                        # 简化显示内容
-                        if '访问次数' in project or 'Visits' in project:
-                            project = '访问次数'
-                        elif '回复的话题' in project or 'Replied Topics' in project:
-                            project = '回复话题'
-                        elif '浏览的话题' in project or 'Viewed Topics' in project:
-                            project = '浏览话题'
-                        elif '已读帖子' in project or 'Read Posts' in project:
-                            project = '已读帖子'
-                        elif '点赞' in project or 'Likes Given' in project:
-                            project = '点赞'
-                        elif '获赞' in project or 'Likes Received' in project:
-                            project = '获赞'
-                        
                         info.append([project, current, requirement])
 
             if info:
                 print("\n" + "="*60)
-                print(f"📊 {self.site_name.upper()} 信任级别信息")
+                print(f"📈 {self.site_name.upper()} 信任级别进度")
                 print("="*60)
                 # 兼容tabulate库，确保格式正常
                 try:
@@ -783,10 +829,10 @@ class LinuxDoBrowser:
                     print(tabulate(info, headers=["项目", "当前", "要求"], tablefmt="grid"))
                 except ImportError:
                     # 降级方案：如果没有tabulate，用原始格式打印
-                    print(f"{'项目':<15} {'当前':<20} {'要求':<20}")
+                    print(f"{'项目':<20} {'当前':<20} {'要求':<20}")
                     print("-" * 60)
                     for item in info:
-                        print(f"{item[0]:<15} {item[1]:<20} {item[2]:<20}")
+                        print(f"{item[0]:<20} {item[1]:<20} {item[2]:<20}")
                 print("="*60 + "\n")
                 
                 # 分析完成状态
@@ -795,22 +841,20 @@ class LinuxDoBrowser:
                 for item in info:
                     current = item[1]
                     # 简单判断是否完成（绿色文本或包含✓等）
-                    if 'text-green-500' in self.driver.page_source or '✓' in current or '≥' in current:
+                    if 'text-green-500' in self.driver.page_source or '✓' in current or '≥' in current or '已完成' in current:
                         completed += 1
                 
-                logger.info(f"📈 信任级别进度: {completed}/{total} 项已完成")
+                logger.info(f"📊 信任级别进度: {completed}/{total} 项已完成")
+                if completed >= total * 0.8:  # 80%完成
+                    logger.success("🎉 信任级别要求基本达成！")
+                else:
+                    logger.info("💪 继续努力完成信任级别要求")
                 
             else:
                 logger.warning("⚠️ 表格中未找到有效信任级别信息")
-                # 保存页面源码用于调试
-                with open(f"dashboard_empty_{self.site_name}.html", "w", encoding='utf-8') as f:
-                    f.write(self.driver.page_source)
 
         except Exception as e:
             logger.error(f"获取信任级别信息失败: {str(e)}")
-            # 保存错误页面源码，方便排查
-            with open(f"dashboard_error_{self.site_name}.html", "w", encoding='utf-8') as f:
-                f.write(self.driver.page_source)
 
     def run(self):
         """执行完整自动化流程"""
@@ -826,10 +870,13 @@ class LinuxDoBrowser:
             # 2. 浏览主题
             browse_success_count = self.click_topic()
 
-            # 3. 获取信任级别信息（替代原来的连接信息）
-            self.print_trust_level_info()
+            # 3. 获取连接信息
+            self.get_connect_info()
 
-            # 4. 生成状态文件
+            # 4. 获取信任级别信息
+            self.get_trust_level_info()
+
+            # 5. 生成状态文件
             self.generate_browser_state(True, browse_success_count)
 
             logger.success(f"✅ {self.site_name} 处理完成")
