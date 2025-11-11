@@ -34,7 +34,7 @@ def create_turnstile_patch():
                 "matches": ["*://*.linux.do/*", "*://*.idcflare.com/*"],
                 "js": ["content.js"],
                 "run_at": "document_start",
-                "all_frames": true
+                "all_frames": True
             }
         ],
         "action": {},
