@@ -32,6 +32,7 @@ SITES = [
         'base_url': 'https://linux.do',
         'login_url': 'https://linux.do/login',
         'latest_url': 'https://linux.do/latest',
+        'connect_url': 'https://connect.linux.do',  # 修复：添加缺失的逗号
         'dashboard_url': 'https://linux.do/dash',
         'user_url': 'https://linux.do/u'
     },
@@ -40,6 +41,7 @@ SITES = [
         'base_url': 'https://idcflare.com',
         'login_url': 'https://idcflare.com/login',
         'latest_url': 'https://idcflare.com/latest',
+        'connect_url': 'https://connect.idcflare.com',  # 修复：添加缺失的逗号
         'dashboard_url': 'https://idcflare.com/dash',
         'user_url': 'https://idcflare.com/u'
     }
@@ -299,6 +301,39 @@ class LinuxDoBrowser:
             raise
             
         self.wait = WebDriverWait(self.driver, 20)
+
+    def print_connect_info(self):
+        """打印连接信息"""
+        logger.info("🔗 获取连接信息")
+        try:
+            self.driver.get(self.site_config['connect_url'])
+            time.sleep(5)
+
+            # 查找表格元素
+            table = self.driver.find_element(By.CSS_SELECTOR, "table")
+            rows = table.find_elements(By.TAG_NAME, "tr")
+            info = []
+
+            for row in rows:
+                cells = row.find_elements(By.TAG_NAME, "td")
+                if len(cells) >= 3:
+                    project = cells[0].text.strip()
+                    current = cells[1].text.strip()
+                    requirement = cells[2].text.strip()
+                    info.append([project, current, requirement])
+
+            if info:
+                print("\n" + "="*50)
+                print(f"📊 {self.site_name.upper()} 连接信息")
+                print("="*50)
+                from tabulate import tabulate
+                print(tabulate(info, headers=["项目", "当前", "要求"], tablefmt="pretty"))
+                print("="*50 + "\n")
+            else:
+                logger.warning("⚠️ 无法获取连接信息")
+
+        except Exception as e:
+            logger.error(f"获取连接信息失败: {str(e)}")
 
     def generate_browser_state(self, success=True, browse_count=0):
         """生成浏览器状态文件"""
@@ -673,6 +708,13 @@ class LinuxDoBrowser:
 
                     logger.info(f"📖 浏览第 {i+1}/{browse_count} 个主题")
                     
+                    # 修复要求2：在第4个主题浏览前增加一次页面用户名检测
+                    if i == 3:  # 第4个主题（索引从0开始）
+                        logger.info("===== 第4个主题前进行用户名检测 =====")
+                        if not self.strict_username_login_check("第4个主题前"):
+                            logger.error("❌ 第4个主题前登录状态验证失败！")
+                            return 0
+                    
                     # 在新标签页打开
                     original_window = self.driver.current_window_handle
                     self.driver.execute_script(f"window.open('{topic_url}', '_blank');")
@@ -683,7 +725,7 @@ class LinuxDoBrowser:
                             self.driver.switch_to.window(handle)
                             break
                     
-                    # 模拟真实浏览行为
+                    # 模拟真实浏览行为（修复要求3）
                     page_stay_time = random.uniform(25, 40)
                     logger.info(f"⏱️ 停留 {page_stay_time:.1f} 秒...")
                     
@@ -693,18 +735,21 @@ class LinuxDoBrowser:
                         scroll_distance = random.randint(300, 900)
                         self.driver.execute_script(f"window.scrollBy(0, {scroll_distance})")
                         
+                        # 模拟阅读时间
                         if random.random() < 0.4:
                             read_time = random.uniform(4, 8)
+                            logger.debug(f"📖 模拟阅读 {read_time:.1f} 秒...")
                             time.sleep(read_time)
                         else:
                             time.sleep(random.uniform(1, 3))
                         
+                        # 随机回滚模拟重新阅读
                         if random.random() < 0.3:
                             back_scroll = random.randint(100, 400)
                             self.driver.execute_script(f"window.scrollBy(0, -{back_scroll})")
                             time.sleep(random.uniform(1, 2))
                     
-                    # 随机交互
+                    # 随机交互行为
                     if random.random() < 0.2:
                         try:
                             images = self.driver.find_elements(By.CSS_SELECTOR, "img")
@@ -713,8 +758,15 @@ class LinuxDoBrowser:
                                 actions = ActionChains(self.driver)
                                 actions.move_to_element(img).click().perform()
                                 time.sleep(random.uniform(2, 4))
+                                logger.debug("🖱️ 随机点击图片")
                         except:
                             pass
+                    
+                    # 模拟随机暂停
+                    if random.random() < 0.15:
+                        pause_time = random.uniform(2, 5)
+                        logger.debug(f"⏸️ 随机暂停 {pause_time:.1f} 秒")
+                        time.sleep(pause_time)
                     
                     # 关闭标签页
                     self.driver.close()
@@ -738,8 +790,8 @@ class LinuxDoBrowser:
 
             logger.info(f"📊 浏览完成: 成功 {success_count}/{browse_count} 个主题")
             
-            # ====== 修复要求2：浏览后再次验证登录状态 ======
-            logger.info("===== 浏览后再次验证登录状态 =====")
+            # 浏览后再次验证登录状态
+            logger.info("===== 浏览主题后再次验证登录状态 =====")
             if not self.strict_username_login_check("浏览主题后"):
                 logger.error("❌ 浏览后登录状态验证失败！")
                 return 0  # 返回失败
@@ -751,7 +803,7 @@ class LinuxDoBrowser:
             return 0
 
     def get_user_stats(self):
-        """获取用户信任级别统计信息（修复要求3）"""
+        """获取用户信任级别统计信息"""
         logger.info("📊 获取用户信任级别统计信息")
         
         try:
@@ -881,10 +933,13 @@ class LinuxDoBrowser:
                 self.generate_browser_state(False, 0)
                 return False
 
-            # 3. 获取用户统计信息（修复要求3）
+            # 3. 获取用户统计信息
             self.get_user_stats()
 
-            # 4. 生成状态文件
+            # 4. 打印连接信息（修复要求4）
+            self.print_connect_info()
+
+            # 5. 生成状态文件
             self.generate_browser_state(True, browse_success_count)
 
             logger.success(f"✅ {self.site_name} 处理完成")
