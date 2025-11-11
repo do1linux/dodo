@@ -33,6 +33,7 @@ SITES = [
         'login_url': 'https://linux.do/login',
         'latest_url': 'https://linux.do/latest',
         'connect_url': 'https://connect.linux.do',
+        'dashboard_url': 'https://linux.do/dash',
         'user_url': 'https://linux.do/u'
     },
     {
@@ -41,6 +42,7 @@ SITES = [
         'login_url': 'https://idcflare.com/login',
         'latest_url': 'https://idcflare.com/latest',
         'connect_url': 'https://connect.idcflare.com',
+        'dashboard_url': 'https://idcflare.com/dash',
         'user_url': 'https://idcflare.com/u'
     }
 ]
@@ -591,7 +593,7 @@ class LinuxDoBrowser:
             return False
 
     def strict_username_login_check(self, context=""):
-        """严格登录状态检查 - 必须检测到用户名（修复要求1）"""
+        """严格登录状态检查 - 必须检测到用户名"""
         if context:
             logger.info(f"🔍 {context} - 严格检测用户名...")
         else:
@@ -624,9 +626,6 @@ class LinuxDoBrowser:
                         if self.username.lower() in page_content.lower():
                             logger.success(f"✅ 在页面中找到用户名: {self.username}")
                             return True
-                            
-                        # 不再使用用户元素检测作为登录成功标准
-                        # 只检查用户名是否在页面内容中
                                 
                     except Exception as e:
                         logger.warning(f"检查页面 {check_url} 失败: {str(e)}")
@@ -688,8 +687,31 @@ class LinuxDoBrowser:
                         if self.username.lower() in page_content.lower():
                             logger.success(f"✅ 在第4个主题前找到用户名: {self.username}")
                         else:
-                            logger.error("❌ 第4个主题前未找到用户名，登录状态可能已丢失！")
-                            return 0
+                            logger.warning("⚠️ 第4个主题前未找到用户名，尝试重新登录...")
+                            # 重新登录并验证
+                            if self.ensure_logged_in():
+                                logger.success("✅ 重新登录成功，继续浏览")
+                                # 重新获取主题元素，因为页面可能已刷新
+                                topic_elements = self.driver.find_elements(By.CSS_SELECTOR, ".title")
+                                if not topic_elements:
+                                    logger.error("❌ 重新登录后未找到主题列表")
+                                    return success_count
+                                
+                                # 重新选择剩余的主题
+                                remaining_topics = topic_elements[i:]
+                                if not remaining_topics:
+                                    logger.warning("⚠️ 重新登录后没有剩余主题可浏览")
+                                    return success_count
+                                
+                                # 更新selected_topics为剩余主题
+                                selected_topics = remaining_topics
+                                # 重置循环索引
+                                i = 0
+                                browse_count = len(selected_topics)
+                                logger.info(f"🔄 重新开始浏览，剩余 {browse_count} 个主题")
+                            else:
+                                logger.error("❌ 重新登录失败，停止浏览")
+                                return success_count
                     
                     topic_url = topic.get_attribute("href")
                     if not topic_url:
@@ -709,7 +731,7 @@ class LinuxDoBrowser:
                             self.driver.switch_to.window(handle)
                             break
                     
-                    # 模拟真实浏览行为（修复要求3）
+                    # 模拟真实浏览行为
                     page_stay_time = random.uniform(25, 40)
                     logger.info(f"⏱️ 停留 {page_stay_time:.1f} 秒...")
                     
@@ -777,8 +799,12 @@ class LinuxDoBrowser:
             # 浏览后再次验证登录状态
             logger.info("===== 浏览主题后再次验证登录状态 =====")
             if not self.strict_username_login_check("浏览主题后"):
-                logger.error("❌ 浏览后登录状态验证失败！")
-                return 0  # 返回失败
+                logger.warning("⚠️ 浏览后登录状态验证失败，尝试重新登录...")
+                if self.ensure_logged_in():
+                    logger.success("✅ 重新登录成功")
+                else:
+                    logger.error("❌ 重新登录失败")
+                    return 0
             
             return success_count
             
@@ -787,7 +813,7 @@ class LinuxDoBrowser:
             return 0
 
     def get_user_stats(self):
-        """获取用户信任级别统计信息 - 从connect_url获取（修复要求4）"""
+        """获取用户信任级别统计信息 - 从connect_url获取"""
         logger.info("📊 获取用户信任级别统计信息")
         
         try:
@@ -920,7 +946,10 @@ class LinuxDoBrowser:
             # 3. 获取用户统计信息 - 从connect_url获取
             self.get_user_stats()
 
-            # 4. 生成状态文件
+            # 4. 打印连接信息
+            self.print_connect_info()
+
+            # 5. 生成状态文件
             self.generate_browser_state(True, browse_success_count)
 
             logger.success(f"✅ {self.site_name} 处理完成")
@@ -1000,4 +1029,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
