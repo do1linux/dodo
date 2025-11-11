@@ -13,48 +13,41 @@ on:
           - linux_do
           - idcflare
   schedule:
-    - cron: '0 * * * *'  # 每小时运行一次
+    - cron: '0 */6 * * *'  # 每6小时运行一次，减少频率更自然
 
 env:
   PYTHON_VERSION: '3.11'
+  # 缓存Cookies的目录（与脚本中一致）
   COOKIES_CACHE_DIR: ${{ github.workspace }}
-
-# 添加工作流级别权限
-permissions:
-  contents: write
-  issues: write
 
 jobs:
   automate:
     runs-on: ubuntu-22.04
-    timeout-minutes: 60
-    
-    # 添加job级别权限
-    permissions:
-      issues: write
-      contents: read
+    timeout-minutes: 45
 
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: 恢复会话缓存
+    - name: 恢复Cloudflare Cookies缓存
       uses: actions/cache@v3
-      id: session-cache
+      id: cookies-cache
       with:
         path: |
+          cf_cookies_linux_do.json
+          cf_cookies_idcflare.json
           browser_state_linux_do.json
           browser_state_idcflare.json
-        key: ${{ runner.os }}-linuxdo-session-${{ github.sha }}
+        key: ${{ runner.os }}-linuxdo-cookies-${{ github.run_id }}
         restore-keys: |
-          ${{ runner.os }}-linuxdo-session-
+          ${{ runner.os }}-linuxdo-cookies-
 
     - name: Setup Python
       uses: actions/setup-python@v4
       with:
         python-version: ${{ env.PYTHON_VERSION }}
 
-    - name: Install system dependencies
+    - name: Install system dependencies for Chromium
       run: |
         sudo apt-get update
         sudo apt-get install -y \
@@ -71,26 +64,9 @@ jobs:
           libatspi2.0-0 \
           libcups2 \
           libx11-xcb1 \
-          wget \
-          unzip
-
-    - name: Install Chrome
-      run: |
-        wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
-        echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
-        sudo apt-get update
-        sudo apt-get install -y google-chrome-stable
-        google-chrome --version
-
-    - name: Install ChromeDriver
-      run: |
-        CHROME_VERSION=$(google-chrome --version | grep -oP '\d+\.\d+\.\d+\.\d+' | head -1)
-        CHROMEDRIVER_VERSION=$(curl -s "https://chromedriver.storage.googleapis.com/LATEST_RELEASE_$CHROME_VERSION")
-        wget -q "https://chromedriver.storage.googleapis.com/$CHROMEDRIVER_VERSION/chromedriver_linux64.zip"
-        unzip chromedriver_linux64.zip
-        sudo mv chromedriver /usr/local/bin/
-        sudo chmod +x /usr/local/bin/chromedriver
-        chromedriver --version
+          fonts-liberation \
+          libappindicator3-1 \
+          xdg-utils
 
     - name: Install Python dependencies
       run: |
@@ -102,6 +78,8 @@ jobs:
       run: |
         echo "🔧 创建turnstilePatch扩展..."
         python setup_directories.py
+        echo "📁 检查扩展目录:"
+        ls -la turnstilePatch/
 
     - name: Run automation script
       env:
@@ -111,76 +89,52 @@ jobs:
         IDCFLARE_PASSWORD: ${{ secrets.IDCFLARE_PASSWORD }}
         GITHUB_ACTIONS: 'true'
         DOH_SERVER: 'https://ld.ddd.oaifree.com/query-dns'
+        # 传递站点选择参数到脚本
         SITE_SELECTOR: ${{ github.event.inputs.site_selector || 'all' }}
-        HEADLESS: 'true'
-        BROWSE_ENABLED: 'true'
       run: |
         echo "开始执行自动化脚本..."
         echo "站点选择: $SITE_SELECTOR"
         echo "当前时间: $(date)"
         echo "DoH服务器: $DOH_SERVER"
-        echo "会话缓存状态: ${{ steps.session-cache.outputs.cache-hit == 'true' && '已命中' || '未命中' }}"
+        echo "Cookies缓存状态: ${{ steps.cookies-cache.outputs.cache-hit == 'true' && '已命中' || '未命中' }}"
         python main.py
+        echo "脚本执行完成"
 
-    - name: Upload session data
+    - name: 显示缓存的Cookies文件（调试用）
+      run: |
+        echo "📋 当前目录下的Cookies文件:"
+        ls -la cf_cookies_*.json 2>/dev/null || echo "无Cookies文件"
+        echo "📋 浏览器状态文件:"
+        ls -la browser_state_*.json 2>/dev/null || echo "无状态文件"
+
+    - name: Upload session data（备份用）
       uses: actions/upload-artifact@v4
       if: always()
       with:
         name: linuxdo-session-data
         path: |
+          cf_cookies_linux_do.json
+          cf_cookies_idcflare.json
           browser_state_linux_do.json
           browser_state_idcflare.json
-          cf_cookies_*.json
         retention-days: 7
         overwrite: true
 
-    - name: Upload debug files (if any exist)
+    - name: Upload debug files
       uses: actions/upload-artifact@v4
       if: always()
       with:
-        name: debug-files
+        name: connect-debug-files
         path: |
-          *.html
-          *.png
-          *.log
+          connect_debug_*.html
+          connect_debug_*.png
+          login_debug_*.html
+          login_error_*.html
         retention-days: 3
 
-    - name: Create success report
-      if: success()
-      uses: actions/github-script@v6
-      with:
-        script: |
-          const { owner, repo } = context.repo;
-          try {
-            // 创建成功评论到最新提交
-            await github.rest.repos.createCommitComment({
-              owner,
-              repo,
-              commit_sha: context.sha,
-              body: `🎉 LinuxDo 自动化脚本执行成功！\n\n**执行详情:**\n- 时间: ${new Date().toISOString()}\n- 工作流: ${context.workflow}\n- 运行ID: ${context.runId}\n- 站点选择: ${process.env.SITE_SELECTOR || 'all'}\n\n所有站点处理完成，状态文件已生成。`
-            });
-            console.log('✅ 成功创建提交评论');
-          } catch (error) {
-            console.log('⚠️ 无法创建提交评论，但这不影响工作流:', error.message);
-          }
-
-    - name: Create failure report
-      if: failure()
-      uses: actions/github-script@v6
-      with:
-        script: |
-          const { owner, repo } = context.repo;
-          try {
-            // 尝试创建提交评论而不是Issue
-            await github.rest.repos.createCommitComment({
-              owner,
-              repo,
-              commit_sha: context.sha,
-              body: `🚨 LinuxDo 自动化脚本执行失败！\n\n**执行详情:**\n- 时间: ${new Date().toISOString()}\n- 工作流: ${context.workflow}\n- 运行ID: ${context.runId}\n- 站点选择: ${process.env.SITE_SELECTOR || 'all'}\n\n请检查 Action 日志获取详细错误信息。`
-            });
-            console.log('✅ 失败报告已创建为提交评论');
-          } catch (error) {
-            console.log('⚠️ 无法创建失败报告:', error.message);
-            // 回退到简单的日志输出
-            console.log('🚨 LinuxDo 自动化执行失败 - 请查看工作流日志');
-          }
+    - name: 清理旧的缓存
+      if: always()
+      run: |
+        echo "🧹 清理30天前的缓存文件"
+        find . -name "cf_cookies_*.json" -mtime +30 -delete 2>/dev/null || true
+        find . -name "login_debug_*.html" -mtime +7 -delete 2>/dev/null || true
