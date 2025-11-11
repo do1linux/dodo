@@ -1,107 +1,165 @@
 import os
+import json
 
 def create_turnstile_patch():
-    # 创建扩展目录
-    patch_dir = "turnstilePatch"
-    if not os.path.exists(patch_dir):
-        os.makedirs(patch_dir)
-        print(f"✅ 创建目录: {patch_dir}")
-
-    # 创建 manifest.json
-    manifest_content = '''{
-  "manifest_version": 3,
-  "name": "Turnstile Bypass Patch",
-  "version": "1.0",
-  "description": "Bypass Cloudflare Turnstile for automation",
-  "permissions": ["scripting", "webRequest", "webRequestBlocking", "<all_urls>"],
-  "background": {
-    "service_worker": "script.js"
-  },
-  "content_scripts": [
-    {
-      "matches": ["<all_urls>"],
-      "run_at": "document_start",
-      "js": ["content.js"]
+    """创建TurnstilePatch扩展目录和文件"""
+    print("🔧 创建turnstilePatch扩展...")
+    
+    # 创建目录
+    if not os.path.exists("turnstilePatch"):
+        os.makedirs("turnstilePatch")
+        print("✅ 创建目录: turnstilePatch")
+    
+    # 创建manifest.json
+    manifest = {
+        "manifest_version": 3,
+        "name": "TurnstilePatch",
+        "version": "1.0",
+        "description": "Patch for Cloudflare Turnstile",
+        "permissions": [
+            "webRequest",
+            "webRequestBlocking",
+            "storage",
+            "tabs",
+            "activeTab"
+        ],
+        "host_permissions": [
+            "*://*/*"
+        ],
+        "background": {
+            "service_worker": "script.js"
+        },
+        "content_scripts": [
+            {
+                "matches": ["*://*.linux.do/*", "*://*.idcflare.com/*"],
+                "js": ["content.js"],
+                "run_at": "document_start",
+                "all_frames": true
+            }
+        ],
+        "action": {},
+        "icons": {
+            "16": "icon.png",
+            "48": "icon.png",
+            "128": "icon.png"
+        }
     }
-  ],
-  "web_accessible_resources": [
-    {
-      "resources": ["*"],
-      "matches": ["<all_urls>"]
-    }
-  ]
-}'''
-    with open(os.path.join(patch_dir, "manifest.json"), "w", encoding="utf-8") as f:
-        f.write(manifest_content)
+    
+    with open("turnstilePatch/manifest.json", "w") as f:
+        json.dump(manifest, f, indent=2)
     print("✅ 创建 manifest.json")
-
-    # 创建 content.js
-    content_content = '''// 消除自动化特征
-delete navigator.webdriver;
-Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh', 'en'] });
-Object.defineProperty(navigator, 'platform', { get: () => 'Linux x86_64' });
-Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
-
-// 拦截 Turnstile 验证请求
-document.addEventListener('DOMContentLoaded', () => {
-  // 移除 Cloudflare 验证容器
-  const cfTurnstile = document.querySelector('.cf-turnstile-container, #turnstile-wrapper');
-  if (cfTurnstile) cfTurnstile.remove();
-
-  // 模拟验证通过
-  window.turnstile = {
-    render: (el, config) => {
-      setTimeout(() => {
-        config.callback('fake-valid-token');
-      }, 1000);
+    
+    # 创建content.js
+    content_js = """
+// 在页面加载前注入，隐藏自动化特征
+(function() {
+    'use strict';
+    
+    // 拦截和修改navigator对象
+    Object.defineProperty(navigator, 'webdriver', {
+        get: () => undefined
+    });
+    
+    // 模拟真实用户的插件
+    Object.defineProperty(navigator, 'plugins', {
+        get: () => [1, 2, 3, 4, 5]
+    });
+    
+    // 模拟语言
+    Object.defineProperty(navigator, 'languages', {
+        get: () => ['zh-CN', 'zh', 'en']
+    });
+    
+    // 模拟mimeTypes
+    Object.defineProperty(navigator, 'mimeTypes', {
+        get: () => [1, 2]
+    });
+    
+    // 添加chrome对象
+    if (!window.chrome) {
+        window.chrome = {
+            runtime: {}
+        };
     }
-  };
-
-  // 触发页面继续加载
-  const cfContinue = document.querySelector('.cf-browser-verification-continue');
-  if (cfContinue) cfContinue.click();
-});'''
-    with open(os.path.join(patch_dir, "content.js"), "w", encoding="utf-8") as f:
-        f.write(content_content)
+    
+    // 移除连接信息
+    if (navigator.connection) {
+        delete navigator.connection;
+    }
+    
+    // 拦截Turnstile检测
+    if (window.turnstile) {
+        const originalReady = window.turnstile.ready;
+        if (originalReady) {
+            window.turnstile.ready = function(callback) {
+                setTimeout(() => {
+                    callback();
+                }, Math.random() * 1000 + 500);
+            };
+        }
+    }
+    
+    // 随机化Canvas指纹
+    const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
+    HTMLCanvasElement.prototype.toDataURL = function() {
+        const result = originalToDataURL.apply(this, arguments);
+        // 添加微小扰动
+        if (arguments[0] === 'image/png') {
+            return result + Math.random().toString(36).substring(2, 8);
+        }
+        return result;
+    };
+    
+    console.log('[TurnstilePatch] 注入成功');
+})();
+"""
+    
+    with open("turnstilePatch/content.js", "w") as f:
+        f.write(content_js.strip())
     print("✅ 创建 content.js")
-
-    # 创建 script.js
-    script_content = '''// 拦截 Cloudflare 验证相关请求
-chrome.webRequest.onBeforeSendHeaders.addListener(
-  (details) => {
-    // 添加真实浏览器的请求头
-    const headers = details.requestHeaders || [];
-    headers.push(
-      { name: 'Sec-Fetch-Dest', value: 'document' },
-      { name: 'Sec-Fetch-Mode', value: 'navigate' },
-      { name: 'Sec-Fetch-Site', value: 'same-origin' },
-      { name: 'Sec-Fetch-User', value: '?1' },
-      { name: 'Upgrade-Insecure-Requests', value: '1' }
-    );
-    return { requestHeaders: headers };
-  },
-  { urls: ['<all_urls>'] },
-  ['blocking', 'requestHeaders', 'extraHeaders']
+    
+    # 创建script.js
+    script_js = """
+// Service Worker脚本
+chrome.webRequest.onBeforeRequest.addListener(
+    function(details) {
+        const url = details.url;
+        
+        // 拦截已知检测脚本
+        if (url.includes('challenges.cloudflare.com') || url.includes('turnstile')) {
+            return { cancel: false };
+        }
+        
+        // 修改请求头
+        const requestHeaders = details.requestHeaders || [];
+        requestHeaders.push({
+            name: 'X-Patched',
+            value: 'true'
+        });
+        
+        return { requestHeaders: requestHeaders };
+    },
+    { urls: ["*://*/*"] },
+    ["blocking", "requestHeaders"]
 );
 
-// 拦截验证响应，直接返回通过
-chrome.webRequest.onBeforeRequest.addListener(
-  (details) => {
-    if (details.url.includes('/cdn-cgi/challenge-platform/') || details.url.includes('turnstile/v2/')) {
-      return {
-        redirectUrl: 'data:text/plain;charset=utf-8,fake-valid-response'
-      };
+// 监听消息
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    if (request.action === "getTurnstileToken") {
+        // 模拟返回token
+        sendResponse({ token: "mock-token-" + Math.random().toString(36).substring(2, 15) });
     }
-  },
-  { urls: ['<all_urls>'] },
-  ['blocking']
-);'''
-    with open(os.path.join(patch_dir, "script.js"), "w", encoding="utf-8") as f:
-        f.write(script_content)
+});
+
+console.log('[TurnstilePatch] Service Worker 已加载');
+"""
+    
+    with open("turnstilePatch/script.js", "w") as f:
+        f.write(script_js.strip())
     print("✅ 创建 script.js")
+    
+    print("🎉 Turnstile Patch 扩展创建完成")
+    print("📁 所有目录和文件创建成功")
 
 if __name__ == "__main__":
-    print("🔧 开始创建必要的目录结构...")
     create_turnstile_patch()
-    print("✅ Turnstile Patch 扩展创建完成")
-    print("🎉 所有目录和文件创建成功")
