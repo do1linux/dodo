@@ -4,6 +4,7 @@ import time
 import sys
 import json
 import requests
+import functools
 from datetime import datetime, timedelta
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -13,6 +14,7 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 from loguru import logger
+from bs4 import BeautifulSoup
 
 # ======================== 配置常量 ========================
 SITE_CREDENTIALS = {
@@ -33,6 +35,7 @@ SITES = [
         'login_url': 'https://linux.do/login',
         'latest_url': 'https://linux.do/latest',
         'connect_url': 'https://connect.linux.do',
+        'dashboard_url': 'https://linux.do/dash',
         'user_url': 'https://linux.do/u'
     },
     {
@@ -41,6 +44,7 @@ SITES = [
         'login_url': 'https://idcflare.com/login',
         'latest_url': 'https://idcflare.com/latest',
         'connect_url': 'https://connect.idcflare.com',
+        'dashboard_url': 'https://idcflare.com/dash',
         'user_url': 'https://idcflare.com/u'
     }
 ]
@@ -215,6 +219,23 @@ class CloudflareHandler:
         logger.warning("⚠️ Cloudflare验证可能未完全通过，强制继续")
         return True
 
+# ======================== 重试装饰器 ========================
+def retry_decorator(retries=3):
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            for attempt in range(retries):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    if attempt == retries - 1:
+                        logger.error(f"函数 {func.__name__} 最终执行失败: {str(e)}")
+                    logger.warning(f"函数 {func.__name__} 第 {attempt + 1}/{retries} 次尝试失败: {str(e)}")
+                    time.sleep(2)
+            return None
+        return wrapper
+    return decorator
+
 # ======================== 主浏览器类 ========================
 class LinuxDoBrowser:
     def __init__(self, site_config, credentials):
@@ -242,8 +263,13 @@ class LinuxDoBrowser:
         chrome_options.add_argument('--disable-web-security')
         chrome_options.add_argument('--disable-features=IsolateOrigins,site-per-process')
         
-        # 固定使用Windows用户代理
-        chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+        # 用户代理轮换
+        user_agents = [
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        ]
+        chrome_options.add_argument(f'--user-agent={random.choice(user_agents)}')
         
         # 排除自动化特征
         chrome_options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
@@ -641,12 +667,12 @@ class LinuxDoBrowser:
         return False
 
     def click_topic(self):
-        """浏览主题 - 8-10个主题，模拟更真实的人类行为"""
+        """浏览主题 - 8-10个主题，同一页面跳转（不打开新标签页）"""
         if not BROWSE_ENABLED:
             logger.info("⏭️ 浏览功能已禁用，跳过")
             return 0
 
-        logger.info("🌐 开始浏览主题...")
+        logger.info("🌐 开始浏览主题（同一页面模式）...")
         
         try:
             # 访问最新页面
@@ -671,57 +697,60 @@ class LinuxDoBrowser:
 
             for i, topic in enumerate(selected_topics):
                 try:
-                    # 第3个主题浏览前进行用户名检测
-                    if i == 2:  # 第3个主题（索引从0开始）
-                        logger.info("===== 第3个主题前进行用户名检测 =====")
-                        # 在当前页面检查用户名，不跳转页面
+                    # 第2个主题（索引1）前进行用户名检测
+                    if i == 1:
+                        logger.info("===== 第2个主题前进行用户名检测 =====")
+                        # 在当前主题列表页直接检测用户名
                         page_content = self.driver.page_source
                         if self.username.lower() in page_content.lower():
-                            logger.success(f"✅ 在第3个主题前找到用户名: {self.username}")
+                            logger.success(f"✅ 在第2个主题前找到用户名: {self.username}")
                         else:
-                            logger.warning("⚠️ 第3个主题前未找到用户名，尝试重新登录...")
+                            logger.warning("⚠️ 第2个主题前未找到用户名，尝试重新登录...")
                             # 重新登录并验证
                             if self.ensure_logged_in():
                                 logger.success("✅ 重新登录成功，继续浏览")
-                                # 重新获取主题元素，因为页面可能已刷新
+                                # 重新访问主题列表页
+                                self.driver.get(self.site_config['latest_url'])
+                                time.sleep(random.uniform(3, 5))
+                                CloudflareHandler.handle_cloudflare_with_doh(self.driver)
+                                # 重新获取主题元素
                                 topic_elements = self.driver.find_elements(By.CSS_SELECTOR, ".title")
                                 if not topic_elements:
                                     logger.error("❌ 重新登录后未找到主题列表")
                                     return success_count
-                                
-                                # 重新选择剩余的主题
-                                remaining_topics = topic_elements[i:]
-                                if not remaining_topics:
-                                    logger.warning("⚠️ 重新登录后没有剩余主题可浏览")
-                                    return success_count
-                                
-                                # 更新selected_topics为剩余主题
-                                selected_topics = remaining_topics
-                                # 重置循环索引
+                                # 重新选择剩余的主题（从当前索引开始）
+                                remaining_count = browse_count - i
+                                if remaining_count <= 0:
+                                    logger.warning("⚠️ 没有剩余主题可浏览")
+                                    break
+                                selected_topics = random.sample(topic_elements, remaining_count)
+                                # 重置索引和计数
                                 i = 0
-                                browse_count = len(selected_topics)
+                                browse_count = remaining_count
                                 logger.info(f"🔄 重新开始浏览，剩余 {browse_count} 个主题")
+                                # 取当前第一个主题
+                                topic = selected_topics[0]
                             else:
                                 logger.error("❌ 重新登录失败，停止浏览")
                                 return success_count
                     
+                    # 获取主题链接（备用）
                     topic_url = topic.get_attribute("href")
-                    if not topic_url:
-                        continue
-                    if not topic_url.startswith('http'):
-                        topic_url = self.site_config['base_url'] + topic_url
+                    if not topic_url or not topic_url.startswith('http'):
+                        topic_url = f"{self.site_config['base_url']}{topic.get_attribute('href') if topic.get_attribute('href') else ''}"
 
                     logger.info(f"📖 浏览第 {i+1}/{browse_count} 个主题")
                     
-                    # 在新标签页打开
-                    original_window = self.driver.current_window_handle
-                    self.driver.execute_script(f"window.open('{topic_url}', '_blank');")
+                    # 模拟鼠标移动到主题并点击（同一页面跳转）
+                    actions = ActionChains(self.driver)
+                    actions.move_to_element(topic).perform()
+                    time.sleep(random.uniform(0.5, 1))
+                    topic.click()
+                    time.sleep(random.uniform(3, 5))
                     
-                    # 切换到新标签页
-                    for handle in self.driver.window_handles:
-                        if handle != original_window:
-                            self.driver.switch_to.window(handle)
-                            break
+                    # 处理主题页的Cloudflare验证
+                    CloudflareHandler.handle_cloudflare_with_doh(self.driver)
+                    time.sleep(random.uniform(2, 3))
                     
                     # 模拟真实浏览行为
                     page_stay_time = random.uniform(25, 40)
@@ -766,24 +795,29 @@ class LinuxDoBrowser:
                         logger.debug(f"⏸️ 随机暂停 {pause_time:.1f} 秒")
                         time.sleep(pause_time)
                     
-                    # 关闭标签页
-                    self.driver.close()
-                    self.driver.switch_to.window(original_window)
+                    # 浏览完成，返回主题列表页
+                    self.driver.back()
+                    time.sleep(random.uniform(3, 5))
+                    CloudflareHandler.handle_cloudflare_with_doh(self.driver)
                     
                     success_count += 1
                     
-                    # 主题间等待
+                    # 主题间等待（同一页面无需切换标签，等待时间略短）
                     if i < browse_count - 1:
-                        wait_time = random.uniform(10, 18)
+                        wait_time = random.uniform(8, 15)
                         logger.info(f"⏳ 浏览间隔等待 {wait_time:.1f} 秒...")
                         time.sleep(wait_time)
                         
                 except Exception as e:
-                    logger.error(f"浏览主题失败: {str(e)}")
+                    logger.error(f"浏览第 {i+1} 个主题失败: {str(e)}")
+                    # 出错后尝试返回列表页
                     try:
-                        self.driver.switch_to.window(original_window)
+                        self.driver.back()
+                        time.sleep(random.uniform(2, 3))
                     except:
-                        pass
+                        # 返回失败则重新访问列表页
+                        self.driver.get(self.site_config['latest_url'])
+                        time.sleep(random.uniform(3, 5))
                     continue
 
             logger.info(f"📊 浏览完成: 成功 {success_count}/{browse_count} 个主题")
@@ -822,7 +856,6 @@ class LinuxDoBrowser:
             page_source = self.driver.page_source
             
             # 解析HTML表格
-            from bs4 import BeautifulSoup
             soup = BeautifulSoup(page_source, 'html.parser')
             
             # 查找包含要求的表格
@@ -928,7 +961,7 @@ class LinuxDoBrowser:
                 self.generate_browser_state(False, 0)
                 return False
 
-            # 2. 浏览主题 (8-10个)
+            # 2. 浏览主题 (8-10个，同一页面模式)
             browse_success_count = self.click_topic()
             if browse_success_count == 0:
                 logger.error("❌ 浏览主题失败或登录状态丢失")
@@ -961,7 +994,7 @@ class LinuxDoBrowser:
 # ======================== 主函数 ========================
 def main():
     """主函数"""
-    logger.info("🎯 Linux.Do 多站点自动化脚本启动 (Selenium版)")
+    logger.info("🎯 Linux.Do 多站点自动化脚本启动 (同一页面模式)")
     os.environ.pop("DISPLAY", None)
     success_sites = []
     failed_sites = []
