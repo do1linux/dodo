@@ -33,7 +33,6 @@ SITES = [
         'login_url': 'https://linux.do/login',
         'latest_url': 'https://linux.do/latest',
         'connect_url': 'https://connect.linux.do',
-        'dashboard_url': 'https://linux.do/dash',
         'user_url': 'https://linux.do/u'
     },
     {
@@ -42,7 +41,6 @@ SITES = [
         'login_url': 'https://idcflare.com/login',
         'latest_url': 'https://idcflare.com/latest',
         'connect_url': 'https://connect.idcflare.com',
-        'dashboard_url': 'https://idcflare.com/dash',
         'user_url': 'https://idcflare.com/u'
     }
 ]
@@ -244,13 +242,8 @@ class LinuxDoBrowser:
         chrome_options.add_argument('--disable-web-security')
         chrome_options.add_argument('--disable-features=IsolateOrigins,site-per-process')
         
-        # 用户代理轮换
-        user_agents = [
-            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        ]
-        chrome_options.add_argument(f'--user-agent={random.choice(user_agents)}')
+        # 固定使用Windows用户代理
+        chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
         
         # 排除自动化特征
         chrome_options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
@@ -678,16 +671,15 @@ class LinuxDoBrowser:
 
             for i, topic in enumerate(selected_topics):
                 try:
-                    # 修复要求2：在第4个主题浏览前增加一次页面用户名检测
-                    # 但为了避免影响浏览，我们只在当前页面检查而不跳转
-                    if i == 3:  # 第4个主题（索引从0开始）
-                        logger.info("===== 第4个主题前进行用户名检测 =====")
+                    # 第3个主题浏览前进行用户名检测
+                    if i == 2:  # 第3个主题（索引从0开始）
+                        logger.info("===== 第3个主题前进行用户名检测 =====")
                         # 在当前页面检查用户名，不跳转页面
                         page_content = self.driver.page_source
                         if self.username.lower() in page_content.lower():
-                            logger.success(f"✅ 在第4个主题前找到用户名: {self.username}")
+                            logger.success(f"✅ 在第3个主题前找到用户名: {self.username}")
                         else:
-                            logger.warning("⚠️ 第4个主题前未找到用户名，尝试重新登录...")
+                            logger.warning("⚠️ 第3个主题前未找到用户名，尝试重新登录...")
                             # 重新登录并验证
                             if self.ensure_logged_in():
                                 logger.success("✅ 重新登录成功，继续浏览")
