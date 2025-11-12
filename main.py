@@ -295,34 +295,82 @@ class LinuxDoBrowser:
         self.wait = WebDriverWait(self.driver, 20)
 
     def print_connect_info(self):
-        """打印连接信息"""
+        """打印连接信息 - 改进版本"""
         logger.info("🔗 获取连接信息")
         try:
             self.driver.get(self.site_config['connect_url'])
             time.sleep(5)
 
-            # 查找表格元素
-            table = self.driver.find_element(By.CSS_SELECTOR, "table")
-            rows = table.find_elements(By.TAG_NAME, "tr")
-            info = []
+            # 处理可能的Cloudflare验证
+            CloudflareHandler.handle_cloudflare_with_doh(self.driver)
+            time.sleep(3)
 
-            for row in rows:
-                cells = row.find_elements(By.TAG_NAME, "td")
-                if len(cells) >= 3:
-                    project = cells[0].text.strip()
-                    current = cells[1].text.strip()
-                    requirement = cells[2].text.strip()
-                    info.append([project, current, requirement])
-
-            if info:
-                print("\n" + "="*50)
+            # 获取页面内容进行解析
+            page_source = self.driver.page_source
+            
+            # 使用BeautifulSoup解析HTML
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(page_source, 'html.parser')
+            
+            # 查找所有表格
+            tables = soup.find_all('table')
+            if not tables:
+                logger.warning("⚠️ 未找到表格元素")
+                return
+                
+            # 查找包含统计信息的表格
+            stats_table = None
+            for table in tables:
+                if table.find('td', string=lambda text: text and '访问次数' in text):
+                    stats_table = table
+                    break
+            
+            if not stats_table:
+                logger.warning("⚠️ 未找到统计表格")
+                return
+                
+            # 提取表格数据
+            stats_data = []
+            rows = stats_table.find_all('tr')
+            
+            for row in rows[1:]:  # 跳过表头
+                cols = row.find_all(['td', 'th'])
+                if len(cols) >= 3:
+                    item = cols[0].get_text(strip=True)
+                    current = cols[1].get_text(strip=True)
+                    requirement = cols[2].get_text(strip=True)
+                    
+                    # 判断状态
+                    col_class = cols[1].get('class', [])
+                    if isinstance(col_class, list):
+                        col_class = ' '.join(col_class)
+                    status = '✅' if 'text-green' in col_class else '❌' if 'text-red' in col_class else '➖'
+                    
+                    stats_data.append([item, current, requirement, status])
+            
+            if stats_data:
+                print("\n" + "="*80)
                 print(f"📊 {self.site_name.upper()} 连接信息")
-                print("="*50)
-                from tabulate import tabulate
-                print(tabulate(info, headers=["项目", "当前", "要求"], tablefmt="pretty"))
-                print("="*50 + "\n")
+                print("="*80)
+                
+                try:
+                    from tabulate import tabulate
+                    print(tabulate(stats_data, headers=["项目", "当前", "要求", "状态"], tablefmt="grid"))
+                except ImportError:
+                    # 备用显示方式
+                    print(f"{'项目':<25} {'当前':<30} {'要求':<20} {'状态':<10}")
+                    print("-" * 80)
+                    for item in stats_data:
+                        print(f"{item[0]:<25} {item[1]:<30} {item[2]:<20} {item[3]:<10}")
+                
+                print("="*80 + "\n")
+                
+                # 统计达标情况
+                passed = sum(1 for item in stats_data if item[3] == '✅')
+                total = len(stats_data)
+                logger.success(f"📊 连接信息统计: {passed}/{total} 项达标")
             else:
-                logger.warning("⚠️ 无法获取连接信息")
+                logger.warning("⚠️ 无法解析连接信息表格")
 
         except Exception as e:
             logger.error(f"获取连接信息失败: {str(e)}")
@@ -713,15 +761,9 @@ class LinuxDoBrowser:
 
                     logger.info(f"📖 浏览第 {i+1}/{browse_count} 个主题")
                     
-                    # 在新标签页打开
-                    original_window = self.driver.current_window_handle
-                    self.driver.execute_script(f"window.open('{topic_url}', '_blank');")
-                    
-                    # 切换到新标签页
-                    for handle in self.driver.window_handles:
-                        if handle != original_window:
-                            self.driver.switch_to.window(handle)
-                            break
+                    # 在同一标签页打开主题
+                    self.driver.get(topic_url)
+                    time.sleep(random.uniform(2, 4))
                     
                     # 模拟真实浏览行为
                     page_stay_time = random.uniform(25, 40)
@@ -766,9 +808,9 @@ class LinuxDoBrowser:
                         logger.debug(f"⏸️ 随机暂停 {pause_time:.1f} 秒")
                         time.sleep(pause_time)
                     
-                    # 关闭标签页
-                    self.driver.close()
-                    self.driver.switch_to.window(original_window)
+                    # 返回主题列表页面
+                    self.driver.back()
+                    time.sleep(random.uniform(2, 4))
                     
                     success_count += 1
                     
@@ -780,8 +822,10 @@ class LinuxDoBrowser:
                         
                 except Exception as e:
                     logger.error(f"浏览主题失败: {str(e)}")
+                    # 尝试返回主题列表页面
                     try:
-                        self.driver.switch_to.window(original_window)
+                        self.driver.get(self.site_config['latest_url'])
+                        time.sleep(3)
                     except:
                         pass
                     continue
@@ -813,10 +857,10 @@ class LinuxDoBrowser:
             connect_url = self.site_config['connect_url']
             logger.info(f"📍 访问连接页面: {connect_url}")
             self.driver.get(connect_url)
-            time.sleep(random.uniform(3, 5))
+            time.sleep(random.uniform(5, 8))
             
             CloudflareHandler.handle_cloudflare_with_doh(self.driver)
-            time.sleep(random.uniform(2, 3))
+            time.sleep(random.uniform(3, 5))
             
             # 获取页面源码
             page_source = self.driver.page_source
@@ -851,7 +895,9 @@ class LinuxDoBrowser:
                     
                     # 判断颜色（达标/未达标）
                     col_class = cols[1].get('class', [])
-                    color = 'green' if 'text-green' in str(col_class) else 'red' if 'text-red' in str(col_class) else 'black'
+                    if isinstance(col_class, list):
+                        col_class = ' '.join(col_class)
+                    color = 'green' if 'text-green' in col_class else 'red' if 'text-red' in col_class else 'black'
                     
                     stats_data.append([item, current, requirement, color])
             
