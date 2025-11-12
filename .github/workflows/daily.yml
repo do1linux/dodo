@@ -38,7 +38,7 @@ jobs:
           cf_cookies_idcflare.json
           browser_state_linux_do.json
           browser_state_idcflare.json
-        key: ${{ runner.os }}-linuxdo-cookies-${{ github.run_id }}
+        key: ${{ runner.os }}-linuxdo-cookies
         restore-keys: |
           ${{ runner.os }}-linuxdo-cookies-
 
