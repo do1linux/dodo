@@ -13,11 +13,10 @@ on:
           - linux_do
           - idcflare
   schedule:
-    - cron: '0 * * * *'  # 每小时运行一次，减少频率更自然
+    - cron: '0 * * * *'  # 每小时运行一次
 
 env:
   PYTHON_VERSION: '3.11'
-  # 缓存Cookies的目录（与脚本中一致）
   COOKIES_CACHE_DIR: ${{ github.workspace }}
 
 jobs:
@@ -38,7 +37,7 @@ jobs:
           cf_cookies_idcflare.json
           browser_state_linux_do.json
           browser_state_idcflare.json
-        key: ${{ runner.os }}-linuxdo-cookies
+        key: ${{ runner.os }}-linuxdo-cookies-${{ github.sha }}
         restore-keys: |
           ${{ runner.os }}-linuxdo-cookies-
 
@@ -68,6 +67,14 @@ jobs:
           libappindicator3-1 \
           xdg-utils
 
+    - name: Install Chrome
+      run: |
+        curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | sudo gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg
+        echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
+        sudo apt-get update
+        sudo apt-get install -y google-chrome-stable
+        google-chrome --version
+
     - name: Install Python dependencies
       run: |
         python -m pip install --upgrade pip
@@ -89,7 +96,6 @@ jobs:
         IDCFLARE_PASSWORD: ${{ secrets.IDCFLARE_PASSWORD }}
         GITHUB_ACTIONS: 'true'
         DOH_SERVER: 'https://ld.ddd.oaifree.com/query-dns'
-        # 传递站点选择参数到脚本
         SITE_SELECTOR: ${{ github.event.inputs.site_selector || 'all' }}
       run: |
         echo "开始执行自动化脚本..."
