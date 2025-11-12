@@ -13,7 +13,7 @@ on:
           - linux_do
           - idcflare
   schedule:
-    - cron: '0 * * * *'  # 每小时运行一次
+    - cron: '0 */2 * * *'  # 每2小时运行一次，减少频率避免检测
 
 env:
   PYTHON_VERSION: '3.11'
@@ -22,7 +22,7 @@ env:
 jobs:
   automate:
     runs-on: ubuntu-22.04
-    timeout-minutes: 45
+    timeout-minutes: 60  # 增加超时时间
 
     steps:
     - name: Checkout repository
@@ -84,9 +84,53 @@ jobs:
     - name: Create turnstilePatch extension
       run: |
         echo "🔧 创建turnstilePatch扩展..."
-        python setup_directories.py
-        echo "📁 检查扩展目录:"
-        ls -la turnstilePatch/
+        mkdir -p turnstilePatch
+        cat > turnstilePatch/manifest.json << 'EOF'
+        {
+          "manifest_version": 3,
+          "name": "Turnstile Patch",
+          "version": "1.0",
+          "description": "Patch for Cloudflare Turnstile",
+          "content_scripts": [{
+            "matches": ["https://*.linux.do/*", "https://*.idcflare.com/*"],
+            "js": ["content.js"],
+            "run_at": "document_start"
+          }]
+        }
+        EOF
+        
+        cat > turnstilePatch/content.js << 'EOF'
+        // Cloudflare Turnstile Patch
+        (function() {
+          'use strict';
+          
+          // 拦截可能的检测
+          const originalQuery = window.navigator.permissions.query;
+          window.navigator.permissions.query = (parameters) => (
+            parameters.name === 'notifications' ?
+              Promise.resolve({ state: Notification.permission }) :
+              originalQuery(parameters)
+          );
+          
+          // 隐藏webdriver属性
+          Object.defineProperty(navigator, 'webdriver', {
+            get: () => undefined,
+          });
+          
+          // 修改plugins属性
+          Object.defineProperty(navigator, 'plugins', {
+            get: () => [1, 2, 3, 4, 5],
+          });
+          
+          // 修改languages属性
+          Object.defineProperty(navigator, 'languages', {
+            get: () => ['zh-CN', 'zh', 'en'],
+          });
+          
+          console.log('🔧 Turnstile Patch 已加载');
+        })();
+        EOF
+        echo "✅ 扩展创建完成"
 
     - name: Run automation script
       env:
@@ -133,7 +177,6 @@ jobs:
         name: connect-debug-files
         path: |
           connect_debug_*.html
-          connect_debug_*.png
           login_debug_*.html
           login_error_*.html
         retention-days: 3
