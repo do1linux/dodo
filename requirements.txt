@@ -13,3 +13,4 @@ pytesseract==0.3.10
 wcwidth==0.2.13
 webdriver-manager==4.0.1
 beautifulsoup4>=4.12.2
+lxml==4.9.3
