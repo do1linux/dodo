@@ -13,7 +13,7 @@ on:
           - linux_do
           - idcflare
   schedule:
-    - cron: '0 */2 * * *'  # 每2小时运行一次，减少频率避免检测
+    - cron: '0 * * * *'  # 每小时运行一次
 
 env:
   PYTHON_VERSION: '3.11'
