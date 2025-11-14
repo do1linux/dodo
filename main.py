@@ -3,6 +3,7 @@ import random
 import time
 import sys
 import json
+import pickle
 import requests
 from datetime import datetime, timedelta
 from selenium import webdriver
@@ -13,6 +14,7 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.common.exceptions import TimeoutException, NoSuchElementException, StaleElementReferenceException
 from loguru import logger
+import hashlib
 
 # ======================== 配置常量 ========================
 SITE_CREDENTIALS = {
@@ -49,6 +51,7 @@ SITES = [
 BROWSE_ENABLED = os.environ.get("BROWSE_ENABLED", "true").strip().lower() not in ["false", "0", "off"]
 HEADLESS = os.environ.get("HEADLESS", "true").strip().lower() not in ["false", "0", "off"]
 FORCE_LOGIN_EVERY_TIME = False
+MAX_CACHE_AGE_HOURS = int(os.environ.get("MAX_CACHE_AGE_HOURS", "168"))  # 7天默认
 
 # DoH 服务器配置
 DOH_SERVER = os.environ.get("DOH_SERVER", "https://ld.ddd.oaifree.com/query-dns")
@@ -56,28 +59,44 @@ DOH_SERVER = os.environ.get("DOH_SERVER", "https://ld.ddd.oaifree.com/query-dns"
 # turnstilePatch 扩展路径
 TURNSTILE_PATCH_PATH = os.path.abspath("turnstilePatch")
 
-# Cookies过期时间（小时）
-COOKIES_EXPIRY_HOURS = 24
-
-# ======================== 缓存管理器 ========================
-class CacheManager:
-    """缓存管理类 - 缓存Cloudflare相关Cookies和浏览器状态"""
+# ======================== 增强缓存管理器 ========================
+class EnhancedCacheManager:
+    """增强的缓存管理类 - 管理所有类型的缓存"""
     
     @staticmethod
     def get_cache_directory():
-        """获取缓存目录（当前目录）"""
-        return os.path.dirname(os.path.abspath(__file__))
+        """获取缓存目录"""
+        cache_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache")
+        os.makedirs(cache_dir, exist_ok=True)
+        return cache_dir
 
     @staticmethod
-    def get_cache_file_path(file_name):
+    def get_sessions_directory():
+        """获取会话目录"""
+        sessions_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sessions")
+        os.makedirs(sessions_dir, exist_ok=True)
+        return sessions_dir
+
+    @staticmethod
+    def get_cache_file_path(file_name, subdirectory=""):
         """获取缓存文件的完整路径"""
-        cache_dir = CacheManager.get_cache_directory()
-        return os.path.join(cache_dir, file_name)
+        if subdirectory:
+            base_dir = os.path.join(EnhancedCacheManager.get_cache_directory(), subdirectory)
+            os.makedirs(base_dir, exist_ok=True)
+        else:
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+        return os.path.join(base_dir, file_name)
 
     @staticmethod
-    def load_cache(file_name):
+    def generate_session_id(site_name, username):
+        """生成会话ID"""
+        unique_string = f"{site_name}_{username}_{os.getenv('GITHUB_SHA', 'local')}"
+        return hashlib.md5(unique_string.encode()).hexdigest()[:16]
+
+    @staticmethod
+    def load_cache(file_name, subdirectory=""):
         """从文件加载缓存数据"""
-        file_path = CacheManager.get_cache_file_path(file_name)
+        file_path = EnhancedCacheManager.get_cache_file_path(file_name, subdirectory)
         if os.path.exists(file_path):
             try:
                 with open(file_path, "r", encoding='utf-8') as f:
@@ -89,29 +108,49 @@ class CacheManager:
         return None
 
     @staticmethod
-    def save_cache(data, file_name):
+    def save_cache(data, file_name, subdirectory=""):
         """保存数据到缓存文件"""
         try:
-            file_path = CacheManager.get_cache_file_path(file_name)
+            file_path = EnhancedCacheManager.get_cache_file_path(file_name, subdirectory)
             with open(file_path, "w", encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
             logger.info(f"💾 缓存已保存: {file_name}")
-            
-            if os.path.exists(file_path):
-                file_size = os.path.getsize(file_path)
-                logger.info(f"✅ 缓存文件验证: {file_name} ({file_size} 字节)")
-            else:
-                logger.error(f"❌ 缓存文件保存失败: {file_name}")
-                
             return True
         except Exception as e:
             logger.error(f"缓存保存失败 {file_name}: {str(e)}")
             return False
 
     @staticmethod
-    def is_cache_valid(file_name, expiry_hours=COOKIES_EXPIRY_HOURS):
-        """检查缓存是否有效（未过期且存在）"""
-        file_path = CacheManager.get_cache_file_path(file_name)
+    def load_pickle_cache(file_name, subdirectory=""):
+        """加载pickle格式缓存"""
+        file_path = EnhancedCacheManager.get_cache_file_path(file_name, subdirectory)
+        if os.path.exists(file_path):
+            try:
+                with open(file_path, "rb") as f:
+                    data = pickle.load(f)
+                logger.info(f"📦 加载pickle缓存: {file_name}")
+                return data
+            except Exception as e:
+                logger.warning(f"Pickle缓存加载失败 {file_name}: {str(e)}")
+        return None
+
+    @staticmethod
+    def save_pickle_cache(data, file_name, subdirectory=""):
+        """保存pickle格式缓存"""
+        try:
+            file_path = EnhancedCacheManager.get_cache_file_path(file_name, subdirectory)
+            with open(file_path, "wb") as f:
+                pickle.dump(data, f)
+            logger.info(f"💾 Pickle缓存已保存: {file_name}")
+            return True
+        except Exception as e:
+            logger.error(f"Pickle缓存保存失败 {file_name}: {str(e)}")
+            return False
+
+    @staticmethod
+    def is_cache_valid(file_name, expiry_hours=MAX_CACHE_AGE_HOURS, subdirectory=""):
+        """检查缓存是否有效"""
+        file_path = EnhancedCacheManager.get_cache_file_path(file_name, subdirectory)
         if not os.path.exists(file_path):
             return False
         
@@ -130,8 +169,83 @@ class CacheManager:
             logger.error(f"缓存验证失败: {str(e)}")
             return False
 
+    @staticmethod
+    def save_comprehensive_session(driver, site_name, username, additional_data=None):
+        """保存综合会话数据"""
+        try:
+            session_id = EnhancedCacheManager.generate_session_id(site_name, username)
+            session_data = {
+                'session_id': session_id,
+                'site_name': site_name,
+                'username': username,
+                'timestamp': datetime.now().isoformat(),
+                'cookies': driver.get_cookies(),
+                'local_storage': driver.execute_script("return Object.assign({}, window.localStorage);"),
+                'session_storage': driver.execute_script("return Object.assign({}, window.sessionStorage);"),
+                'user_agent': driver.execute_script("return navigator.userAgent;"),
+                'additional_data': additional_data or {}
+            }
+            
+            file_name = f"session_{site_name}_{session_id}.json"
+            return EnhancedCacheManager.save_cache(session_data, file_name, "sessions")
+        except Exception as e:
+            logger.error(f"综合会话保存失败: {str(e)}")
+            return False
+
+    @staticmethod
+    def load_comprehensive_session(driver, site_name, username):
+        """加载综合会话数据"""
+        try:
+            session_id = EnhancedCacheManager.generate_session_id(site_name, username)
+            file_name = f"session_{site_name}_{session_id}.json"
+            
+            if not EnhancedCacheManager.is_cache_valid(file_name, MAX_CACHE_AGE_HOURS, "sessions"):
+                return False
+            
+            session_data = EnhancedCacheManager.load_cache(file_name, "sessions")
+            if not session_data:
+                return False
+            
+            # 恢复cookies
+            driver.get(session_data.get('base_url', 'https://linux.do'))
+            time.sleep(2)
+            
+            for cookie in session_data.get('cookies', []):
+                try:
+                    driver.add_cookie(cookie)
+                except Exception as e:
+                    logger.debug(f"Cookie恢复失败: {str(e)}")
+            
+            # 恢复localStorage
+            if session_data.get('local_storage'):
+                driver.execute_script("""
+                    var storage = arguments[0];
+                    for (var key in storage) {
+                        if (storage.hasOwnProperty(key)) {
+                            localStorage.setItem(key, storage[key]);
+                        }
+                    }
+                """, session_data['local_storage'])
+            
+            # 恢复sessionStorage
+            if session_data.get('session_storage'):
+                driver.execute_script("""
+                    var storage = arguments[0];
+                    for (var key in storage) {
+                        if (storage.hasOwnProperty(key)) {
+                            sessionStorage.setItem(key, storage[key]);
+                        }
+                    }
+                """, session_data['session_storage'])
+            
+            logger.success(f"✅ 综合会话已恢复: {session_id}")
+            return True
+        except Exception as e:
+            logger.error(f"综合会话恢复失败: {str(e)}")
+            return False
+
 # ======================== Cloudflare处理器 ========================
-class CloudflareHandler:
+class EnhancedCloudflareHandler:
     @staticmethod
     def query_doh(domain, doh_server=DOH_SERVER):
         """通过DoH服务器查询DNS"""
@@ -139,7 +253,7 @@ class CloudflareHandler:
             query_url = f"{doh_server}?name={domain}&type=A"
             headers = {
                 'Accept': 'application/dns-json',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
             }
             
             response = requests.get(query_url, headers=headers, timeout=10)
@@ -157,8 +271,8 @@ class CloudflareHandler:
             return None
 
     @staticmethod
-    def handle_cloudflare_with_doh(driver, doh_server=DOH_SERVER, max_attempts=12, timeout=180):
-        """使用DoH处理Cloudflare验证 - 增强版本"""
+    def handle_cloudflare_with_doh(driver, doh_server=DOH_SERVER, max_attempts=15, timeout=300):
+        """增强的Cloudflare验证处理"""
         start_time = time.time()
         logger.info(f"🛡️ 开始处理Cloudflare验证 (DoH: {doh_server})")
         
@@ -171,7 +285,15 @@ class CloudflareHandler:
         ]
         
         for domain in critical_domains:
-            CloudflareHandler.query_doh(domain, doh_server)
+            EnhancedCloudflareHandler.query_doh(domain, doh_server)
+
+        # 保存Cloudflare状态
+        cf_state = {
+            'last_processed': datetime.now().isoformat(),
+            'domains_resolved': critical_domains,
+            'attempts': 0
+        }
+        EnhancedCacheManager.save_cache(cf_state, f"cloudflare_state.json", "cloudflare")
 
         for attempt in range(max_attempts):
             try:
@@ -179,7 +301,7 @@ class CloudflareHandler:
                 page_title = driver.title.lower() if driver.title else ""
                 page_source = driver.page_source.lower() if driver.page_source else ""
                 
-                # 检查验证状态 - 更严格的检查
+                # 检查验证状态
                 cloudflare_indicators = ["just a moment", "checking", "please wait", "ddos protection", "cloudflare", "verifying"]
                 is_cloudflare_page = any(indicator in page_title for indicator in cloudflare_indicators) or any(indicator in page_source for indicator in cloudflare_indicators)
                 
@@ -187,20 +309,26 @@ class CloudflareHandler:
                 is_challenge_page = "challenge" in current_url or "challenges" in current_url
                 
                 if not is_cloudflare_page and not is_challenge_page:
-                    # 额外检查：等待页面完全加载
+                    # 额外检查
                     time.sleep(3)
-                    # 再次检查
                     page_title = driver.title.lower() if driver.title else ""
                     page_source = driver.page_source.lower() if driver.page_source else ""
                     is_cloudflare_page = any(indicator in page_title for indicator in cloudflare_indicators) or any(indicator in page_source for indicator in cloudflare_indicators)
                     
                     if not is_cloudflare_page:
                         logger.success("✅ Cloudflare验证通过")
+                        
+                        # 保存成功的Cloudflare状态
+                        cf_state['success'] = True
+                        cf_state['final_attempts'] = attempt + 1
+                        cf_state['total_time'] = time.time() - start_time
+                        EnhancedCacheManager.save_cache(cf_state, f"cloudflare_state.json", "cloudflare")
+                        
                         return True
 
                 # 动态调整等待时间
-                base_wait = 5 + (attempt * 1.5)  # 逐渐增加等待时间
-                wait_time = min(base_wait, 15)  # 最大不超过15秒
+                base_wait = 5 + (attempt * 2)
+                wait_time = min(base_wait, 20)
                 elapsed = time.time() - start_time
                 
                 logger.info(f"⏳ 等待验证 ({wait_time:.1f}秒) - 尝试 {attempt + 1}/{max_attempts} [耗时: {elapsed:.0f}秒]")
@@ -211,12 +339,12 @@ class CloudflareHandler:
                     logger.warning(f"⚠️ Cloudflare处理超时 ({timeout}秒)")
                     break
                     
-                # 定期刷新 - 更智能的刷新策略
-                if attempt % 3 == 2:  # 每3次尝试刷新一次
+                # 定期刷新
+                if attempt % 4 == 3:
                     try:
                         driver.refresh()
                         logger.info("🔄 刷新页面")
-                        time.sleep(3)
+                        time.sleep(4)
                     except:
                         pass
                         
@@ -224,11 +352,18 @@ class CloudflareHandler:
                 logger.error(f"Cloudflare处理异常 (尝试 {attempt + 1}): {str(e)}")
                 time.sleep(5)
 
-        logger.warning("⚠️ Cloudflare验证可能未完全通过，强制继续")
-        return False  # 返回False表示验证可能未通过
+        logger.warning("⚠️ Cloudflare验证可能未完全通过")
+        
+        # 保存失败的Cloudflare状态
+        cf_state['success'] = False
+        cf_state['final_attempts'] = max_attempts
+        cf_state['total_time'] = time.time() - start_time
+        EnhancedCacheManager.save_cache(cf_state, f"cloudflare_state.json", "cloudflare")
+        
+        return False
 
-# ======================== 主浏览器类 ========================
-class LinuxDoBrowser:
+# ======================== 增强浏览器类 ========================
+class EnhancedLinuxDoBrowser:
     def __init__(self, site_config, credentials):
         self.site_config = site_config
         self.site_name = site_config['name']
@@ -236,10 +371,11 @@ class LinuxDoBrowser:
         self.password = credentials['password']
         self.driver = None
         self.wait = None
+        self.session_id = EnhancedCacheManager.generate_session_id(self.site_name, self.username)
         self.initialize_browser()
 
     def initialize_browser(self):
-        """初始化浏览器"""
+        """初始化浏览器 - 增强版本"""
         chrome_options = Options()
         
         # 配置Headless模式
@@ -258,6 +394,7 @@ class LinuxDoBrowser:
         chrome_options.add_argument('--disable-features=VizDisplayCompositor')
         chrome_options.add_argument('--disable-web-security')
         chrome_options.add_argument('--disable-features=IsolateOrigins,site-per-process')
+        chrome_options.add_argument('--disable-site-isolation-trials')
         
         # 固定使用Windows用户代理
         chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
@@ -271,8 +408,12 @@ class LinuxDoBrowser:
             "profile.default_content_setting_values": {
                 "images": 1,
                 "cookies": 1,
-                "notifications": 2
-            }
+                "notifications": 2,
+                "geolocation": 2,
+                "media_stream": 2
+            },
+            "credentials_enable_service": False,
+            "profile.password_manager_enabled": False
         })
         
         # 加载turnstilePatch扩展
@@ -284,25 +425,56 @@ class LinuxDoBrowser:
         
         try:
             self.driver = webdriver.Chrome(options=chrome_options)
-            # 隐藏webdriver属性
+            
+            # 执行反检测脚本
             self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
             
             # 伪造其他指纹特征
             self.driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
                 'source': '''
+                    // 增强反检测
                     Object.defineProperty(navigator, 'plugins', {
-                        get: () => [1, 2, 3, 4, 5]
+                        get: () => [1, 2, 3, 4, 5],
                     });
                     Object.defineProperty(navigator, 'languages', {
-                        get: () => ['zh-CN', 'zh', 'en']
+                        get: () => ['zh-CN', 'zh', 'en', 'en-US'],
                     });
                     Object.defineProperty(navigator, 'mimeTypes', {
-                        get: () => [1, 2]
+                        get: () => [1, 2],
                     });
+                    
+                    // 模拟真实浏览器
                     window.chrome = {
-                        runtime: {}
+                        runtime: {},
+                        loadTimes: function() {},
+                        csi: function() {},
+                        app: {
+                            isInstalled: false,
+                            InstallState: {
+                                DISABLED: 'disabled',
+                                INSTALLED: 'installed',
+                                NOT_INSTALLED: 'not_installed'
+                            },
+                            RunningState: {
+                                CANNOT_RUN: 'cannot_run',
+                                READY_TO_RUN: 'ready_to_run',
+                                RUNNING: 'running'
+                            }
+                        }
                     };
+                    
+                    // 删除自动化痕迹
                     delete navigator.__proto__.connection;
+                    
+                    // 覆盖权限API
+                    const originalQuery = window.navigator.permissions.query;
+                    window.navigator.permissions.query = (parameters) => (
+                        parameters.name === 'notifications' ?
+                            Promise.resolve({ state: Notification.permission }) :
+                            originalQuery(parameters)
+                    );
+                    
+                    console.log('🔧 Enhanced anti-detection scripts loaded');
                 '''
             })
             
@@ -310,15 +482,120 @@ class LinuxDoBrowser:
             logger.error(f"Chrome驱动初始化失败: {str(e)}")
             raise
             
-        self.wait = WebDriverWait(self.driver, 25)
+        self.wait = WebDriverWait(self.driver, 30)
+
+    def save_comprehensive_state(self, success=True, activity_count=0, additional_info=None):
+        """保存综合状态信息"""
+        try:
+            # 保存浏览器状态
+            browser_state = {
+                'site': self.site_name,
+                'username': self.username,
+                'session_id': self.session_id,
+                'last_updated': datetime.now().isoformat(),
+                'status': 'completed' if success else 'failed',
+                'activity_count': activity_count,
+                'login_success': success,
+                'execution_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'additional_info': additional_info or {},
+                'version': '2.0'
+            }
+            
+            EnhancedCacheManager.save_cache(browser_state, f"browser_state_{self.site_name}.json")
+            
+            # 保存会话数据
+            EnhancedCacheManager.save_comprehensive_session(
+                self.driver, 
+                self.site_name, 
+                self.username,
+                {
+                    'browser_state': browser_state,
+                    'last_activity': activity_count
+                }
+            )
+            
+            logger.success(f"✅ 综合状态已保存: {self.session_id}")
+            return True
+        except Exception as e:
+            logger.error(f"状态保存失败: {str(e)}")
+            return False
+
+    def load_comprehensive_state(self):
+        """加载综合状态信息"""
+        # 首先尝试加载完整会话
+        if EnhancedCacheManager.load_comprehensive_session(self.driver, self.site_name, self.username):
+            logger.success("✅ 综合会话状态已恢复")
+            return True
+        
+        # 备用：加载Cookies缓存
+        return self.load_cookies_from_cache()
+
+    def save_cookies_to_cache(self):
+        """将当前Cookies保存到缓存"""
+        try:
+            cookies = self.driver.get_cookies()
+            cookie_data = {
+                'cookies': cookies,
+                'timestamp': datetime.now().isoformat(),
+                'username': self.username,
+                'session_id': self.session_id,
+                'site': self.site_name
+            }
+            EnhancedCacheManager.save_cache(cookie_data, f"cf_cookies_{self.site_name}.json")
+            logger.success(f"✅ Cookies已缓存: {self.session_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Cookies缓存失败: {str(e)}")
+            return False
+
+    def load_cookies_from_cache(self):
+        """从缓存加载Cookies"""
+        cache_file = f"cf_cookies_{self.site_name}.json"
+        
+        if not EnhancedCacheManager.is_cache_valid(cache_file, MAX_CACHE_AGE_HOURS):
+            logger.warning("⚠️ Cookies缓存无效或不存在")
+            return False
+        
+        try:
+            cookie_data = EnhancedCacheManager.load_cache(cache_file)
+            if not cookie_data or 'cookies' not in cookie_data:
+                return False
+            
+            # 加载Cookies到浏览器
+            self.driver.get(self.site_config['base_url'])
+            time.sleep(3)
+            
+            for cookie in cookie_data['cookies']:
+                try:
+                    clean_cookie = {
+                        'name': cookie.get('name'),
+                        'value': cookie.get('value'),
+                        'domain': cookie.get('domain', '.linux.do' if 'linux' in self.site_name else '.idcflare.com'),
+                        'path': cookie.get('path', '/'),
+                        'secure': cookie.get('secure', True),
+                        'httpOnly': cookie.get('httpOnly', False)
+                    }
+                    if 'expiry' in clean_cookie:
+                        del clean_cookie['expiry']
+                    if 'expires' in clean_cookie:
+                        del clean_cookie['expires']
+                    
+                    self.driver.add_cookie(clean_cookie)
+                except Exception as e:
+                    continue
+            
+            logger.success(f"✅ Cookies已从缓存加载: {len(cookie_data['cookies'])}个")
+            return True
+        except Exception as e:
+            logger.error(f"Cookies加载失败: {str(e)}")
+            return False
 
     def robust_username_check(self, max_retries=3):
-        """增强的用户名检查 - 确保登录状态真实有效"""
-        logger.info("🔍 增强验证登录状态 - 多维度检测用户名...")
+        """增强的用户名检查"""
+        logger.info("🔍 增强验证登录状态...")
         
         for retry in range(max_retries):
             try:
-                # 检查多个关键页面
                 check_pages = [
                     (self.site_config['latest_url'], "最新话题页面"),
                     (f"{self.site_config['user_url']}/{self.username}", "用户主页"),
@@ -332,18 +609,15 @@ class LinuxDoBrowser:
                         self.driver.get(url)
                         time.sleep(random.uniform(4, 6))
                         
-                        # 处理可能的Cloudflare验证
-                        cf_passed = CloudflareHandler.handle_cloudflare_with_doh(self.driver)
+                        cf_passed = EnhancedCloudflareHandler.handle_cloudflare_with_doh(self.driver)
                         if not cf_passed:
                             logger.warning(f"⚠️ {page_name} Cloudflare验证可能有问题")
                         
                         time.sleep(random.uniform(2, 3))
                         
-                        # 获取页面内容进行多重检查
                         page_content = self.driver.page_source
                         current_url = self.driver.current_url
                         
-                        # 多重检查：用户名在页面内容中
                         if self.username.lower() in page_content.lower():
                             logger.success(f"✅ 在 {page_name} 中找到用户名: {self.username}")
                             username_found = True
@@ -356,9 +630,7 @@ class LinuxDoBrowser:
                         continue
                 
                 if username_found:
-                    # 额外验证：检查是否有登录相关的元素
                     try:
-                        # 检查是否有退出按钮或用户菜单
                         logout_indicators = ["logout", "sign out", "退出", "登出"]
                         page_lower = self.driver.page_source.lower()
                         if any(indicator in page_lower for indicator in logout_indicators):
@@ -371,7 +643,6 @@ class LinuxDoBrowser:
                 
                 logger.warning(f"❌ 在所有页面中都未找到用户名 (尝试 {retry + 1}/{max_retries})")
                 
-                # 重试前等待
                 if retry < max_retries - 1:
                     wait_time = random.uniform(8, 12)
                     logger.info(f"🔄 等待 {wait_time:.1f} 秒后重试...")
@@ -382,248 +653,72 @@ class LinuxDoBrowser:
                 if retry < max_retries - 1:
                     time.sleep(8)
         
-        logger.error(f"❌ 增强验证失败: 在所有重试后都未找到用户名")
+        logger.error(f"❌ 增强验证失败")
         return False
-
-    def print_connect_info(self):
-        """打印连接信息 - 增强版本"""
-        logger.info("🔗 获取连接信息")
-        max_retries = 2
-        for retry in range(max_retries):
-            try:
-                self.driver.get(self.site_config['connect_url'])
-                time.sleep(6)
-
-                # 处理可能的Cloudflare验证
-                CloudflareHandler.handle_cloudflare_with_doh(self.driver)
-                time.sleep(4)
-
-                # 获取页面内容进行解析
-                page_source = self.driver.page_source
-                
-                # 保存页面用于调试
-                if retry == max_retries - 1:
-                    with open(f"connect_debug_{self.site_name}.html", "w", encoding='utf-8') as f:
-                        f.write(page_source)
-                
-                # 使用BeautifulSoup解析HTML
-                from bs4 import BeautifulSoup
-                soup = BeautifulSoup(page_source, 'html.parser')
-                
-                # 查找所有表格
-                tables = soup.find_all('table')
-                if not tables:
-                    logger.warning("⚠️ 未找到表格元素")
-                    if retry < max_retries - 1:
-                        continue
-                    return
-                    
-                # 查找包含统计信息的表格
-                stats_table = None
-                for table in tables:
-                    table_text = table.get_text()
-                    if any(keyword in table_text for keyword in ['访问次数', '回复的话题', '浏览的话题', '已读帖子']):
-                        stats_table = table
-                        break
-                
-                if not stats_table:
-                    logger.warning("⚠️ 未找到统计表格")
-                    if retry < max_retries - 1:
-                        continue
-                    return
-                    
-                # 提取表格数据
-                stats_data = []
-                rows = stats_table.find_all('tr')
-                
-                for row in rows[1:]:  # 跳过表头
-                    cols = row.find_all(['td', 'th'])
-                    if len(cols) >= 3:
-                        item = cols[0].get_text(strip=True)
-                        current = cols[1].get_text(strip=True)
-                        requirement = cols[2].get_text(strip=True)
-                        
-                        # 判断状态
-                        col_class = cols[1].get('class', [])
-                        if isinstance(col_class, list):
-                            col_class = ' '.join(col_class)
-                        status = '✅' if 'text-green' in col_class or 'green' in col_class else '❌' if 'text-red' in col_class or 'red' in col_class else '➖'
-                        
-                        stats_data.append([item, current, requirement, status])
-                
-                if stats_data:
-                    print("\n" + "="*80)
-                    print(f"📊 {self.site_name.upper()} 连接信息")
-                    print("="*80)
-                    
-                    try:
-                        from tabulate import tabulate
-                        print(tabulate(stats_data, headers=["项目", "当前", "要求", "状态"], tablefmt="grid"))
-                    except ImportError:
-                        # 备用显示方式
-                        print(f"{'项目':<25} {'当前':<30} {'要求':<20} {'状态':<10}")
-                        print("-" * 80)
-                        for item in stats_data:
-                            print(f"{item[0]:<25} {item[1]:<30} {item[2]:<20} {item[3]:<10}")
-                    
-                    print("="*80 + "\n")
-                    
-                    # 统计达标情况
-                    passed = sum(1 for item in stats_data if item[3] == '✅')
-                    total = len(stats_data)
-                    logger.success(f"📊 连接信息统计: {passed}/{total} 项达标")
-                    
-                    # 记录关键指标
-                    for item in stats_data:
-                        if '访问天数' in item[0] or '访问次数' in item[0]:
-                            logger.info(f"📈 关键指标 - {item[0]}: {item[1]}")
-                    break
-                else:
-                    logger.warning("⚠️ 无法解析连接信息表格")
-                    if retry < max_retries - 1:
-                        continue
-
-            except Exception as e:
-                logger.error(f"获取连接信息失败: {str(e)}")
-                if retry < max_retries - 1:
-                    logger.info(f"🔄 重试获取连接信息 ({retry+1}/{max_retries})")
-                    time.sleep(5)
-
-    def generate_browser_state(self, success=True, browse_count=0):
-        """生成浏览器状态文件"""
-        try:
-            state_data = {
-                'site': self.site_name,
-                'last_updated': datetime.now().isoformat(),
-                'status': 'completed' if success else 'failed',
-                'version': '1.0',
-                'browse_count': browse_count,
-                'login_success': success,
-                'execution_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            }
-            CacheManager.save_cache(state_data, f"browser_state_{self.site_name}.json")
-            logger.info(f"✅ 生成浏览器状态文件: browser_state_{self.site_name}.json")
-        except Exception as e:
-            logger.error(f"生成浏览器状态文件失败: {str(e)}")
-
-    def save_cookies_to_cache(self):
-        """将当前Cookies保存到缓存"""
-        try:
-            cookies = self.driver.get_cookies()
-            cookie_data = {
-                'cookies': cookies,
-                'timestamp': datetime.now().isoformat(),
-                'username': self.username
-            }
-            CacheManager.save_cache(cookie_data, f"cf_cookies_{self.site_name}.json")
-            logger.success(f"✅ Cookies已缓存: cf_cookies_{self.site_name}.json")
-            return True
-        except Exception as e:
-            logger.error(f"Cookies缓存失败: {str(e)}")
-            return False
-
-    def load_cookies_from_cache(self):
-        """从缓存加载Cookies"""
-        cache_file = f"cf_cookies_{self.site_name}.json"
-        
-        # 检查缓存是否存在且有效
-        if not CacheManager.is_cache_valid(cache_file, COOKIES_EXPIRY_HOURS):
-            logger.warning("⚠️ Cookies缓存无效或不存在")
-            return False
-        
-        try:
-            cookie_data = CacheManager.load_cache(cache_file)
-            if not cookie_data or 'cookies' not in cookie_data:
-                return False
-            
-            # 加载Cookies到浏览器
-            self.driver.get(self.site_config['base_url'])
-            time.sleep(3)
-            
-            for cookie in cookie_data['cookies']:
-                try:
-                    # 清理cookie字典，只保留必要字段
-                    clean_cookie = {
-                        'name': cookie.get('name'),
-                        'value': cookie.get('value'),
-                        'domain': cookie.get('domain', '.linux.do' if 'linux' in self.site_name else '.idcflare.com'),
-                        'path': cookie.get('path', '/'),
-                        'secure': cookie.get('secure', True),
-                        'httpOnly': cookie.get('httpOnly', False)
-                    }
-                    # 删除可能存在的过期时间字段，让浏览器自动管理
-                    if 'expiry' in clean_cookie:
-                        del clean_cookie['expiry']
-                    if 'expires' in clean_cookie:
-                        del clean_cookie['expires']
-                    
-                    self.driver.add_cookie(clean_cookie)
-                except Exception as e:
-                    logger.debug(f"单个Cookie加载失败: {str(e)}")
-                    continue
-            
-            logger.success(f"✅ Cookies已从缓存加载: {len(cookie_data['cookies'])}个")
-            return True
-        except Exception as e:
-            logger.error(f"Cookies加载失败: {str(e)}")
-            return False
 
     def ensure_logged_in(self):
         """确保用户已登录 - 增强版本"""
-        # 第一步：尝试使用Cookies缓存登录（如果启用且未强制重新登录）
+        # 第一步：尝试使用综合状态恢复
+        if not FORCE_LOGIN_EVERY_TIME:
+            logger.info("🎯 尝试使用综合状态恢复...")
+            if self.load_comprehensive_state():
+                if self.robust_username_check():
+                    logger.success("✅ 综合状态恢复成功")
+                    return True
+                else:
+                    logger.warning("⚠️ 综合状态无效，尝试Cookies恢复")
+        
+        # 第二步：尝试Cookies缓存
         if not FORCE_LOGIN_EVERY_TIME:
             logger.info("🎯 尝试使用Cookies缓存登录...")
             if self.load_cookies_from_cache():
-                # 使用增强验证检查登录状态
                 if self.robust_username_check():
                     logger.success("✅ Cookies缓存登录成功")
+                    # 保存综合状态
+                    self.save_comprehensive_state(True, 0)
                     return True
                 else:
                     logger.warning("⚠️ Cookies缓存无效，尝试重新登录")
         
-        # 第二步：如果缓存失败或强制登录，执行手动登录
+        # 第三步：手动登录
         logger.info("🔐 执行手动登录流程...")
         login_success = self.attempt_login()
         
-        # 登录成功后保存Cookies
         if login_success:
+            # 登录成功后保存所有状态
             self.save_cookies_to_cache()
+            self.save_comprehensive_state(True, 0)
         
         return login_success
 
     def attempt_login(self):
-        """尝试登录 - 增强版本"""
+        """尝试登录"""
         logger.info("🔐 开始登录流程...")
         
         try:
-            # 访问登录页面
             self.driver.get(self.site_config['login_url'])
             time.sleep(random.uniform(4, 6))
 
-            # 处理Cloudflare验证
-            cf_passed = CloudflareHandler.handle_cloudflare_with_doh(self.driver)
+            cf_passed = EnhancedCloudflareHandler.handle_cloudflare_with_doh(self.driver)
             if not cf_passed:
                 logger.warning("⚠️ Cloudflare验证可能有问题，继续尝试登录")
             time.sleep(random.uniform(3, 5))
 
-            # 记录当前页面状态
             current_url = self.driver.current_url
             page_title = self.driver.title
             logger.info(f"📄 当前页面: {page_title} | {current_url}")
 
-            # 如果被重定向，回到登录页面
             if 'login' not in current_url and 'signin' not in current_url:
                 logger.info("🔄 被重定向，尝试回到登录页面")
                 self.driver.get(self.site_config['login_url'])
                 time.sleep(random.uniform(4, 6))
-                CloudflareHandler.handle_cloudflare_with_doh(self.driver)
+                EnhancedCloudflareHandler.handle_cloudflare_with_doh(self.driver)
 
             # 查找表单元素
             username_field = None
             password_field = None
             login_button = None
 
-            # 尝试多种选择器
             username_selectors = [
                 "#login-account-name", "#username", "input[name='username']", 
                 "input[name='login']", "input[type='text']", "input[placeholder*='name']"
@@ -667,7 +762,6 @@ class LinuxDoBrowser:
                 except:
                     continue
 
-            # 备选：通过文本查找登录按钮
             if not login_button:
                 try:
                     buttons = self.driver.find_elements(By.TAG_NAME, "button")
@@ -683,7 +777,6 @@ class LinuxDoBrowser:
 
             if not username_field:
                 logger.error("❌ 找不到用户名字段")
-                # 保存页面源码用于调试
                 with open(f"login_debug_{self.site_name}.html", "w", encoding='utf-8') as f:
                     f.write(self.driver.page_source)
                 return False
@@ -701,55 +794,43 @@ class LinuxDoBrowser:
             username_field.clear()
             time.sleep(random.uniform(0.5, 1.2))
             
-            # 模拟人类输入速度
             for char in self.username:
                 username_field.send_keys(char)
                 time.sleep(random.uniform(0.05, 0.15))
             
-            # 随机停顿
             time.sleep(random.uniform(1, 2))
             
             logger.info("⌨️ 输入密码...")
             password_field.clear()
             time.sleep(random.uniform(0.5, 1.2))
             
-            # 模拟人类输入速度
             for char in self.password:
                 password_field.send_keys(char)
                 time.sleep(random.uniform(0.05, 0.15))
 
-            # 随机思考时间
             think_time = random.uniform(2, 4)
             logger.info(f"🤔 思考 {think_time:.1f} 秒...")
             time.sleep(think_time)
 
-            # 模拟鼠标移动到按钮
             actions = ActionChains(self.driver)
             actions.move_to_element(login_button).perform()
             time.sleep(random.uniform(0.5, 1))
             
-            # 点击登录按钮
             logger.info("🖱️ 点击登录按钮...")
             login_button.click()
             
-            # 等待登录完成
             logger.info("⏳ 等待登录完成...")
             time.sleep(random.uniform(6, 10))
 
-            # 处理登录后的Cloudflare验证
-            CloudflareHandler.handle_cloudflare_with_doh(self.driver)
+            EnhancedCloudflareHandler.handle_cloudflare_with_doh(self.driver)
             time.sleep(random.uniform(4, 6))
 
-            # 检查登录是否成功 - 使用增强验证
             login_success = self.robust_username_check()
             if login_success:
                 logger.success("✅ 登录成功")
-                # 登录成功后立即保存Cookies
-                self.save_cookies_to_cache()
                 return True
             else:
                 logger.error("❌ 登录失败")
-                # 保存错误页面
                 with open(f"login_error_{self.site_name}.html", "w", encoding='utf-8') as f:
                     f.write(self.driver.page_source)
                 return False
@@ -758,88 +839,32 @@ class LinuxDoBrowser:
             logger.error(f"❌ 登录过程出错: {str(e)}")
             return False
 
-    def click_like(self):
-        """点赞当前帖子 - 增强版本"""
-        try:
-            # 多种点赞按钮选择器
-            like_selectors = [
-                ".discourse-reactions-reaction-button",
-                ".like-button",
-                ".btn-like",
-                "button[title*='Like']",
-                "button[title*='点赞']"
-            ]
-            
-            for selector in like_selectors:
-                try:
-                    like_buttons = self.driver.find_elements(By.CSS_SELECTOR, selector)
-                    for like_button in like_buttons:
-                        if like_button.is_displayed() and like_button.is_enabled():
-                            # 检查是否已经点赞
-                            button_class = like_button.get_attribute('class')
-                            if 'has-like' not in button_class and 'liked' not in button_class:
-                                logger.info("👍 找到未点赞的帖子，准备点赞")
-                                # 滚动到按钮位置
-                                self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", like_button)
-                                time.sleep(1)
-                                
-                                # 模拟鼠标移动
-                                actions = ActionChains(self.driver)
-                                actions.move_to_element(like_button).perform()
-                                time.sleep(0.5)
-                                
-                                like_button.click()
-                                logger.success("✅ 点赞成功")
-                                time.sleep(random.uniform(2, 4))
-                                return True
-                            else:
-                                logger.info("ℹ️ 帖子已经点过赞了")
-                                return False
-                except:
-                    continue
-            
-            logger.info("ℹ️ 未找到可点赞的按钮")
-            return False
-            
-        except Exception as e:
-            logger.error(f"点赞失败: {str(e)}")
-            return False
-
     def simulate_reading_behavior(self, stay_time=30):
-        """模拟真实阅读行为 - 增强版本"""
+        """模拟真实阅读行为"""
         logger.info(f"📖 模拟阅读行为，停留 {stay_time:.1f} 秒...")
         start_time = time.time()
         
-        # 随机滚动次数
         scroll_count = random.randint(6, 12)
         scrolls_done = 0
         
         while time.time() - start_time < stay_time:
             try:
-                # 随机滚动距离
                 scroll_distance = random.randint(200, 800)
                 self.driver.execute_script(f"window.scrollBy(0, {scroll_distance})")
                 scrolls_done += 1
                 
-                # 随机阅读时间
-                if random.random() < 0.5:  # 50%概率长时间阅读
+                if random.random() < 0.5:
                     read_time = random.uniform(3, 8)
                     logger.debug(f"📚 深度阅读 {read_time:.1f} 秒...")
                     time.sleep(read_time)
                 else:
                     time.sleep(random.uniform(1, 3))
                 
-                # 随机回滚模拟重新阅读
                 if random.random() < 0.25:
                     back_scroll = random.randint(100, 300)
                     self.driver.execute_script(f"window.scrollBy(0, -{back_scroll})")
                     time.sleep(random.uniform(1, 2))
                 
-                # 随机点赞 (2%概率)
-                if random.random() < 0.02:
-                    self.click_like()
-                
-                # 随机暂停思考
                 if random.random() < 0.15:
                     pause_time = random.uniform(2, 5)
                     logger.debug(f"⏸️ 思考暂停 {pause_time:.1f} 秒")
@@ -852,7 +877,7 @@ class LinuxDoBrowser:
         logger.debug(f"📊 阅读完成: {scrolls_done} 次滚动")
 
     def click_topic(self):
-        """浏览主题 - 增强版本，包含更多活跃行为"""
+        """浏览主题"""
         if not BROWSE_ENABLED:
             logger.info("⏭️ 浏览功能已禁用，跳过")
             return 0
@@ -860,14 +885,12 @@ class LinuxDoBrowser:
         logger.info("🌐 开始浏览主题...")
         
         try:
-            # 访问最新页面
             self.driver.get(self.site_config['latest_url'])
             time.sleep(random.uniform(4, 6))
             
-            CloudflareHandler.handle_cloudflare_with_doh(self.driver)
+            EnhancedCloudflareHandler.handle_cloudflare_with_doh(self.driver)
             time.sleep(random.uniform(3, 5))
 
-            # 查找主题元素 - 使用更稳定的方式
             topic_elements = []
             topic_selectors = [".title", "a.title", "tr.topic-list-item a", ".topic-list-body a"]
             
@@ -886,8 +909,7 @@ class LinuxDoBrowser:
                 logger.error("❌ 没有找到主题列表")
                 return 0
 
-            # 随机选择8-100个主题浏览
-            browse_count = min(random.randint(8, 100), len(topic_elements))
+            browse_count = min(random.randint(8, 15), len(topic_elements))
             selected_indices = random.sample(range(len(topic_elements)), browse_count)
             success_count = 0
 
@@ -895,22 +917,18 @@ class LinuxDoBrowser:
 
             for i, idx in enumerate(selected_indices):
                 try:
-                    # 每次重新获取主题元素，避免stale element
                     current_topic_elements = self.driver.find_elements(By.CSS_SELECTOR, ".title")
                     if not current_topic_elements or idx >= len(current_topic_elements):
                         logger.warning("⚠️ 主题元素已更新，重新获取...")
-                        # 重新导航到最新页面
                         self.driver.get(self.site_config['latest_url'])
                         time.sleep(3)
                         current_topic_elements = self.driver.find_elements(By.CSS_SELECTOR, ".title")
                         if not current_topic_elements:
                             logger.error("❌ 重新获取主题列表失败")
                             break
-                        # 重新选择剩余的主题
                         remaining_indices = selected_indices[i:]
                         if not remaining_indices:
                             break
-                        # 更新为新的随机选择
                         new_browse_count = min(len(remaining_indices), len(current_topic_elements))
                         selected_indices = random.sample(range(len(current_topic_elements)), new_browse_count)
                         idx = selected_indices[0]
@@ -925,32 +943,28 @@ class LinuxDoBrowser:
 
                     logger.info(f"📖 浏览第 {i+1}/{browse_count} 个主题")
                     
-                    # 第3个主题浏览前进行用户名检测
-                    if i == 2:  # 第3个主题
-                        logger.info("===== 第3个主题前进行用户名检测 =====")
+                    # 第3个主题浏览前进行状态检查
+                    if i == 2:
+                        logger.info("===== 第3个主题前进行状态检查 =====")
                         if not self.robust_username_check():
-                            logger.warning("⚠️ 第3个主题前未找到用户名，尝试重新登录...")
+                            logger.warning("⚠️ 第3个主题前状态检查失败，尝试恢复...")
                             if self.ensure_logged_in():
-                                logger.success("✅ 重新登录成功，继续浏览")
-                                # 重新导航到最新页面
+                                logger.success("✅ 状态恢复成功，继续浏览")
                                 self.driver.get(self.site_config['latest_url'])
                                 time.sleep(4)
-                                # 重新获取主题元素
                                 current_topic_elements = self.driver.find_elements(By.CSS_SELECTOR, ".title")
                                 if not current_topic_elements:
-                                    logger.error("❌ 重新登录后未找到主题列表")
+                                    logger.error("❌ 状态恢复后未找到主题列表")
                                     return success_count
-                                # 重新选择剩余的主题
                                 remaining_indices = selected_indices[i:]
                                 if not remaining_indices:
-                                    logger.warning("⚠️ 重新登录后没有剩余主题可浏览")
+                                    logger.warning("⚠️ 状态恢复后没有剩余主题可浏览")
                                     return success_count
-                                # 更新为新的随机选择
                                 new_browse_count = min(len(remaining_indices), len(current_topic_elements))
                                 selected_indices = random.sample(range(len(current_topic_elements)), new_browse_count)
                                 idx = selected_indices[0]
                                 browse_count = new_browse_count
-                                i = 0  # 重置索引
+                                i = 0
                                 topic = current_topic_elements[idx]
                                 topic_url = topic.get_attribute("href")
                                 if not topic_url:
@@ -958,24 +972,20 @@ class LinuxDoBrowser:
                                 if not topic_url.startswith('http'):
                                     topic_url = self.site_config['base_url'] + topic_url
                             else:
-                                logger.error("❌ 重新登录失败，停止浏览")
+                                logger.error("❌ 状态恢复失败，停止浏览")
                                 return success_count
                     
-                    # 在同一标签页打开主题
                     self.driver.get(topic_url)
                     time.sleep(random.uniform(3, 5))
                     
-                    # 模拟真实浏览行为
-                    page_stay_time = random.uniform(30, 50)  # 增加停留时间
+                    page_stay_time = random.uniform(30, 50)
                     self.simulate_reading_behavior(page_stay_time)
                     
-                    # 返回主题列表页面
                     self.driver.back()
                     time.sleep(random.uniform(3, 5))
                     
                     success_count += 1
                     
-                    # 主题间等待
                     if i < browse_count - 1:
                         wait_time = random.uniform(12, 20)
                         logger.info(f"⏳ 浏览间隔等待 {wait_time:.1f} 秒...")
@@ -986,7 +996,6 @@ class LinuxDoBrowser:
                     continue
                 except Exception as e:
                     logger.error(f"浏览主题失败: {str(e)}")
-                    # 尝试返回主题列表页面
                     try:
                         self.driver.get(self.site_config['latest_url'])
                         time.sleep(3)
@@ -996,14 +1005,14 @@ class LinuxDoBrowser:
 
             logger.info(f"📊 浏览完成: 成功 {success_count}/{browse_count} 个主题")
             
-            # 浏览后再次验证登录状态
-            logger.info("===== 浏览主题后再次验证登录状态 =====")
+            # 浏览后状态验证和保存
+            logger.info("===== 浏览主题后状态验证 =====")
             if not self.robust_username_check():
-                logger.warning("⚠️ 浏览后登录状态验证失败，尝试重新登录...")
+                logger.warning("⚠️ 浏览后状态验证失败，尝试恢复...")
                 if self.ensure_logged_in():
-                    logger.success("✅ 重新登录成功")
+                    logger.success("✅ 状态恢复成功")
                 else:
-                    logger.error("❌ 重新登录失败")
+                    logger.error("❌ 状态恢复失败")
                     return 0
             
             return success_count
@@ -1012,28 +1021,203 @@ class LinuxDoBrowser:
             logger.error(f"浏览主题失败: {str(e)}")
             return 0
 
+    def print_connect_info(self):
+        """打印连接信息"""
+        logger.info("🔗 获取连接信息")
+        max_retries = 2
+        for retry in range(max_retries):
+            try:
+                self.driver.get(self.site_config['connect_url'])
+                time.sleep(6)
+
+                EnhancedCloudflareHandler.handle_cloudflare_with_doh(self.driver)
+                time.sleep(4)
+
+                page_source = self.driver.page_source
+                
+                if retry == max_retries - 1:
+                    with open(f"connect_debug_{self.site_name}.html", "w", encoding='utf-8') as f:
+                        f.write(page_source)
+                
+                from bs4 import BeautifulSoup
+                soup = BeautifulSoup(page_source, 'html.parser')
+                
+                tables = soup.find_all('table')
+                if not tables:
+                    logger.warning("⚠️ 未找到表格元素")
+                    if retry < max_retries - 1:
+                        continue
+                    return
+                    
+                stats_table = None
+                for table in tables:
+                    table_text = table.get_text()
+                    if any(keyword in table_text for keyword in ['访问次数', '回复的话题', '浏览的话题', '已读帖子']):
+                        stats_table = table
+                        break
+                
+                if not stats_table:
+                    logger.warning("⚠️ 未找到统计表格")
+                    if retry < max_retries - 1:
+                        continue
+                    return
+                    
+                stats_data = []
+                rows = stats_table.find_all('tr')
+                
+                for row in rows[1:]:
+                    cols = row.find_all(['td', 'th'])
+                    if len(cols) >= 3:
+                        item = cols[0].get_text(strip=True)
+                        current = cols[1].get_text(strip=True)
+                        requirement = cols[2].get_text(strip=True)
+                        
+                        col_class = cols[1].get('class', [])
+                        if isinstance(col_class, list):
+                            col_class = ' '.join(col_class)
+                        status = '✅' if 'text-green' in col_class or 'green' in col_class else '❌' if 'text-red' in col_class or 'red' in col_class else '➖'
+                        
+                        stats_data.append([item, current, requirement, status])
+                
+                if stats_data:
+                    print("\n" + "="*80)
+                    print(f"📊 {self.site_name.upper()} 连接信息")
+                    print("="*80)
+                    
+                    try:
+                        from tabulate import tabulate
+                        print(tabulate(stats_data, headers=["项目", "当前", "要求", "状态"], tablefmt="grid"))
+                    except ImportError:
+                        print(f"{'项目':<25} {'当前':<30} {'要求':<20} {'状态':<10}")
+                        print("-" * 80)
+                        for item in stats_data:
+                            print(f"{item[0]:<25} {item[1]:<30} {item[2]:<20} {item[3]:<10}")
+                    
+                    print("="*80 + "\n")
+                    
+                    passed = sum(1 for item in stats_data if item[3] == '✅')
+                    total = len(stats_data)
+                    logger.success(f"📊 连接信息统计: {passed}/{total} 项达标")
+                    
+                    for item in stats_data:
+                        if '访问天数' in item[0] or '访问次数' in item[0]:
+                            logger.info(f"📈 关键指标 - {item[0]}: {item[1]}")
+                    break
+                else:
+                    logger.warning("⚠️ 无法解析连接信息表格")
+                    if retry < max_retries - 1:
+                        continue
+
+            except Exception as e:
+                logger.error(f"获取连接信息失败: {str(e)}")
+                if retry < max_retries - 1:
+                    logger.info(f"🔄 重试获取连接信息 ({retry+1}/{max_retries})")
+                    time.sleep(5)
+
+    def perform_additional_activities(self):
+        """执行额外的活跃行为"""
+        logger.info("🎯 执行额外活跃行为提升信任等级...")
+        
+        activities_performed = 0
+        
+        try:
+            additional_pages = [
+                "/categories",
+                "/top",
+                "/about"
+            ]
+            
+            for page in additional_pages[:2]:
+                try:
+                    url = self.site_config['base_url'] + page
+                    self.driver.get(url)
+                    time.sleep(random.uniform(8, 15))
+                    self.simulate_reading_behavior(random.uniform(10, 20))
+                    activities_performed += 1
+                    logger.info(f"✅ 访问额外页面: {page}")
+                except:
+                    pass
+            
+            self.driver.get(self.site_config['latest_url'])
+            time.sleep(3)
+            self.simulate_reading_behavior(20)
+            activities_performed += 1
+            
+            logger.success(f"✅ 完成 {activities_performed} 项额外活跃行为")
+            return activities_performed
+            
+        except Exception as e:
+            logger.error(f"执行额外活跃行为失败: {str(e)}")
+            return activities_performed
+
+    def run(self):
+        """执行完整自动化流程"""
+        try:
+            logger.info(f"🚀 开始处理站点: {self.site_name}")
+
+            # 1. 登录
+            if not self.ensure_logged_in():
+                logger.error(f"❌ {self.site_name} 登录失败")
+                self.save_comprehensive_state(False, 0, {'error': '登录失败'})
+                return False
+
+            # 2. 额外活跃行为
+            additional_activities = self.perform_additional_activities()
+
+            # 3. 浏览主题
+            browse_success_count = self.click_topic()
+            if browse_success_count == 0:
+                logger.error("❌ 浏览主题失败或登录状态丢失")
+                self.save_comprehensive_state(False, 0, {'error': '浏览主题失败'})
+                return False
+
+            # 4. 获取统计信息
+            self.get_user_stats()
+
+            # 5. 打印连接信息
+            self.print_connect_info()
+
+            # 6. 保存最终状态
+            total_activities = browse_success_count + additional_activities
+            self.save_comprehensive_state(True, total_activities, {
+                'browse_count': browse_success_count,
+                'additional_activities': additional_activities,
+                'total_activities': total_activities
+            })
+
+            logger.success(f"✅ {self.site_name} 处理完成 - 总计 {total_activities} 项活动")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ {self.site_name} 执行异常: {str(e)}")
+            self.save_comprehensive_state(False, 0, {'error': str(e)})
+            return False
+            
+        finally:
+            try:
+                if self.driver:
+                    self.driver.quit()
+            except:
+                pass
+
     def get_user_stats(self):
-        """获取用户信任级别统计信息 - 从connect_url获取"""
+        """获取用户信任级别统计信息"""
         logger.info("📊 获取用户信任级别统计信息")
         
         try:
-            # 访问连接页面获取统计信息
             connect_url = self.site_config['connect_url']
             logger.info(f"📍 访问连接页面: {connect_url}")
             self.driver.get(connect_url)
             time.sleep(random.uniform(6, 9))
             
-            CloudflareHandler.handle_cloudflare_with_doh(self.driver)
+            EnhancedCloudflareHandler.handle_cloudflare_with_doh(self.driver)
             time.sleep(random.uniform(4, 6))
             
-            # 获取页面源码
             page_source = self.driver.page_source
             
-            # 解析HTML表格
             from bs4 import BeautifulSoup
             soup = BeautifulSoup(page_source, 'html.parser')
             
-            # 查找包含要求的表格
             stats_table = None
             tables = soup.find_all('table')
             for table in tables:
@@ -1043,21 +1227,18 @@ class LinuxDoBrowser:
             
             if not stats_table:
                 logger.warning("⚠️ 未找到信任级别统计表格")
-                # 尝试直接解析关键信息
                 return self._parse_stats_fallback()
             
-            # 提取表格数据
             stats_data = []
             rows = stats_table.find_all('tr')
             
-            for row in rows[1:]:  # 跳过表头
+            for row in rows[1:]:
                 cols = row.find_all(['td', 'th'])
                 if len(cols) >= 3:
                     item = cols[0].get_text(strip=True)
                     current = cols[1].get_text(strip=True)
                     requirement = cols[2].get_text(strip=True)
                     
-                    # 判断颜色（达标/未达标）
                     col_class = cols[1].get('class', [])
                     if isinstance(col_class, list):
                         col_class = ' '.join(col_class)
@@ -1070,7 +1251,6 @@ class LinuxDoBrowser:
                 print(f"📈 {self.site_name.upper()} 信任级别要求统计")
                 print("="*80)
                 
-                # 打印表格
                 try:
                     from tabulate import tabulate
                     print(tabulate(stats_data, headers=["项目", "当前", "要求", "状态"], tablefmt="grid"))
@@ -1083,7 +1263,6 @@ class LinuxDoBrowser:
                 
                 print("="*80 + "\n")
                 
-                # 统计达标情况
                 passed = sum(1 for item in stats_data if item[3] == 'green')
                 total = len(stats_data)
                 logger.success(f"📊 统计完成: {passed}/{total} 项达标")
@@ -1100,10 +1279,8 @@ class LinuxDoBrowser:
     def _parse_stats_fallback(self):
         """备用解析方法"""
         try:
-            # 直接通过XPath或CSS选择器查找关键元素
             logger.info("尝试备用解析方法...")
             
-            # 查找所有包含统计信息的元素
             stats_elements = self.driver.find_elements(By.CSS_SELECTOR, "tr")
             stats_data = []
             
@@ -1118,7 +1295,7 @@ class LinuxDoBrowser:
                 print("\n" + "="*60)
                 print(f"📈 {self.site_name.upper()} 统计信息 (备用模式)")
                 print("="*60)
-                for item in stats_data[:10]:  # 最多显示10条
+                for item in stats_data[:10]:
                     print(f"{item[0]}: {item[1]} / {item[2]}")
                 print("="*60 + "\n")
                 return True
@@ -1127,94 +1304,16 @@ class LinuxDoBrowser:
         except:
             return False
 
-    def perform_additional_activities(self):
-        """执行额外的活跃行为来提升信任等级"""
-        logger.info("🎯 执行额外活跃行为提升信任等级...")
-        
-        activities_performed = 0
-        
-        try:
-            # 1. 访问更多页面增加访问次数
-            additional_pages = [
-                "/categories",
-                "/top",
-                "/about"
-            ]
-            
-            for page in additional_pages[:2]:  # 只访问前2个额外页面
-                try:
-                    url = self.site_config['base_url'] + page
-                    self.driver.get(url)
-                    time.sleep(random.uniform(8, 15))
-                    self.simulate_reading_behavior(random.uniform(10, 20))
-                    activities_performed += 1
-                    logger.info(f"✅ 访问额外页面: {page}")
-                except:
-                    pass
-            
-            # 2. 在最新页面进行更深入的浏览
-            self.driver.get(self.site_config['latest_url'])
-            time.sleep(3)
-            self.simulate_reading_behavior(20)
-            activities_performed += 1
-            
-            logger.success(f"✅ 完成 {activities_performed} 项额外活跃行为")
-            return activities_performed
-            
-        except Exception as e:
-            logger.error(f"执行额外活跃行为失败: {str(e)}")
-            return activities_performed
-
-    def run(self):
-        """执行完整自动化流程 - 增强版本"""
-        try:
-            logger.info(f"🚀 开始处理站点: {self.site_name}")
-
-            # 1. 登录（使用增强验证）
-            if not self.ensure_logged_in():
-                logger.error(f"❌ {self.site_name} 登录失败")
-                self.generate_browser_state(False, 0)
-                return False
-
-            # 2. 执行额外活跃行为
-            additional_activities = self.perform_additional_activities()
-
-            # 3. 浏览主题 (8-10个)
-            browse_success_count = self.click_topic()
-            if browse_success_count == 0:
-                logger.error("❌ 浏览主题失败或登录状态丢失")
-                self.generate_browser_state(False, 0)
-                return False
-
-            # 4. 获取用户统计信息
-            self.get_user_stats()
-
-            # 5. 打印连接信息
-            self.print_connect_info()
-
-            # 6. 生成状态文件
-            total_activities = browse_success_count + additional_activities
-            self.generate_browser_state(True, total_activities)
-
-            logger.success(f"✅ {self.site_name} 处理完成 - 总计 {total_activities} 项活动")
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ {self.site_name} 执行异常: {str(e)}")
-            self.generate_browser_state(False, 0)
-            return False
-            
-        finally:
-            try:
-                if self.driver:
-                    self.driver.quit()
-            except:
-                pass
-
 # ======================== 主函数 ========================
 def main():
     """主函数"""
-    logger.info("🎯 Linux.Do 多站点自动化脚本启动 (增强版)")
+    logger.info("🎯 Linux.Do 多站点自动化脚本启动 (增强缓存版)")
+    
+    # 配置日志
+    logger.remove()
+    logger.add(sys.stdout, format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{message}</cyan>")
+    logger.add("automation.log", rotation="10 MB", retention=3)
+    
     os.environ.pop("DISPLAY", None)
     success_sites = []
     failed_sites = []
@@ -1233,6 +1332,21 @@ def main():
                 target_sites.append(site)
                 break
 
+    # 显示缓存状态
+    logger.info("📊 缓存状态检查:")
+    for site in target_sites:
+        site_name = site['name']
+        cache_files = [
+            f"cf_cookies_{site_name}.json",
+            f"browser_state_{site_name}.json"
+        ]
+        
+        for cache_file in cache_files:
+            if EnhancedCacheManager.is_cache_valid(cache_file, MAX_CACHE_AGE_HOURS):
+                logger.info(f"  ✅ {cache_file} - 有效")
+            else:
+                logger.info(f"  ❌ {cache_file} - 无效或不存在")
+
     for site_config in target_sites:
         site_name = site_config['name']
         credentials = SITE_CREDENTIALS.get(site_name, {})
@@ -1243,7 +1357,7 @@ def main():
 
         logger.info(f"🔧 初始化 {site_name} 浏览器")
         try:
-            browser = LinuxDoBrowser(site_config, credentials)
+            browser = EnhancedLinuxDoBrowser(site_config, credentials)
             success = browser.run()
 
             if success:
