@@ -1,4 +1,4 @@
-name: LinuxDo Multi-Site Automation
+name: LinuxDo Ultra Fast Automation
 
 on:
   workflow_dispatch:
@@ -17,58 +17,47 @@ on:
 
 env:
   PYTHON_VERSION: '3.11'
-  CACHE_PRIMARY_KEY: ${{ github.ref }}-linuxdo-cache
+  CACHE_PRIMARY_KEY: ${{ github.ref }}-linuxdo-fast-cache
 
 jobs:
-  automate:
+  automate-fast:
     runs-on: ubuntu-22.04
-    timeout-minutes: 45  # 增加超时时间
+    timeout-minutes: 25  # 大幅减少超时时间
 
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: 恢复综合缓存
+    - name: 恢复缓存
       uses: actions/cache@v3
       id: cache-restore
       with:
         path: |
           *.json
-          *.pkl
           cache/
           sessions/
-          cloudflare/
-          browser_states/
         key: ${{ env.CACHE_PRIMARY_KEY }}-${{ github.sha }}
         restore-keys: |
           ${{ env.CACHE_PRIMARY_KEY }}-
-          ${{ runner.os }}-linuxdo-
 
     - name: Setup Python
       uses: actions/setup-python@v4
       with:
         python-version: ${{ env.PYTHON_VERSION }}
 
-    - name: Install system dependencies for Chromium
+    - name: Install system dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y \
           libnss3 \
           libatk-bridge2.0-0 \
-          libdrm2 \
-          libxkbcommon0 \
+          libx11-xcb1 \
           libxcomposite1 \
           libxdamage1 \
           libxrandr2 \
           libgbm1 \
           libxss1 \
-          libasound2 \
-          libatspi2.0-0 \
-          libcups2 \
-          libx11-xcb1 \
-          fonts-liberation \
-          libappindicator3-1 \
-          xdg-utils
+          libasound2
 
     - name: Install Chrome
       run: |
@@ -76,103 +65,48 @@ jobs:
         echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
         sudo apt-get update
         sudo apt-get install -y google-chrome-stable
-        google-chrome --version
 
     - name: Install Python dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install beautifulsoup4 requests loguru tabulate DrissionPage
+        pip install selenium loguru requests
 
     - name: Create turnstilePatch extension
       run: |
-        echo "🔧 运行setup_directories.py创建turnstilePatch扩展..."
         python setup_directories.py
 
-    - name: Run enhanced automation script
+    - name: Run ultra fast automation script
       env:
         LINUXDO_USERNAME: ${{ secrets.LINUXDO_USERNAME }}
         LINUXDO_PASSWORD: ${{ secrets.LINUXDO_PASSWORD }}
         IDCFLARE_USERNAME: ${{ secrets.IDCFLARE_USERNAME }}
         IDCFLARE_PASSWORD: ${{ secrets.IDCFLARE_PASSWORD }}
-        GITHUB_ACTIONS: 'true'
-        DOH_SERVER: 'https://ld.ddd.oaifree.com/query-dns'
         SITE_SELECTOR: ${{ github.event.inputs.site_selector || 'all' }}
-        MAX_CACHE_AGE_HOURS: '168'  # 7天缓存
+        MAX_CACHE_AGE_HOURS: '168'
       run: |
-        echo "🚀 开始执行增强自动化脚本..."
+        echo "⚡ 开始执行极速自动化脚本..."
         echo "站点选择: $SITE_SELECTOR"
-        echo "当前时间: $(date)"
-        echo "DoH服务器: $DOH_SERVER"
-        echo "缓存年龄限制: $MAX_CACHE_AGE_HOURS 小时"
-        echo "缓存恢复状态: ${{ steps.cache-restore.outputs.cache-hit == 'true' && '✅ 已命中' || '❌ 未命中' }}"
-        python main.py
-        echo "✅ 脚本执行完成"
+        echo "缓存恢复: ${{ steps.cache-restore.outputs.cache-hit == 'true' && '✅' || '❌' }}"
+        python main_fast.py
+        echo "✅ 极速脚本执行完成"
 
-    - name: 显示缓存文件状态
-      if: always()
-      run: |
-        echo "📋 缓存文件状态:"
-        echo "🔹 Cookies文件:"
-        ls -la cf_cookies_*.json 2>/dev/null || echo "无Cookies文件"
-        echo "🔹 浏览器状态文件:"
-        ls -la browser_state_*.json 2>/dev/null || echo "无状态文件"
-        echo "🔹 会话文件:"
-        ls -la session_*.json 2>/dev/null || echo "无会话文件"
-        echo "🔹 Cloudflare状态文件:"
-        ls -la cloudflare/ 2>/dev/null || echo "无Cloudflare状态文件"
-        echo "🔹 缓存目录:"
-        ls -la cache/ 2>/dev/null || echo "无缓存目录"
-        echo "🔹 会话目录:"
-        ls -la sessions/ 2>/dev/null || echo "无会话目录"
-
-    - name: 保存综合缓存
+    - name: 保存缓存
       if: always()
       uses: actions/cache@v3
       with:
         path: |
           *.json
-          *.pkl
           cache/
           sessions/
-          cloudflare/
-          browser_states/
         key: ${{ env.CACHE_PRIMARY_KEY }}-${{ github.sha }}
-        restore-keys: |
-          ${{ env.CACHE_PRIMARY_KEY }}-
 
-    - name: Upload session data as artifact
+    - name: Upload session data
       uses: actions/upload-artifact@v4
       if: always()
       with:
-        name: linuxdo-comprehensive-session-data
+        name: linuxdo-fast-session-data
         path: |
           cf_cookies_*.json
           browser_state_*.json
           session_*.json
-          cache/
-          sessions/
-          cloudflare/
-          browser_states/
         retention-days: 14
-        overwrite: true
-
-    - name: Upload debug files
-      uses: actions/upload-artifact@v4
-      if: always()
-      with:
-        name: automation-debug-files
-        path: |
-          *.html
-          *.log
-        retention-days: 7
-
-    - name: 清理过期缓存文件
-      if: always()
-      run: |
-        echo "🧹 清理过期缓存文件..."
-        # 清理30天前的缓存文件
-        find . -name "*.json" -mtime +30 -delete 2>/dev/null || true
-        find . -name "*.html" -mtime +7 -delete 2>/dev/null || true
-        find . -name "*.log" -mtime +3 -delete 2>/dev/null || true
-        echo "✅ 缓存清理完成"
