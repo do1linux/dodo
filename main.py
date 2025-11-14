@@ -694,7 +694,7 @@ class OptimizedLinuxDoBrowser:
                 return 0
 
             # 减少浏览数量
-            browse_count = min(5, len(topic_elements))  # 只浏览5个主题
+            browse_count = min(8, len(topic_elements))  # 只浏览8个主题
             selected_indices = random.sample(range(len(topic_elements)), browse_count)
             success_count = 0
 
@@ -950,3 +950,4 @@ def main_optimized():
 
 if __name__ == "__main__":
     main_optimized()
+
