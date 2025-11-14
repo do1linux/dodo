@@ -87,7 +87,7 @@ jobs:
         echo "⚡ 开始执行极速自动化脚本..."
         echo "站点选择: $SITE_SELECTOR"
         echo "缓存恢复: ${{ steps.cache-restore.outputs.cache-hit == 'true' && '✅' || '❌' }}"
-        python main_fast.py
+        python main.py
         echo "✅ 极速脚本执行完成"
 
     - name: 保存缓存
