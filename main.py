@@ -35,7 +35,9 @@ SITES = [
         'login_url': 'https://linux.do/login',
         'latest_url': 'https://linux.do/latest',
         'connect_url': 'https://connect.linux.do',
-        'user_url': 'https://linux.do/u'
+        'user_url': 'https://linux.do/u',
+        # 必须登录才能访问的测试链接
+        'private_topic_url': 'https://linux.do/t/topic/1164438'
     },
     {
         'name': 'idcflare',
@@ -43,7 +45,9 @@ SITES = [
         'login_url': 'https://idcflare.com/login',
         'latest_url': 'https://idcflare.com/latest',
         'connect_url': 'https://connect.idcflare.com',
-        'user_url': 'https://idcflare.com/u'
+        'user_url': 'https://idcflare.com/u',
+        # 需要为idcflare也设置一个私有主题链接
+        'private_topic_url': 'https://idcflare.com/t/topic/1'  # 需要替换为实际的私有主题
     }
 ]
 
@@ -168,46 +172,50 @@ class FastCacheManager:
         except:
             return False
 
-# ======================== 极速Cloudflare处理器 ========================
-class FastCloudflareHandler:
+# ======================== 改进的Cloudflare处理器 ========================
+class ImprovedCloudflareHandler:
     @staticmethod
-    def quick_bypass_check(driver, timeout=8):
-        """极速绕过Cloudflare检查"""
+    def wait_for_cloudflare(driver, timeout=30):
+        """等待Cloudflare验证通过"""
         start_time = time.time()
+        logger.info("🛡️ 等待Cloudflare验证...")
         
-        for attempt in range(2):  # 只尝试2次
+        while time.time() - start_time < timeout:
             try:
                 current_url = driver.current_url
+                page_title = driver.title.lower() if driver.title else ""
                 page_source = driver.page_source.lower() if driver.page_source else ""
                 
-                # 检查是否是Cloudflare页面
+                # 检查是否还在Cloudflare验证页面
                 cloudflare_indicators = ["just a moment", "checking", "please wait", "ddos protection"]
-                is_cloudflare_page = any(indicator in page_source for indicator in cloudflare_indicators)
+                is_cloudflare_page = any(indicator in page_title for indicator in cloudflare_indicators) or any(indicator in page_source for indicator in cloudflare_indicators)
                 
                 if not is_cloudflare_page:
+                    logger.success("✅ Cloudflare验证通过")
                     return True
                 
-                # 如果是Cloudflare页面，等待很短时间
-                wait_time = 2
-                if time.time() - start_time > timeout:
-                    break
-                    
-                time.sleep(wait_time)
+                # 显示等待进度
+                elapsed = time.time() - start_time
+                remaining = timeout - elapsed
+                logger.info(f"⏳ 等待Cloudflare验证... ({elapsed:.0f}/{timeout}秒)")
                 
-                # 第一次尝试后刷新
-                if attempt == 0:
+                time.sleep(3)
+                
+                # 每10秒刷新一次
+                if int(elapsed) % 10 == 0:
                     try:
                         driver.refresh()
-                        time.sleep(1)
+                        logger.info("🔄 刷新页面")
+                        time.sleep(2)
                     except:
                         pass
                         
-            except:
-                time.sleep(1)
+            except Exception as e:
+                logger.debug(f"Cloudflare检查异常: {str(e)}")
+                time.sleep(3)
 
-        # 无论如何都继续，不阻塞流程
-        logger.info("⏩ 跳过Cloudflare等待，继续流程")
-        return True
+        logger.warning(f"⚠️ Cloudflare验证超时 ({timeout}秒)")
+        return False
 
 # ======================== 改进的浏览器类 ========================
 class ImprovedLinuxDoBrowser:
@@ -283,44 +291,51 @@ class ImprovedLinuxDoBrowser:
             return True
         return False
 
-    def verify_username_presence(self, max_retries=2):
-        """核心用户名验证 - 登录成功的唯一标准"""
-        logger.info("🔍 验证用户名存在...")
+    def verify_login_status(self, max_retries=2):
+        """核心登录状态验证 - 使用私有主题链接作为主要标准"""
+        logger.info("🔍 验证登录状态...")
         
         for retry in range(max_retries):
             try:
-                # 尝试访问用户主页
-                user_url = f"{self.site_config['user_url']}/{self.username}"
-                logger.info(f"📍 访问用户主页: {user_url}")
-                self.driver.get(user_url)
+                # 主要方案：访问必须登录才能访问的私有主题
+                private_url = self.site_config['private_topic_url']
+                logger.info(f"📍 访问私有主题: {private_url}")
+                self.driver.get(private_url)
                 time.sleep(3)
                 
-                # 快速Cloudflare检查
-                FastCloudflareHandler.quick_bypass_check(self.driver, 5)
+                # 等待Cloudflare验证
+                ImprovedCloudflareHandler.wait_for_cloudflare(self.driver, 20)
                 time.sleep(2)
                 
-                # 获取页面内容并检查用户名
+                # 获取页面内容
                 page_content = self.driver.page_source
                 current_url = self.driver.current_url
                 
-                # 严格检查用户名是否存在
-                if self.username.lower() in page_content.lower():
-                    logger.success(f"✅ 用户名验证成功: {self.username}")
+                # 检查是否能够访问私有主题
+                error_indicators = [
+                    "糟糕！该页面不存在或者是一个不公开页面。",
+                    "Oops! This page doesn't exist or is not a public page.",
+                    "page doesn't exist",
+                    "not a public page"
+                ]
+                
+                # 如果页面中没有错误提示，说明登录成功
+                has_error = any(indicator in page_content for indicator in error_indicators)
+                
+                if not has_error:
+                    logger.success("✅ 私有主题访问成功 - 登录状态有效")
                     return True
                 else:
-                    logger.warning(f"❌ 用户名验证失败 (尝试 {retry + 1}/{max_retries})")
+                    logger.warning(f"❌ 私有主题访问失败 - 登录状态无效 (尝试 {retry + 1}/{max_retries})")
                     
-                    # 如果是最后一次尝试，检查当前URL和页面内容
-                    if retry == max_retries - 1:
-                        logger.debug(f"当前URL: {current_url}")
-                        # 检查是否有登录相关的重定向
-                        if 'login' in current_url or 'signin' in current_url:
-                            logger.error("❌ 被重定向到登录页面，会话无效")
-                        else:
-                            logger.error("❌ 在页面中找不到用户名")
+                    # 备用方案：检查用户主页
+                    logger.info("🔄 尝试备用验证方案...")
+                    if self.verify_username_backup():
+                        logger.success("✅ 备用验证成功 - 登录状态有效")
+                        return True
                     
             except Exception as e:
-                logger.error(f"用户名验证异常: {str(e)}")
+                logger.error(f"登录状态验证异常: {str(e)}")
             
             # 如果不是最后一次尝试，等待后重试
             if retry < max_retries - 1:
@@ -328,13 +343,33 @@ class ImprovedLinuxDoBrowser:
                 logger.info(f"🔄 等待 {wait_time:.1f} 秒后重试...")
                 time.sleep(wait_time)
         
+        logger.error("❌ 所有登录状态验证方法均失败")
         return False
+
+    def verify_username_backup(self):
+        """备用用户名验证方案"""
+        try:
+            # 访问用户主页作为备用验证
+            user_url = f"{self.site_config['user_url']}/{self.username}"
+            logger.info(f"📍 备用验证: 访问用户主页")
+            self.driver.get(user_url)
+            time.sleep(2)
+            
+            ImprovedCloudflareHandler.wait_for_cloudflare(self.driver, 15)
+            time.sleep(1)
+            
+            page_content = self.driver.page_source
+            return self.username.lower() in page_content.lower()
+                
+        except Exception as e:
+            logger.debug(f"备用验证异常: {str(e)}")
+            return False
 
     def ensure_logged_in_fast(self):
         """确保登录"""
         # 尝试恢复状态
         if not FORCE_LOGIN_EVERY_TIME and self.load_state():
-            if self.verify_username_presence():
+            if self.verify_login_status():
                 logger.info("✅ 缓存登录成功")
                 return True
 
@@ -348,8 +383,8 @@ class ImprovedLinuxDoBrowser:
             self.driver.get(self.site_config['login_url'])
             time.sleep(2)
 
-            # 快速绕过Cloudflare
-            FastCloudflareHandler.quick_bypass_check(self.driver, 5)
+            # 等待Cloudflare验证
+            ImprovedCloudflareHandler.wait_for_cloudflare(self.driver, 30)
             time.sleep(1)
 
             # 快速查找表单
@@ -369,13 +404,13 @@ class ImprovedLinuxDoBrowser:
             login_button.click()
             time.sleep(3)
 
-            # 核心验证：检查用户名是否存在
-            if self.verify_username_presence():
+            # 核心验证：使用私有主题链接检查登录状态
+            if self.verify_login_status():
                 logger.info("✅ 登录成功")
                 self.save_state(True, 0)
                 return True
             else:
-                logger.error("❌ 登录失败 - 用户名验证未通过")
+                logger.error("❌ 登录失败 - 私有主题验证未通过")
                 return False
 
         except Exception as e:
@@ -391,7 +426,7 @@ class ImprovedLinuxDoBrowser:
         try:
             self.driver.get(self.site_config['latest_url'])
             time.sleep(3)
-            FastCloudflareHandler.quick_bypass_check(self.driver, 3)
+            ImprovedCloudflareHandler.wait_for_cloudflare(self.driver, 20)
 
             # 查找主题
             topic_elements = []
@@ -512,147 +547,194 @@ class ImprovedLinuxDoBrowser:
         
         logger.debug(f"📊 深度阅读完成: {scroll_actions} 次滚动, {read_sessions} 次深度阅读")
 
-    def analyze_connect_page_structure(self):
-        """分析连接页面的结构"""
-        logger.info("🔍 分析连接页面结构...")
+    def get_connect_info_properly(self):
+        """正确获取连接信息 - 确保通过Cloudflare验证"""
+        logger.info("🔗 获取连接信息...")
         
         try:
-            # 获取页面所有元素信息
-            page_title = self.driver.title
+            # 直接访问连接页面
+            connect_url = self.site_config['connect_url']
+            logger.info(f"📍 访问连接页面: {connect_url}")
+            self.driver.get(connect_url)
+            time.sleep(5)
+            
+            # 等待Cloudflare验证完成
+            if not ImprovedCloudflareHandler.wait_for_cloudflare(self.driver, 30):
+                logger.warning("⚠️ Cloudflare验证可能未完成，继续尝试...")
+            
+            # 检查当前页面是否是连接页面
             current_url = self.driver.current_url
-            page_source = self.driver.page_source[:2000]  # 只取前2000字符用于分析
+            page_title = self.driver.title.lower() if self.driver.title else ""
             
-            logger.info(f"📄 页面标题: {page_title}")
+            logger.info(f"📄 页面标题: {self.driver.title}")
             logger.info(f"🌐 当前URL: {current_url}")
-            logger.info(f"📝 页面源码预览: {page_source[:500]}...")
             
+            # 如果被重定向到其他页面，尝试重新访问
+            if 'connect' not in current_url and 'just a moment' in page_title:
+                logger.warning("⚠️ 被Cloudflare拦截，等待后重试...")
+                time.sleep(10)
+                self.driver.get(connect_url)
+                ImprovedCloudflareHandler.wait_for_cloudflare(self.driver, 30)
+            
+            # 分析页面内容
+            self.analyze_connect_page_content()
+                
+        except Exception as e:
+            logger.error(f"获取连接信息失败: {str(e)}")
+
+    def analyze_connect_page_content(self):
+        """分析连接页面内容"""
+        logger.info("🔍 分析连接页面内容...")
+        
+        try:
+            # 获取完整的页面源码用于分析
+            page_source = self.driver.page_source
+            current_url = self.driver.current_url
+            
+            # 检查页面是否包含连接信息关键词
+            connect_keywords = ['访问次数', '回复', '浏览', '已读', '访问天数', 'trust level', '统计', '进度']
+            has_connect_info = any(keyword in page_source for keyword in connect_keywords)
+            
+            if not has_connect_info:
+                logger.warning("⚠️ 页面不包含连接信息关键词")
+                # 保存页面用于调试
+                try:
+                    with open(f"connect_debug_{self.site_name}.html", "w", encoding='utf-8') as f:
+                        f.write(page_source)
+                    logger.info(f"💾 已保存页面源码: connect_debug_{self.site_name}.html")
+                except:
+                    pass
+                return
+            
+            # 查找所有可能的统计元素
+            self.find_statistics_elements()
+            
+        except Exception as e:
+            logger.error(f"分析页面内容失败: {str(e)}")
+
+    def find_statistics_elements(self):
+        """查找统计信息元素"""
+        logger.info("🔍 查找统计信息元素...")
+        
+        # 尝试多种可能的统计信息容器
+        stat_containers = [
+            "table",
+            ".user-stats",
+            ".stats",
+            ".progress-bar",
+            ".trust-level",
+            ".user-statistics",
+            "[class*='stat']",
+            "[class*='progress']"
+        ]
+        
+        found_elements = []
+        
+        for selector in stat_containers:
+            try:
+                elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                if elements:
+                    logger.info(f"✅ 找到 {len(elements)} 个 '{selector}' 元素")
+                    for i, elem in enumerate(elements[:3]):  # 只检查前3个
+                        elem_text = elem.text.strip()
+                        if elem_text and len(elem_text) > 10:  # 只显示有内容的元素
+                            logger.info(f"📋 {selector}[{i}]: {elem_text[:100]}...")
+                            found_elements.append((selector, elem_text))
+            except Exception as e:
+                logger.debug(f"查找 '{selector}' 失败: {str(e)}")
+        
+        if found_elements:
+            # 尝试提取表格数据
+            self.extract_table_data()
+        else:
+            logger.warning("⚠️ 未找到明显的统计信息元素")
+
+    def extract_table_data(self):
+        """提取表格数据"""
+        try:
             # 查找所有表格
             tables = self.driver.find_elements(By.TAG_NAME, "table")
             logger.info(f"📊 找到 {len(tables)} 个表格")
             
             for i, table in enumerate(tables):
                 try:
-                    table_html = table.get_attribute('outerHTML')[:500]
                     table_text = table.text.strip()
-                    logger.info(f"📋 表格 {i+1} 文本预览: {table_text[:200]}...")
-                    logger.info(f"🔧 表格 {i+1} HTML预览: {table_html}")
-                    
-                    # 检查表格是否有连接信息关键词
-                    connect_keywords = ['访问次数', '回复', '浏览', '已读', '访问天数', 'trust level']
-                    has_connect_info = any(keyword in table_text for keyword in connect_keywords)
-                    
-                    if has_connect_info:
-                        logger.success(f"✅ 表格 {i+1} 可能包含连接信息")
-                        # 解析这个表格
-                        self.parse_connect_table(table, i+1)
-                    else:
-                        logger.info(f"❌ 表格 {i+1} 不包含连接信息")
+                    if not table_text:
+                        continue
                         
-                except Exception as e:
-                    logger.debug(f"分析表格 {i+1} 失败: {str(e)}")
-            
-            # 如果没有找到表格，尝试查找其他可能包含统计信息的元素
-            if not tables:
-                logger.info("🔍 尝试查找其他统计元素...")
-                
-                # 查找包含统计信息的div或其他元素
-                stats_selectors = [
-                    ".stats", ".user-stats", ".trust-level", 
-                    ".progress-bar", ".user-info", ".profile-stats"
-                ]
-                
-                for selector in stats_selectors:
-                    try:
-                        elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
-                        if elements:
-                            logger.info(f"✅ 找到 {len(elements)} 个 '{selector}' 元素")
-                            for elem in elements[:2]:  # 只检查前2个
-                                logger.info(f"📋 {selector} 内容: {elem.text[:100]}...")
-                    except:
-                        pass
-                        
-        except Exception as e:
-            logger.error(f"分析页面结构失败: {str(e)}")
-
-    def parse_connect_table(self, table, table_index):
-        """解析连接信息表格"""
-        try:
-            rows = table.find_elements(By.TAG_NAME, "tr")
-            logger.info(f"📊 表格 {table_index} 有 {len(rows)} 行")
-            
-            info = []
-            
-            for row_index, row in enumerate(rows):
-                try:
-                    # 尝试多种方式获取单元格
-                    cells_by_td = row.find_elements(By.TAG_NAME, "td")
-                    cells_by_th = row.find_elements(By.TAG_NAME, "th")
-                    cells = cells_by_td if cells_by_td else cells_by_th
+                    logger.info(f"📋 表格 {i+1} 内容:")
+                    logger.info("-" * 50)
                     
-                    if len(cells) >= 2:  # 至少需要2列数据
-                        row_data = []
-                        for cell_index, cell in enumerate(cells):
-                            cell_text = cell.text.strip()
-                            row_data.append(cell_text)
-                            if cell_index >= 2:  # 只取前3列
-                                break
-                        
-                        # 如果只有2列，用空字符串填充第3列
-                        while len(row_data) < 3:
-                            row_data.append("")
+                    # 提取表格行
+                    rows = table.find_elements(By.TAG_NAME, "tr")
+                    table_data = []
+                    
+                    for row_idx, row in enumerate(rows):
+                        try:
+                            cells = row.find_elements(By.TAG_NAME, "td")
+                            if not cells:
+                                cells = row.find_elements(By.TAG_NAME, "th")
                             
-                        info.append(row_data)
-                        logger.info(f"📝 行 {row_index}: {row_data}")
+                            if cells:
+                                row_data = [cell.text.strip() for cell in cells]
+                                table_data.append(row_data)
+                                logger.info(f"行 {row_idx}: {row_data}")
+                        except:
+                            continue
+                    
+                    # 如果表格有数据，尝试格式化输出
+                    if table_data and len(table_data) > 1:
+                        self.format_table_output(table_data, i+1)
                         
+                    logger.info("-" * 50)
+                    
                 except Exception as e:
-                    logger.debug(f"解析行 {row_index} 失败: {str(e)}")
-            
-            if info:
-                print(f"\n📊 {self.site_name.upper()} 连接信息 (表格 {table_index}):")
-                print("=" * 70)
-                try:
-                    from tabulate import tabulate
-                    print(tabulate(info, headers=["项目", "当前", "要求/状态"], tablefmt="grid"))
-                except ImportError:
-                    for item in info:
-                        print(f"{item[0]:<25} {item[1]:<20} {item[2]:<20}")
-                print("=" * 70)
-                logger.success(f"✅ 成功解析 {len(info)} 项连接信息")
-            else:
-                logger.warning(f"❌ 表格 {table_index} 没有解析出有效数据")
-                
+                    logger.debug(f"解析表格 {i+1} 失败: {str(e)}")
+                    
         except Exception as e:
-            logger.error(f"解析表格失败: {str(e)}")
+            logger.error(f"提取表格数据失败: {str(e)}")
 
-    def get_connect_info_enhanced(self):
-        """增强的连接信息获取"""
-        logger.info("🔗 增强获取连接信息...")
-        
+    def format_table_output(self, table_data, table_index):
+        """格式化表格输出"""
         try:
-            self.driver.get(self.site_config['connect_url'])
-            time.sleep(4)
+            # 过滤空行
+            table_data = [row for row in table_data if any(cell.strip() for cell in row)]
             
-            # 快速Cloudflare检查
-            FastCloudflareHandler.quick_bypass_check(self.driver, 5)
-            time.sleep(2)
-            
-            # 首先验证登录状态
-            if not self.verify_username_presence(max_retries=1):
-                logger.warning("⚠️ 获取连接信息前登录状态验证失败")
+            if not table_data or len(table_data) < 2:
                 return
-            
-            # 分析页面结构
-            self.analyze_connect_page_structure()
                 
+            print(f"\n📊 {self.site_name.upper()} 连接信息 (表格 {table_index}):")
+            print("=" * 70)
+            
+            # 尝试使用tabulate格式化输出
+            try:
+                from tabulate import tabulate
+                headers = table_data[0] if any(cell for cell in table_data[0]) else []
+                data = table_data[1:] if headers else table_data
+                
+                if headers and data:
+                    print(tabulate(data, headers=headers, tablefmt="grid"))
+                else:
+                    # 如果没有明确的表头，直接输出所有行
+                    for row in table_data:
+                        print(" | ".join(f"{cell:<20}" for cell in row))
+            except ImportError:
+                # 如果没有tabulate，简单格式化
+                for row in table_data:
+                    print(" | ".join(f"{cell:<20}" for cell in row))
+            
+            print("=" * 70)
+            logger.success(f"✅ 成功显示表格 {table_index} 的数据")
+            
         except Exception as e:
-            logger.debug(f"获取连接信息失败: {str(e)}")
+            logger.debug(f"格式化表格输出失败: {str(e)}")
 
     def run_enhanced(self):
         """执行增强的自动化流程"""
         try:
             logger.info(f"🚀 开始处理: {self.site_name}")
 
-            # 1. 登录（核心：用户名验证）
+            # 1. 登录（核心：私有主题验证）
             if not self.ensure_logged_in_fast():
                 logger.error(f"❌ {self.site_name} 登录失败")
                 return False
@@ -662,14 +744,14 @@ class ImprovedLinuxDoBrowser:
             if browse_count == 0:
                 logger.warning(f"⚠️ {self.site_name} 浏览主题失败")
 
-            # 3. 浏览后再次验证登录状态
+            # 3. 浏览后再次验证登录状态（使用私有主题）
             logger.info("🔍 浏览后验证登录状态...")
-            if not self.verify_username_presence():
+            if not self.verify_login_status(max_retries=1):
                 logger.error("❌ 浏览后登录状态丢失")
                 return False
 
-            # 4. 增强获取连接信息（包含页面结构分析）
-            self.get_connect_info_enhanced()
+            # 4. 正确获取连接信息
+            self.get_connect_info_properly()
 
             # 5. 保存状态
             self.save_state(True, browse_count)
