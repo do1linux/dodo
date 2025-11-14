@@ -84,83 +84,10 @@ jobs:
         pip install -r requirements.txt
         pip install beautifulsoup4 requests loguru tabulate DrissionPage
 
-    - name: Create enhanced turnstilePatch extension
+    - name: Create turnstilePatch extension
       run: |
-        echo "🔧 创建增强的turnstilePatch扩展..."
-        mkdir -p turnstilePatch
-        cat > turnstilePatch/manifest.json << 'EOF'
-        {
-          "manifest_version": 3,
-          "name": "Turnstile Patch",
-          "version": "1.0",
-          "description": "Enhanced patch for Cloudflare Turnstile",
-          "content_scripts": [{
-            "matches": ["https://*.linux.do/*", "https://*.idcflare.com/*"],
-            "js": ["content.js"],
-            "run_at": "document_start",
-            "all_frames": true
-          }],
-          "permissions": []
-        }
-        EOF
-        
-        cat > turnstilePatch/content.js << 'EOF'
-        // Enhanced Cloudflare Turnstile Patch
-        (function() {
-          'use strict';
-          
-          console.log('🔧 Enhanced Turnstile Patch 已加载');
-          
-          // 隐藏webdriver属性
-          Object.defineProperty(navigator, 'webdriver', {
-            get: () => undefined,
-          });
-          
-          // 修改plugins属性
-          Object.defineProperty(navigator, 'plugins', {
-            get: () => [1, 2, 3, 4, 5],
-          });
-          
-          // 修改languages属性
-          Object.defineProperty(navigator, 'languages', {
-            get: () => ['zh-CN', 'zh', 'en', 'en-US'],
-          });
-          
-          // 修改mimeTypes
-          Object.defineProperty(navigator, 'mimeTypes', {
-            get: () => [1, 2],
-          });
-          
-          // 覆盖permissions API
-          const originalQuery = window.navigator.permissions.query;
-          window.navigator.permissions.query = (parameters) => (
-            parameters.name === 'notifications' ?
-              Promise.resolve({ state: Notification.permission }) :
-              originalQuery(parameters)
-          );
-          
-          // 覆盖connection属性
-          delete navigator.__proto__.connection;
-          
-          // 添加chrome runtime对象
-          if (!window.chrome) {
-            window.chrome = {
-              runtime: {},
-              loadTimes: function() {},
-              csi: function() {},
-              app: {}
-            };
-          }
-          
-          // 覆盖屏幕属性
-          Object.defineProperty(screen, 'availWidth', { get: () => 1920 });
-          Object.defineProperty(screen, 'availHeight', { get: () => 1080 });
-          Object.defineProperty(screen, 'width', { get: () => 1920 });
-          Object.defineProperty(screen, 'height', { get: () => 1080 });
-          
-        })();
-        EOF
-        echo "✅ 增强扩展创建完成"
+        echo "🔧 运行setup_directories.py创建turnstilePatch扩展..."
+        python setup_directories.py
 
     - name: Run enhanced automation script
       env:
