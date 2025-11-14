@@ -283,28 +283,58 @@ class FastLinuxDoBrowser:
             return True
         return False
 
-    def quick_login_check(self):
-        """快速登录检查"""
-        try:
-            # 直接检查用户主页
-            user_url = f"{self.site_config['user_url']}/{self.username}"
-            self.driver.get(user_url)
-            time.sleep(2)
-            
-            FastCloudflareHandler.quick_bypass_check(self.driver, 5)
-            time.sleep(1)
-            
-            page_content = self.driver.page_source
-            return self.username.lower() in page_content.lower()
+    def verify_username_presence(self, max_retries=2):
+        """核心用户名验证 - 登录成功的唯一标准"""
+        logger.info("🔍 验证用户名存在...")
+        
+        for retry in range(max_retries):
+            try:
+                # 尝试访问用户主页
+                user_url = f"{self.site_config['user_url']}/{self.username}"
+                logger.info(f"📍 访问用户主页: {user_url}")
+                self.driver.get(user_url)
+                time.sleep(3)
                 
-        except:
-            return False
+                # 快速Cloudflare检查
+                FastCloudflareHandler.quick_bypass_check(self.driver, 5)
+                time.sleep(2)
+                
+                # 获取页面内容并检查用户名
+                page_content = self.driver.page_source
+                current_url = self.driver.current_url
+                
+                # 严格检查用户名是否存在
+                if self.username.lower() in page_content.lower():
+                    logger.success(f"✅ 用户名验证成功: {self.username}")
+                    return True
+                else:
+                    logger.warning(f"❌ 用户名验证失败 (尝试 {retry + 1}/{max_retries})")
+                    
+                    # 如果是最后一次尝试，检查当前URL和页面内容
+                    if retry == max_retries - 1:
+                        logger.debug(f"当前URL: {current_url}")
+                        # 检查是否有登录相关的重定向
+                        if 'login' in current_url or 'signin' in current_url:
+                            logger.error("❌ 被重定向到登录页面，会话无效")
+                        else:
+                            logger.error("❌ 在页面中找不到用户名")
+                    
+            except Exception as e:
+                logger.error(f"用户名验证异常: {str(e)}")
+            
+            # 如果不是最后一次尝试，等待后重试
+            if retry < max_retries - 1:
+                wait_time = random.uniform(3, 5)
+                logger.info(f"🔄 等待 {wait_time:.1f} 秒后重试...")
+                time.sleep(wait_time)
+        
+        return False
 
     def ensure_logged_in_fast(self):
         """确保登录 - 极速版本"""
         # 尝试恢复状态
         if not FORCE_LOGIN_EVERY_TIME and self.load_state():
-            if self.quick_login_check():
+            if self.verify_username_presence():
                 logger.info("✅ 缓存登录成功")
                 return True
 
@@ -339,13 +369,13 @@ class FastLinuxDoBrowser:
             login_button.click()
             time.sleep(3)
 
-            # 快速检查登录状态
-            if self.quick_login_check():
+            # 核心验证：检查用户名是否存在
+            if self.verify_username_presence():
                 logger.info("✅ 登录成功")
                 self.save_state(True, 0)
                 return True
             else:
-                logger.error("❌ 登录失败")
+                logger.error("❌ 登录失败 - 用户名验证未通过")
                 return False
 
         except Exception as e:
@@ -355,7 +385,8 @@ class FastLinuxDoBrowser:
     def quick_browse_topics(self):
         """快速浏览主题"""
         if not BROWSE_ENABLED:
-            return 3  # 返回模拟的成功计数
+            logger.info("⏭️ 浏览功能已禁用")
+            return 0
 
         try:
             self.driver.get(self.site_config['latest_url'])
@@ -375,10 +406,11 @@ class FastLinuxDoBrowser:
                     continue
 
             if not topic_elements:
+                logger.error("❌ 没有找到主题列表")
                 return 0
 
-            # 只浏览5个主题，每个主题快速访问
-            browse_count = min(5, len(topic_elements))
+            # 只浏览3个主题，每个主题快速访问
+            browse_count = min(3, len(topic_elements))
             success_count = 0
 
             for i in range(browse_count):
@@ -395,7 +427,8 @@ class FastLinuxDoBrowser:
                     if not topic_url.startswith('http'):
                         topic_url = self.site_config['base_url'] + topic_url
 
-                    # 快速访问主题
+                    logger.info(f"📖 浏览第 {i+1}/{browse_count} 个主题")
+                    
                     self.driver.get(topic_url)
                     time.sleep(2)
                     
@@ -428,24 +461,42 @@ class FastLinuxDoBrowser:
             return 0
 
     def get_connect_info_fast(self):
-        """快速获取连接信息"""
+        """快速获取连接信息 - 改进版本"""
+        logger.info("🔗 尝试获取连接信息...")
+        
         try:
             self.driver.get(self.site_config['connect_url'])
             time.sleep(3)
+            
+            # 快速Cloudflare检查
             FastCloudflareHandler.quick_bypass_check(self.driver, 5)
             time.sleep(2)
+            
+            # 首先验证登录状态
+            if not self.verify_username_presence(max_retries=1):
+                logger.warning("⚠️ 获取连接信息前登录状态验证失败")
+                return
             
             # 尝试多种表格选择器
             table_selectors = [
                 "table",
                 ".table",
-                "table.stats-table"
+                "table.stats-table",
+                ".stats-table",
+                "table tr",
+                "tbody"
             ]
             
             table = None
             for selector in table_selectors:
                 try:
-                    table = self.driver.find_element(By.CSS_SELECTOR, selector)
+                    elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                    for element in elements:
+                        element_text = element.text
+                        # 检查元素是否包含连接信息的关键词
+                        if any(keyword in element_text for keyword in ['访问次数', '回复', '浏览', '已读', '访问天数']):
+                            table = element
+                            break
                     if table:
                         break
                 except:
@@ -453,28 +504,53 @@ class FastLinuxDoBrowser:
             
             if not table:
                 logger.warning("⚠️ 未找到连接信息表格")
+                # 保存页面用于调试
+                try:
+                    with open(f"connect_debug_{self.site_name}.html", "w", encoding='utf-8') as f:
+                        f.write(self.driver.page_source)
+                    logger.info(f"💾 已保存连接页面源码: connect_debug_{self.site_name}.html")
+                except:
+                    pass
                 return
             
-            rows = table.find_elements(By.TAG_NAME, "tr")
+            # 尝试解析表格数据
             info = []
-            
-            for row in rows:
-                try:
-                    cells = row.find_elements(By.TAG_NAME, "td")
-                    if len(cells) >= 3:
-                        project = cells[0].text.strip()[:20]  # 限制长度
-                        current = cells[1].text.strip()[:15]
-                        requirement = cells[2].text.strip()[:15]
-                        info.append([project, current, requirement])
-                except:
-                    continue
+            try:
+                # 先尝试按行解析
+                rows = table.find_elements(By.TAG_NAME, "tr")
+                for row in rows:
+                    try:
+                        cells = row.find_elements(By.TAG_NAME, "td")
+                        if len(cells) >= 3:
+                            project = cells[0].text.strip()
+                            current = cells[1].text.strip()
+                            requirement = cells[2].text.strip()
+                            if project and current:  # 确保有有效数据
+                                info.append([project, current, requirement])
+                    except:
+                        continue
+                
+                # 如果按行解析失败，尝试直接获取所有文本
+                if not info:
+                    table_text = table.text
+                    lines = table_text.split('\n')
+                    for i in range(0, len(lines)-2, 3):
+                        if i+2 < len(lines):
+                            info.append([lines[i], lines[i+1], lines[i+2]])
+            except Exception as e:
+                logger.debug(f"表格解析失败: {str(e)}")
             
             if info:
                 print(f"\n📊 {self.site_name.upper()} 连接信息:")
-                print("-" * 50)
-                for item in info[:6]:  # 只显示前6项
-                    print(f"{item[0]:<20} {item[1]:<15} {item[2]:<15}")
-                print("-" * 50)
+                print("-" * 60)
+                try:
+                    from tabulate import tabulate
+                    print(tabulate(info, headers=["项目", "当前", "要求"], tablefmt="simple"))
+                except ImportError:
+                    for item in info:
+                        print(f"{item[0]:<20} {item[1]:<20} {item[2]:<20}")
+                print("-" * 60)
+                logger.success(f"✅ 成功获取 {len(info)} 项连接信息")
             else:
                 logger.warning("⚠️ 未解析到连接信息")
                 
@@ -486,18 +562,26 @@ class FastLinuxDoBrowser:
         try:
             logger.info(f"🚀 开始处理: {self.site_name}")
 
-            # 1. 极速登录
+            # 1. 极速登录（核心：用户名验证）
             if not self.ensure_logged_in_fast():
                 logger.error(f"❌ {self.site_name} 登录失败")
                 return False
 
             # 2. 快速浏览主题
             browse_count = self.quick_browse_topics()
+            if browse_count == 0:
+                logger.warning(f"⚠️ {self.site_name} 浏览主题失败")
 
-            # 3. 快速获取连接信息
+            # 3. 浏览后再次验证登录状态
+            logger.info("🔍 浏览后验证登录状态...")
+            if not self.verify_username_presence():
+                logger.error("❌ 浏览后登录状态丢失")
+                return False
+
+            # 4. 快速获取连接信息（可选，不影响主要流程）
             self.get_connect_info_fast()
 
-            # 4. 保存状态
+            # 5. 保存状态
             self.save_state(True, browse_count)
 
             logger.success(f"✅ {self.site_name} 完成 - {browse_count} 个主题")
@@ -549,7 +633,7 @@ def main_ultra_fast():
                 failed_sites.append(site_name)
                 
         except Exception as e:
-            logger.error(f"❌ {site_name} 异常: {str(e)}")
+            logger.error(f"❌ {self.site_name} 异常: {str(e)}")
             failed_sites.append(site_name)
 
         # 短暂站点间等待
