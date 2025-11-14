@@ -15,7 +15,6 @@ from selenium.webdriver.common.action_chains import ActionChains
 from selenium.common.exceptions import TimeoutException, NoSuchElementException, StaleElementReferenceException
 from loguru import logger
 import hashlib
-from DrissionPage import ChromiumPage, ChromiumOptions
 
 # ======================== 配置常量 ========================
 SITE_CREDENTIALS = {
@@ -57,7 +56,7 @@ MAX_CACHE_AGE_HOURS = int(os.environ.get("MAX_CACHE_AGE_HOURS", "168"))  # 7天�
 # DoH 服务器配置
 DOH_SERVER = os.environ.get("DOH_SERVER", "https://ld.ddd.oaifree.com/query-dns")
 
-# turnstilePatch 扩展路径
+# turnstilePatch 扩展路径 - 修正为当前目录下的turnstilePatch
 TURNSTILE_PATCH_PATH = os.path.abspath("turnstilePatch")
 
 # ======================== 增强缓存管理器 ========================
@@ -462,7 +461,7 @@ class EnhancedLinuxDoBrowser:
             "profile.password_manager_enabled": False
         })
         
-        # 加载turnstilePatch扩展
+        # 加载turnstilePatch扩展 - 使用修正后的路径
         if os.path.exists(TURNSTILE_PATCH_PATH):
             chrome_options.add_argument(f'--load-extension={TURNSTILE_PATCH_PATH}')
             logger.info(f"✅ 已加载turnstilePatch扩展: {TURNSTILE_PATCH_PATH}")
@@ -1075,6 +1074,8 @@ class EnhancedLinuxDoBrowser:
         
         try:
             # 使用DrissionPage作为备用方案
+            from DrissionPage import ChromiumPage, ChromiumOptions
+            
             co = ChromiumOptions()
             if HEADLESS:
                 co.headless()
