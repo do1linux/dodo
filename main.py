@@ -177,7 +177,7 @@ class CloudflareHandler:
             try:
                 current_url = driver.current_url
                 page_title = driver.title.lower() if driver.title else ""
-                page_source = driver.page_source.lower() if driver.page_source else ""
+                page_source = driver.page_source。lower() if driver.page_source else ""
                 
                 # 检查验证状态 - 更严格的检查
                 cloudflare_indicators = ["just a moment", "checking", "please wait", "ddos protection", "cloudflare", "verifying"]
@@ -190,8 +190,8 @@ class CloudflareHandler:
                     # 额外检查：等待页面完全加载
                     time.sleep(3)
                     # 再次检查
-                    page_title = driver.title.lower() if driver.title else ""
-                    page_source = driver.page_source.lower() if driver.page_source else ""
+                    page_title = driver.title。lower() if driver.title else ""
+                    page_source = driver.page_source。lower() if driver.page_source else ""
                     is_cloudflare_page = any(indicator in page_title for indicator in cloudflare_indicators) or any(indicator in page_source for indicator in cloudflare_indicators)
                     
                     if not is_cloudflare_page:
@@ -234,13 +234,13 @@ class LinuxDoBrowser:
         self.site_name = site_config['name']
         self.username = credentials['username']
         self.password = credentials['password']
-        self.driver = None
-        self.wait = None
+        self.driver = 无
+        self.wait = 无
         self.initialize_browser()
 
     def initialize_browser(self):
         """初始化浏览器"""
-        chrome_options = Options()
+        chrome_options = 选项()
         
         # 配置Headless模式
         if HEADLESS:
@@ -263,11 +263,11 @@ class LinuxDoBrowser:
         chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
         
         # 排除自动化特征
-        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
-        chrome_options.add_experimental_option('useAutomationExtension', False)
+        chrome_options.add_experimental_option("excludeSwitches"， ["enable-automation"， "enable-logging"])
+        chrome_options.add_experimental_option('useAutomationExtension'， False)
         
         # 添加实验选项增强隐蔽性
-        chrome_options.add_experimental_option("prefs", {
+        chrome_options.add_experimental_option("prefs"， {
             "profile.default_content_setting_values": {
                 "images": 1,
                 "cookies": 1,
@@ -359,8 +359,8 @@ class LinuxDoBrowser:
                     # 额外验证：检查是否有登录相关的元素
                     try:
                         # 检查是否有退出按钮或用户菜单
-                        logout_indicators = ["logout", "sign out", "退出", "登出"]
-                        page_lower = self.driver.page_source.lower()
+                        logout_indicators = ["logout"， "sign out"， "退出"， "登出"]
+                        page_lower = self.driver。page_source。lower()
                         if any(indicator in page_lower for indicator in logout_indicators):
                             logger.success("✅ 找到退出按钮，确认登录状态有效")
                         return True
@@ -373,7 +373,7 @@ class LinuxDoBrowser:
                 
                 # 重试前等待
                 if retry < max_retries - 1:
-                    wait_time = random.uniform(8, 12)
+                    wait_time = random.uniform(8， 12)
                     logger.info(f"🔄 等待 {wait_time:.1f} 秒后重试...")
                     time.sleep(wait_time)
                     
@@ -389,9 +389,9 @@ class LinuxDoBrowser:
         """打印连接信息 - 增强版本"""
         logger.info("🔗 获取连接信息")
         max_retries = 2
-        for retry in range(max_retries):
+        for retry 在 range(max_retries):
             try:
-                self.driver.get(self.site_config['connect_url'])
+                self.driver。get(self.site_config['connect_url'])
                 time.sleep(6)
 
                 # 处理可能的Cloudflare验证
@@ -836,7 +836,7 @@ class LinuxDoBrowser:
                     time.sleep(random.uniform(1, 2))
                 
                 # 随机点赞 (2%概率)
-                if random.random() < 0.02:
+                if random.random() < 0.005:
                     self.click_like()
                 
                 # 随机暂停思考
@@ -886,8 +886,8 @@ class LinuxDoBrowser:
                 logger.error("❌ 没有找到主题列表")
                 return 0
 
-            # 随机选择8-10个主题浏览
-            browse_count = min(random.randint(8, 10), len(topic_elements))
+            # 随机选择8-100个主题浏览
+            browse_count = min(random.randint(8, 100), len(topic_elements))
             selected_indices = random.sample(range(len(topic_elements)), browse_count)
             success_count = 0
 
@@ -1274,3 +1274,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
