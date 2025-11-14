@@ -15,6 +15,7 @@ from selenium.webdriver.common.action_chains import ActionChains
 from selenium.common.exceptions import TimeoutException, NoSuchElementException, StaleElementReferenceException
 from loguru import logger
 import hashlib
+from DrissionPage import ChromiumPage, ChromiumOptions
 
 # ======================== 配置常量 ========================
 SITE_CREDENTIALS = {
@@ -78,10 +79,31 @@ class EnhancedCacheManager:
         return sessions_dir
 
     @staticmethod
+    def get_cloudflare_directory():
+        """获取Cloudflare状态目录"""
+        cf_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cloudflare")
+        os.makedirs(cf_dir, exist_ok=True)
+        return cf_dir
+
+    @staticmethod
+    def get_browser_states_directory():
+        """获取浏览器状态目录"""
+        states_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "browser_states")
+        os.makedirs(states_dir, exist_ok=True)
+        return states_dir
+
+    @staticmethod
     def get_cache_file_path(file_name, subdirectory=""):
         """获取缓存文件的完整路径"""
         if subdirectory:
-            base_dir = os.path.join(EnhancedCacheManager.get_cache_directory(), subdirectory)
+            if subdirectory == "cloudflare":
+                base_dir = EnhancedCacheManager.get_cloudflare_directory()
+            elif subdirectory == "browser_states":
+                base_dir = EnhancedCacheManager.get_browser_states_directory()
+            elif subdirectory == "sessions":
+                base_dir = EnhancedCacheManager.get_sessions_directory()
+            else:
+                base_dir = os.path.join(EnhancedCacheManager.get_cache_directory(), subdirectory)
             os.makedirs(base_dir, exist_ok=True)
         else:
             base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -244,6 +266,30 @@ class EnhancedCacheManager:
             logger.error(f"综合会话恢复失败: {str(e)}")
             return False
 
+    @staticmethod
+    def save_cloudflare_state(site_name, cf_state):
+        """保存Cloudflare状态"""
+        file_name = f"cloudflare_{site_name}.json"
+        return EnhancedCacheManager.save_cache(cf_state, file_name, "cloudflare")
+
+    @staticmethod
+    def load_cloudflare_state(site_name):
+        """加载Cloudflare状态"""
+        file_name = f"cloudflare_{site_name}.json"
+        return EnhancedCacheManager.load_cache(file_name, "cloudflare")
+
+    @staticmethod
+    def save_browser_state(site_name, browser_state):
+        """保存浏览器状态"""
+        file_name = f"browser_{site_name}.json"
+        return EnhancedCacheManager.save_cache(browser_state, file_name, "browser_states")
+
+    @staticmethod
+    def load_browser_state(site_name):
+        """加载浏览器状态"""
+        file_name = f"browser_{site_name}.json"
+        return EnhancedCacheManager.load_cache(file_name, "browser_states")
+
 # ======================== Cloudflare处理器 ========================
 class EnhancedCloudflareHandler:
     @staticmethod
@@ -293,7 +339,7 @@ class EnhancedCloudflareHandler:
             'domains_resolved': critical_domains,
             'attempts': 0
         }
-        EnhancedCacheManager.save_cache(cf_state, f"cloudflare_state.json", "cloudflare")
+        EnhancedCacheManager.save_cloudflare_state('global', cf_state)
 
         for attempt in range(max_attempts):
             try:
@@ -322,7 +368,7 @@ class EnhancedCloudflareHandler:
                         cf_state['success'] = True
                         cf_state['final_attempts'] = attempt + 1
                         cf_state['total_time'] = time.time() - start_time
-                        EnhancedCacheManager.save_cache(cf_state, f"cloudflare_state.json", "cloudflare")
+                        EnhancedCacheManager.save_cloudflare_state('global', cf_state)
                         
                         return True
 
@@ -358,7 +404,7 @@ class EnhancedCloudflareHandler:
         cf_state['success'] = False
         cf_state['final_attempts'] = max_attempts
         cf_state['total_time'] = time.time() - start_time
-        EnhancedCacheManager.save_cache(cf_state, f"cloudflare_state.json", "cloudflare")
+        EnhancedCacheManager.save_cloudflare_state('global', cf_state)
         
         return False
 
@@ -502,6 +548,7 @@ class EnhancedLinuxDoBrowser:
             }
             
             EnhancedCacheManager.save_cache(browser_state, f"browser_state_{self.site_name}.json")
+            EnhancedCacheManager.save_browser_state(self.site_name, browser_state)
             
             # 保存会话数据
             EnhancedCacheManager.save_comprehensive_session(
@@ -933,6 +980,7 @@ class EnhancedLinuxDoBrowser:
                         selected_indices = random.sample(range(len(current_topic_elements)), new_browse_count)
                         idx = selected_indices[0]
                         browse_count = new_browse_count
+                        i = 0
 
                     topic = current_topic_elements[idx]
                     topic_url = topic.get_attribute("href")
@@ -1022,97 +1070,101 @@ class EnhancedLinuxDoBrowser:
             return 0
 
     def print_connect_info(self):
-        """打印连接信息"""
+        """使用DrissionPage获取连接信息 - 更稳定的方法"""
         logger.info("🔗 获取连接信息")
-        max_retries = 2
-        for retry in range(max_retries):
-            try:
-                self.driver.get(self.site_config['connect_url'])
-                time.sleep(6)
+        
+        try:
+            # 使用DrissionPage作为备用方案
+            co = ChromiumOptions()
+            if HEADLESS:
+                co.headless()
+            
+            # 设置用户代理
+            co.set_user_agent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+            
+            page = ChromiumPage(co)
+            page.get(self.site_config['connect_url'])
+            time.sleep(5)
+            
+            # 等待表格加载
+            table = page.ele('tag:table', timeout=10)
+            if not table:
+                logger.error("❌ 未找到表格元素")
+                page.quit()
+                return
+            
+            rows = table.eles('tag:tr')
+            info = []
+            
+            for row in rows:
+                cells = row.eles('tag:td')
+                if len(cells) >= 3:
+                    project = cells[0].text.strip()
+                    current = cells[1].text.strip()
+                    requirement = cells[2].text.strip()
+                    info.append([project, current, requirement])
+            
+            if info:
+                print("\n" + "="*60)
+                print(f"📊 {self.site_name.upper()} 连接信息")
+                print("="*60)
+                
+                try:
+                    from tabulate import tabulate
+                    print(tabulate(info, headers=["项目", "当前", "要求"], tablefmt="pretty"))
+                except ImportError:
+                    for item in info:
+                        print(f"{item[0]:<20} {item[1]:<20} {item[2]:<20}")
+                
+                print("="*60 + "\n")
+                logger.success(f"✅ 成功获取 {len(info)} 项连接信息")
+            else:
+                logger.warning("⚠️ 未找到连接信息")
+            
+            page.quit()
+            
+        except Exception as e:
+            logger.error(f"获取连接信息失败: {str(e)}")
+            # 备用方法：使用Selenium
+            self._print_connect_info_selenium()
 
-                EnhancedCloudflareHandler.handle_cloudflare_with_doh(self.driver)
-                time.sleep(4)
-
-                page_source = self.driver.page_source
+    def _print_connect_info_selenium(self):
+        """使用Selenium备用方法获取连接信息"""
+        try:
+            self.driver.get(self.site_config['connect_url'])
+            time.sleep(5)
+            
+            table = self.driver.find_element(By.TAG_NAME, 'table')
+            rows = table.find_elements(By.TAG_NAME, 'tr')
+            info = []
+            
+            for row in rows:
+                cells = row.find_elements(By.TAG_NAME, 'td')
+                if len(cells) >= 3:
+                    project = cells[0].text.strip()
+                    current = cells[1].text.strip()
+                    requirement = cells[2].text.strip()
+                    info.append([project, current, requirement])
+            
+            if info:
+                print("\n" + "="*60)
+                print(f"📊 {self.site_name.upper()} 连接信息 (Selenium备用)")
+                print("="*60)
                 
-                if retry == max_retries - 1:
-                    with open(f"connect_debug_{self.site_name}.html", "w", encoding='utf-8') as f:
-                        f.write(page_source)
+                try:
+                    from tabulate import tabulate
+                    print(tabulate(info, headers=["项目", "当前", "要求"], tablefmt="pretty"))
+                except ImportError:
+                    for item in info:
+                        print(f"{item[0]:<20} {item[1]:<20} {item[2]:<20}")
                 
-                from bs4 import BeautifulSoup
-                soup = BeautifulSoup(page_source, 'html.parser')
+                print("="*60 + "\n")
+                logger.success(f"✅ 成功获取 {len(info)} 项连接信息 (备用方法)")
+            else:
+                logger.warning("⚠️ 未找到连接信息 (备用方法)")
                 
-                tables = soup.find_all('table')
-                if not tables:
-                    logger.warning("⚠️ 未找到表格元素")
-                    if retry < max_retries - 1:
-                        continue
-                    return
-                    
-                stats_table = None
-                for table in tables:
-                    table_text = table.get_text()
-                    if any(keyword in table_text for keyword in ['访问次数', '回复的话题', '浏览的话题', '已读帖子']):
-                        stats_table = table
-                        break
-                
-                if not stats_table:
-                    logger.warning("⚠️ 未找到统计表格")
-                    if retry < max_retries - 1:
-                        continue
-                    return
-                    
-                stats_data = []
-                rows = stats_table.find_all('tr')
-                
-                for row in rows[1:]:
-                    cols = row.find_all(['td', 'th'])
-                    if len(cols) >= 3:
-                        item = cols[0].get_text(strip=True)
-                        current = cols[1].get_text(strip=True)
-                        requirement = cols[2].get_text(strip=True)
-                        
-                        col_class = cols[1].get('class', [])
-                        if isinstance(col_class, list):
-                            col_class = ' '.join(col_class)
-                        status = '✅' if 'text-green' in col_class or 'green' in col_class else '❌' if 'text-red' in col_class or 'red' in col_class else '➖'
-                        
-                        stats_data.append([item, current, requirement, status])
-                
-                if stats_data:
-                    print("\n" + "="*80)
-                    print(f"📊 {self.site_name.upper()} 连接信息")
-                    print("="*80)
-                    
-                    try:
-                        from tabulate import tabulate
-                        print(tabulate(stats_data, headers=["项目", "当前", "要求", "状态"], tablefmt="grid"))
-                    except ImportError:
-                        print(f"{'项目':<25} {'当前':<30} {'要求':<20} {'状态':<10}")
-                        print("-" * 80)
-                        for item in stats_data:
-                            print(f"{item[0]:<25} {item[1]:<30} {item[2]:<20} {item[3]:<10}")
-                    
-                    print("="*80 + "\n")
-                    
-                    passed = sum(1 for item in stats_data if item[3] == '✅')
-                    total = len(stats_data)
-                    logger.success(f"📊 连接信息统计: {passed}/{total} 项达标")
-                    
-                    for item in stats_data:
-                        if '访问天数' in item[0] or '访问次数' in item[0]:
-                            logger.info(f"📈 关键指标 - {item[0]}: {item[1]}")
-                    break
-                else:
-                    logger.warning("⚠️ 无法解析连接信息表格")
-                    if retry < max_retries - 1:
-                        continue
-
-            except Exception as e:
-                logger.error(f"获取连接信息失败: {str(e)}")
-                if retry < max_retries - 1:
-                    logger.info(f"🔄 重试获取连接信息 ({retry+1}/{max_retries})")
-                    time.sleep(5)
+        except Exception as e:
+            logger.error(f"备用方法获取连接信息也失败: {str(e)}")
 
     def perform_additional_activities(self):
         """执行额外的活跃行为"""
@@ -1123,7 +1175,7 @@ class EnhancedLinuxDoBrowser:
         try:
             additional_pages = [
                 "/categories",
-                "/top",
+                "/top", 
                 "/about"
             ]
             
