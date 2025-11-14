@@ -37,6 +37,8 @@ jobs:
           *.pkl
           cache/
           sessions/
+          cloudflare/
+          browser_states/
         key: ${{ env.CACHE_PRIMARY_KEY }}-${{ github.sha }}
         restore-keys: |
           ${{ env.CACHE_PRIMARY_KEY }}-
@@ -80,7 +82,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install beautifulsoup4 requests loguru
+        pip install beautifulsoup4 requests loguru tabulate DrissionPage
 
     - name: Create enhanced turnstilePatch extension
       run: |
@@ -190,6 +192,8 @@ jobs:
         ls -la browser_state_*.json 2>/dev/null || echo "无状态文件"
         echo "🔹 会话文件:"
         ls -la session_*.json 2>/dev/null || echo "无会话文件"
+        echo "🔹 Cloudflare状态文件:"
+        ls -la cloudflare/ 2>/dev/null || echo "无Cloudflare状态文件"
         echo "🔹 缓存目录:"
         ls -la cache/ 2>/dev/null || echo "无缓存目录"
         echo "🔹 会话目录:"
@@ -204,6 +208,8 @@ jobs:
           *.pkl
           cache/
           sessions/
+          cloudflare/
+          browser_states/
         key: ${{ env.CACHE_PRIMARY_KEY }}-${{ github.sha }}
         restore-keys: |
           ${{ env.CACHE_PRIMARY_KEY }}-
@@ -219,6 +225,8 @@ jobs:
           session_*.json
           cache/
           sessions/
+          cloudflare/
+          browser_states/
         retention-days: 14
         overwrite: true
 
