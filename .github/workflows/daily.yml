@@ -1,4 +1,4 @@
-name: LinuxDo Multi-Site Automation
+name: LinuxDo Multi-Site Automation with Enhanced Caching
 
 on:
   workflow_dispatch:
@@ -17,40 +17,81 @@ on:
 
 env:
   PYTHON_VERSION: '3.11'
-  CACHE_PRIMARY_KEY: ${{ github.ref }}-linuxdo-cache
+  COOKIES_CACHE_DIR: ${{ github.workspace }}
+  # 定义缓存版本，用于手动刷新缓存
+  CACHE_VERSION: 'v1'
 
 jobs:
   automate:
     runs-on: ubuntu-22.04
-    timeout-minutes: 120  # 增加超时时间
+    timeout-minutes: 120  # 进一步增加超时时间，避免复杂操作中断
 
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: 恢复综合缓存
+    - name: 预检查 - 显示现有缓存文件
+      run: |
+        echo "🔍 预检查 - 当前工作目录中的缓存文件:"
+        ls -lah *.json 2>/dev/null || echo "ℹ️ 未找到现有缓存文件"
+        echo "----------------------------------------"
+
+    - name: 恢复Cloudflare和登录状态缓存
       uses: actions/cache@v3
-      id: cache-restore
+      id: cookies-cache
       with:
         path: |
-          *.json
-          *.pkl
-          cache/
-          sessions/
-        key: ${{ env.CACHE_PRIMARY_KEY }}-${{ github.sha }}
+          cf_cookies_linux_do.json
+          cf_cookies_idcflare.json
+          browser_state_linux_do.json
+          browser_state_idcflare.json
+          # 新增Cloudflare挑战状态缓存
+          cloudflare_state_linux_do.json
+          cloudflare_state_idcflare.json
+          # 新增会话指纹缓存
+          session_fingerprint_linux_do.json
+          session_fingerprint_idcflare.json
+        # 使用更稳定的缓存key，不依赖github.sha，避免每次提交都失效
+        key: ${{ runner.os }}-linuxdo-cache-${{ env.CACHE_VERSION }}-${{ hashFiles('**/requirements.txt') }}
         restore-keys: |
-          ${{ env.CACHE_PRIMARY_KEY }}-
-          ${{ runner.os }}-linuxdo-
+          ${{ runner.os }}-linuxdo-cache-${{ env.CACHE_VERSION }}-
+          ${{ runner.os }}-linuxdo-cache-
+
+    - name: 恢复浏览器二进制缓存（加速Chrome安装）
+      uses: actions/cache@v3
+      id: chrome-cache
+      with:
+        path: |
+          /usr/bin/google-chrome-stable
+          /usr/bin/google-chrome
+        key: ${{ runner.os }}-chrome-${{ hashFiles('**/install-chrome.sh') }}
+        restore-keys: |
+          ${{ runner.os }}-chrome-
+
+    - name: 显示缓存恢复状态
+      run: |
+        echo "📦 缓存恢复状态检查:"
+        echo "Cookies缓存命中: ${{ steps.cookies-cache.outputs.cache-hit == 'true' && '✅ 是' || '❌ 否' }}"
+        echo "Chrome缓存命中: ${{ steps.chrome-cache.outputs.cache-hit == 'true' && '✅ 是' || '❌ 否' }}"
+        if [ "${{ steps.cookies-cache.outputs.cache-hit }}" == "true" ]; then
+          echo "缓存文件列表:"
+          ls -lah *.json 2>/dev/null || echo "⚠️ 缓存命中但文件未找到"
+        fi
+        echo "----------------------------------------"
 
     - name: Setup Python
       uses: actions/setup-python@v4
       with:
         python-version: ${{ env.PYTHON_VERSION }}
+        # 启用Python依赖缓存
+        cache: 'pip'
+        cache-dependency-path: |
+          requirements.txt
 
     - name: Install system dependencies for Chromium
       run: |
         sudo apt-get update
-        sudo apt-get install -y \
+        sudo apt-get install -y --no-install-recommends \
           libnss3 \
           libatk-bridge2.0-0 \
           libdrm2 \
@@ -66,101 +107,161 @@ jobs:
           libx11-xcb1 \
           fonts-liberation \
           libappindicator3-1 \
-          xdg-utils
+          xdg-utils \
+          ca-certificates \
+          fonts-noto-cjk \
+          fonts-noto-color-emoji
+        echo "✅ 系统依赖安装完成"
 
-    - name: Install Chrome
+    - name: Install Chrome (带缓存机制)
       run: |
-        curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | sudo gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg
-        echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
-        sudo apt-get update
-        sudo apt-get install -y google-chrome-stable
+        if ! command -v google-chrome &> /dev/null; then
+          echo "🔧 Chrome未安装，开始安装..."
+          curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | sudo gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg
+          echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
+          sudo apt-get update
+          sudo apt-get install -y google-chrome-stable
+        else
+          echo "✅ Chrome已存在，跳过安装"
+        fi
         google-chrome --version
 
     - name: Install Python dependencies
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install beautifulsoup4 requests loguru
+        pip list
+        echo "✅ Python依赖安装完成"
 
-    - name: Create enhanced turnstilePatch extension
+    - name: Create turnstilePatch extension (增强反检测)
       run: |
-        echo "🔧 创建增强的turnstilePatch扩展..."
+        echo "🔧 创建增强版turnstilePatch扩展..."
         mkdir -p turnstilePatch
         cat > turnstilePatch/manifest.json << 'EOF'
         {
           "manifest_version": 3,
           "name": "Turnstile Patch",
-          "version": "1.0",
-          "description": "Enhanced patch for Cloudflare Turnstile",
+          "version": "2.0",
+          "description": "增强版Cloudflare Turnstile反检测补丁",
           "content_scripts": [{
-            "matches": ["https://*.linux.do/*", "https://*.idcflare.com/*"],
+            "matches": ["https://*.linux.do/*", "https://*.idcflare.com/*", "https://*.cloudflare.com/*"],
             "js": ["content.js"],
             "run_at": "document_start",
             "all_frames": true
           }],
-          "permissions": []
+          "permissions": ["webRequest", "webRequestBlocking", "*://*/*"]
         }
         EOF
         
         cat > turnstilePatch/content.js << 'EOF'
-        // Enhanced Cloudflare Turnstile Patch
+        // 增强版Cloudflare Turnstile Patch
         (function() {
           'use strict';
           
-          console.log('🔧 Enhanced Turnstile Patch 已加载');
+          // 立即执行，避免被检测
+          const originalQuery = window.navigator.permissions.query;
+          window.navigator.permissions.query = (parameters) => {
+            if (parameters && parameters.name === 'notifications') {
+              return Promise.resolve({ state: Notification.permission });
+            }
+            return originalQuery(parameters);
+          };
           
-          // 隐藏webdriver属性
+          // 隐藏webdriver属性 - 多重保护
           Object.defineProperty(navigator, 'webdriver', {
             get: () => undefined,
+            configurable: false,
+            enumerable: false
           });
           
-          // 修改plugins属性
+          // 修改plugins属性 - 模拟真实浏览器
           Object.defineProperty(navigator, 'plugins', {
             get: () => [1, 2, 3, 4, 5],
+            configurable: false
           });
           
           // 修改languages属性
           Object.defineProperty(navigator, 'languages', {
-            get: () => ['zh-CN', 'zh', 'en', 'en-US'],
+            get: () => ['zh-CN', 'zh', 'en-US', 'en'],
+            configurable: false
           });
           
-          // 修改mimeTypes
+          // 添加mimeTypes
           Object.defineProperty(navigator, 'mimeTypes', {
             get: () => [1, 2],
+            configurable: false
           });
           
-          // 覆盖permissions API
-          const originalQuery = window.navigator.permissions.query;
-          window.navigator.permissions.query = (parameters) => (
-            parameters.name === 'notifications' ?
-              Promise.resolve({ state: Notification.permission }) :
-              originalQuery(parameters)
-          );
+          // 伪造chrome对象
+          window.chrome = {
+            runtime: {
+              PlatformOs: { LINUX: 'linux', MAC: 'mac', WIN: 'win' },
+              PlatformArch: { ARM: 'arm', X86_32: 'x86_32', X86_64: 'x86_64' },
+              PlatformNaclArch: { ARM: 'arm', X86_32: 'x86_32', X86_64: 'x86_64' },
+              RequestUpdateCheckStatus: { THROTTLED: 'throttled', NO_UPDATE: 'no_update', UPDATE_AVAILABLE: 'update_available' },
+              LastError: {}
+            },
+            loadTimes: () => ({}),
+            csi: () => ({ onloadT: 0, pageT: 0 }),
+            app: {},
+            webstore: {},
+            management: {}
+          };
           
-          // 覆盖connection属性
-          delete navigator.__proto__.connection;
-          
-          // 添加chrome runtime对象
-          if (!window.chrome) {
-            window.chrome = {
-              runtime: {},
-              loadTimes: function() {},
-              csi: function() {},
-              app: {}
+          // 伪造performance
+          if (typeof performance !== 'undefined') {
+            const originalNow = performance.now;
+            performance.now = function() {
+              return originalNow.call(this) + Math.random() * 100;
             };
           }
           
-          // 覆盖屏幕属性
-          Object.defineProperty(screen, 'availWidth', { get: () => 1920 });
-          Object.defineProperty(screen, 'availHeight', { get: () => 1080 });
-          Object.defineProperty(screen, 'width', { get: () => 1920 });
-          Object.defineProperty(screen, 'height', { get: () => 1080 });
+          // 模拟鼠标移动痕迹
+          document.addEventListener('mousemove', (e) => {
+            window.lastMouseX = e.screenX;
+            window.lastMouseY = e.screenY;
+          });
           
+          console.log('🔧 增强版Turnstile Patch 已注入');
+          
+          // 定期重定义，防止被覆盖
+          setInterval(() => {
+            Object.defineProperty(navigator, 'webdriver', {
+              get: () => undefined,
+            });
+          }, 5000);
         })();
         EOF
-        echo "✅ 增强扩展创建完成"
+        
+        # 创建背景脚本进一步隐藏扩展
+        cat > turnstilePatch/background.js << 'EOF'
+        // 隐藏扩展身份
+        chrome.runtime.onInstalled.addListener(() => {
+          console.log('Turnstile Patch installed');
+        });
+        
+        // 伪装扩展ID
+        chrome.management.getSelf((info) => {
+          if (info && info.installType === 'development') {
+            console.log('Extension is in development mode');
+          }
+        });
+        EOF
+        
+        echo "✅ 增强版扩展创建完成"
+        echo "📦 扩展结构:"
+        ls -R turnstilePatch/
 
-    - name: Run enhanced automation script
+    - name: 初始化缓存目录和权限
+      run: |
+        echo "📁 初始化缓存目录..."
+        # 确保当前工作目录有正确的权限
+        sudo chmod -R 777 ${{ github.workspace }}
+        # 在工作目录创建缓存记录文件
+        echo '{"last_run":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'", "version":"'${{ env.CACHE_VERSION }}'"}' > cache_metadata.json
+        echo "✅ 缓存元数据已创建"
+
+    - name: Run automation script with enhanced caching
       env:
         LINUXDO_USERNAME: ${{ secrets.LINUXDO_USERNAME }}
         LINUXDO_PASSWORD: ${{ secrets.LINUXDO_PASSWORD }}
@@ -169,75 +270,97 @@ jobs:
         GITHUB_ACTIONS: 'true'
         DOH_SERVER: 'https://ld.ddd.oaifree.com/query-dns'
         SITE_SELECTOR: ${{ github.event.inputs.site_selector || 'all' }}
-        MAX_CACHE_AGE_HOURS: '168'  # 7天缓存
+        # 新增环境变量控制缓存行为
+        CACHE_VERSION: ${{ env.CACHE_VERSION }}
+        FORCE_REFRESH_CACHE: ${{ secrets.FORCE_REFRESH_CACHE || 'false' }}
       run: |
-        echo "🚀 开始执行增强自动化脚本..."
+        echo "========================================"
+        echo "🚀 开始执行增强版自动化脚本"
         echo "站点选择: $SITE_SELECTOR"
         echo "当前时间: $(date)"
         echo "DoH服务器: $DOH_SERVER"
-        echo "缓存年龄限制: $MAX_CACHE_AGE_HOURS 小时"
-        echo "缓存恢复状态: ${{ steps.cache-restore.outputs.cache-hit == 'true' && '✅ 已命中' || '❌ 未命中' }}"
-        python enhanced_automation.py
+        echo "缓存版本: $CACHE_VERSION"
+        echo "强制刷新缓存: $FORCE_REFRESH_CACHE"
+        echo "Cookies缓存命中: ${{ steps.cookies-cache.outputs.cache-hit == 'true' && '是' || '否' }}"
+        echo "========================================"
+        
+        # 显示当前缓存文件状态
+        echo "📦 当前缓存文件状态:"
+        ls -lah *.json 2>/dev/null || echo "ℹ️ 未找到缓存文件"
+        echo "----------------------------------------"
+        
+        python main.py
+        
+        echo "========================================"
         echo "✅ 脚本执行完成"
+        echo "📦 最终缓存文件状态:"
+        ls -lah *.json 2>/dev/null || echo "ℹ️ 未生成新的缓存文件"
+        echo "========================================"
 
-    - name: 显示缓存文件状态
+    - name: 验证和修复缓存文件权限
       if: always()
       run: |
-        echo "📋 缓存文件状态:"
-        echo "🔹 Cookies文件:"
-        ls -la cf_cookies_*.json 2>/dev/null || echo "无Cookies文件"
-        echo "🔹 浏览器状态文件:"
-        ls -la browser_state_*.json 2>/dev/null || echo "无状态文件"
-        echo "🔹 会话文件:"
-        ls -la session_*.json 2>/dev/null || echo "无会话文件"
-        echo "🔹 缓存目录:"
-        ls -la cache/ 2>/dev/null || echo "无缓存目录"
-        echo "🔹 会话目录:"
-        ls -la sessions/ 2>/dev/null || echo "无会话目录"
+        echo "🔧 验证缓存文件权限..."
+        if [ -f "cf_cookies_linux_do.json" ]; then
+          sudo chmod 644 cf_cookies_linux_do.json
+          echo "✅ 修复 cf_cookies_linux_do.json 权限"
+        fi
+        if [ -f "cf_cookies_idcflare.json" ]; then
+          sudo chmod 644 cf_cookies_idcflare.json
+          echo "✅ 修复 cf_cookies_idcflare.json 权限"
+        fi
+        # 显示最终文件状态
+        echo "📋 最终缓存文件状态:"
+        ls -lah *.json 2>/dev/null || echo "ℹ️ 无缓存文件"
 
-    - name: 保存综合缓存
-      if: always()
-      uses: actions/cache@v3
-      with:
-        path: |
-          *.json
-          *.pkl
-          cache/
-          sessions/
-        key: ${{ env.CACHE_PRIMARY_KEY }}-${{ github.sha }}
-        restore-keys: |
-          ${{ env.CACHE_PRIMARY_KEY }}-
-
-    - name: Upload session data as artifact
+    - name: Upload session and cache data (关键备份)
       uses: actions/upload-artifact@v4
       if: always()
       with:
-        name: linuxdo-comprehensive-session-data
+        name: session-cache-data-${{ github.run_number }}
         path: |
-          cf_cookies_*.json
-          browser_state_*.json
-          session_*.json
-          cache/
-          sessions/
-        retention-days: 14
-        overwrite: true
+          cf_cookies_linux_do.json
+          cf_cookies_idcflare.json
+          browser_state_linux_do.json
+          browser_state_idcflare.json
+          cloudflare_state_linux_do.json
+          cloudflare_state_idcflare.json
+          session_fingerprint_linux_do.json
+          session_fingerprint_idcflare.json
+          cache_metadata.json
+          # 包含调试用HTML
+          connect_debug_*.html
+          login_debug_*.html
+          login_error_*.html
+        retention-days: 30  # 延长保留时间
+        overwrite: false  # 保留历史版本
+        compression-level: 9  # 最大压缩节省空间
 
-    - name: Upload debug files
-      uses: actions/upload-artifact@v4
-      if: always()
-      with:
-        name: automation-debug-files
-        path: |
-          *.html
-          *.log
-        retention-days: 7
-
-    - name: 清理过期缓存文件
+    - name: 清理临时调试文件
       if: always()
       run: |
-        echo "🧹 清理过期缓存文件..."
-        # 清理30天前的缓存文件
-        find . -name "*.json" -mtime +30 -delete 2>/dev/null || true
-        find . -name "*.html" -mtime +7 -delete 2>/dev/null || true
-        find . -name "*.log" -mtime +3 -delete 2>/dev/null || true
-        echo "✅ 缓存清理完成"
+        echo "🧹 清理临时调试文件 (保留核心缓存)..."
+        # 只删除HTML调试文件，保留所有JSON缓存
+        find . -name "connect_debug_*.html" -type f -delete
+        find . -name "login_debug_*.html" -type f -delete
+        find . -name "login_error_*.html" -type f -delete
+        
+        # 显示剩余的缓存文件
+        echo "📦 保留的核心缓存文件:"
+        ls -lah *.json 2>/dev/null || echo "ℹ️ 无缓存文件"
+
+    - name: 更新缓存元数据
+      if: always()
+      run: |
+        echo "📝 更新缓存元数据..."
+        cat > cache_metadata.json << EOF
+        {
+          "last_run": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+          "cache_version": "${{ env.CACHE_VERSION }}",
+          "run_id": "${{ github.run_id }}",
+          "run_number": "${{ github.run_number }}",
+          "success": "${{ job.status == 'success' }}",
+          "sites_processed": "${{ env.SITE_SELECTOR || 'all' }}"
+        }
+        EOF
+        cat cache_metadata.json
