@@ -13,33 +13,34 @@ on:
           - linux_do
           - idcflare
   schedule:
-    - cron: '0 * * * *'  # 每小时运行一次
+    - cron: '0 */6 * * *'  # 每6小时运行一次
 
 env:
   PYTHON_VERSION: '3.11'
-  COOKIES_CACHE_DIR: ${{ github.workspace }}
+  CACHE_PRIMARY_KEY: ${{ github.ref }}-linuxdo-cache
 
 jobs:
   automate:
     runs-on: ubuntu-22.04
-    timeout-minutes: 60  # 增加超时时间
+    timeout-minutes: 120  # 增加超时时间
 
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: 恢复Cloudflare Cookies缓存
+    - name: 恢复综合缓存
       uses: actions/cache@v3
-      id: cookies-cache
+      id: cache-restore
       with:
         path: |
-          cf_cookies_linux_do.json
-          cf_cookies_idcflare.json
-          browser_state_linux_do.json
-          browser_state_idcflare.json
-        key: ${{ runner.os }}-linuxdo-cookies-${{ github.sha }}
+          *.json
+          *.pkl
+          cache/
+          sessions/
+        key: ${{ env.CACHE_PRIMARY_KEY }}-${{ github.sha }}
         restore-keys: |
-          ${{ runner.os }}-linuxdo-cookies-
+          ${{ env.CACHE_PRIMARY_KEY }}-
+          ${{ runner.os }}-linuxdo-
 
     - name: Setup Python
       uses: actions/setup-python@v4
@@ -79,38 +80,34 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip list
+        pip install beautifulsoup4 requests loguru
 
-    - name: Create turnstilePatch extension
+    - name: Create enhanced turnstilePatch extension
       run: |
-        echo "🔧 创建turnstilePatch扩展..."
+        echo "🔧 创建增强的turnstilePatch扩展..."
         mkdir -p turnstilePatch
         cat > turnstilePatch/manifest.json << 'EOF'
         {
           "manifest_version": 3,
           "name": "Turnstile Patch",
           "version": "1.0",
-          "description": "Patch for Cloudflare Turnstile",
+          "description": "Enhanced patch for Cloudflare Turnstile",
           "content_scripts": [{
             "matches": ["https://*.linux.do/*", "https://*.idcflare.com/*"],
             "js": ["content.js"],
-            "run_at": "document_start"
-          }]
+            "run_at": "document_start",
+            "all_frames": true
+          }],
+          "permissions": []
         }
         EOF
         
         cat > turnstilePatch/content.js << 'EOF'
-        // Cloudflare Turnstile Patch
+        // Enhanced Cloudflare Turnstile Patch
         (function() {
           'use strict';
           
-          // 拦截可能的检测
-          const originalQuery = window.navigator.permissions.query;
-          window.navigator.permissions.query = (parameters) => (
-            parameters.name === 'notifications' ?
-              Promise.resolve({ state: Notification.permission }) :
-              originalQuery(parameters)
-          );
+          console.log('🔧 Enhanced Turnstile Patch 已加载');
           
           // 隐藏webdriver属性
           Object.defineProperty(navigator, 'webdriver', {
@@ -124,15 +121,46 @@ jobs:
           
           // 修改languages属性
           Object.defineProperty(navigator, 'languages', {
-            get: () => ['zh-CN', 'zh', 'en'],
+            get: () => ['zh-CN', 'zh', 'en', 'en-US'],
           });
           
-          console.log('🔧 Turnstile Patch 已加载');
+          // 修改mimeTypes
+          Object.defineProperty(navigator, 'mimeTypes', {
+            get: () => [1, 2],
+          });
+          
+          // 覆盖permissions API
+          const originalQuery = window.navigator.permissions.query;
+          window.navigator.permissions.query = (parameters) => (
+            parameters.name === 'notifications' ?
+              Promise.resolve({ state: Notification.permission }) :
+              originalQuery(parameters)
+          );
+          
+          // 覆盖connection属性
+          delete navigator.__proto__.connection;
+          
+          // 添加chrome runtime对象
+          if (!window.chrome) {
+            window.chrome = {
+              runtime: {},
+              loadTimes: function() {},
+              csi: function() {},
+              app: {}
+            };
+          }
+          
+          // 覆盖屏幕属性
+          Object.defineProperty(screen, 'availWidth', { get: () => 1920 });
+          Object.defineProperty(screen, 'availHeight', { get: () => 1080 });
+          Object.defineProperty(screen, 'width', { get: () => 1920 });
+          Object.defineProperty(screen, 'height', { get: () => 1080 });
+          
         })();
         EOF
-        echo "✅ 扩展创建完成"
+        echo "✅ 增强扩展创建完成"
 
-    - name: Run automation script
+    - name: Run enhanced automation script
       env:
         LINUXDO_USERNAME: ${{ secrets.LINUXDO_USERNAME }}
         LINUXDO_PASSWORD: ${{ secrets.LINUXDO_PASSWORD }}
@@ -141,49 +169,75 @@ jobs:
         GITHUB_ACTIONS: 'true'
         DOH_SERVER: 'https://ld.ddd.oaifree.com/query-dns'
         SITE_SELECTOR: ${{ github.event.inputs.site_selector || 'all' }}
+        MAX_CACHE_AGE_HOURS: '168'  # 7天缓存
       run: |
-        echo "开始执行自动化脚本..."
+        echo "🚀 开始执行增强自动化脚本..."
         echo "站点选择: $SITE_SELECTOR"
         echo "当前时间: $(date)"
         echo "DoH服务器: $DOH_SERVER"
-        echo "Cookies缓存状态: ${{ steps.cookies-cache.outputs.cache-hit == 'true' && '已命中' || '未命中' }}"
-        python main.py
-        echo "脚本执行完成"
+        echo "缓存年龄限制: $MAX_CACHE_AGE_HOURS 小时"
+        echo "缓存恢复状态: ${{ steps.cache-restore.outputs.cache-hit == 'true' && '✅ 已命中' || '❌ 未命中' }}"
+        python enhanced_automation.py
+        echo "✅ 脚本执行完成"
 
-    - name: 显示缓存的Cookies文件（调试用）
+    - name: 显示缓存文件状态
+      if: always()
       run: |
-        echo "📋 当前目录下的Cookies文件:"
+        echo "📋 缓存文件状态:"
+        echo "🔹 Cookies文件:"
         ls -la cf_cookies_*.json 2>/dev/null || echo "无Cookies文件"
-        echo "📋 浏览器状态文件:"
+        echo "🔹 浏览器状态文件:"
         ls -la browser_state_*.json 2>/dev/null || echo "无状态文件"
+        echo "🔹 会话文件:"
+        ls -la session_*.json 2>/dev/null || echo "无会话文件"
+        echo "🔹 缓存目录:"
+        ls -la cache/ 2>/dev/null || echo "无缓存目录"
+        echo "🔹 会话目录:"
+        ls -la sessions/ 2>/dev/null || echo "无会话目录"
 
-    - name: Upload session data（备份用）
+    - name: 保存综合缓存
+      if: always()
+      uses: actions/cache@v3
+      with:
+        path: |
+          *.json
+          *.pkl
+          cache/
+          sessions/
+        key: ${{ env.CACHE_PRIMARY_KEY }}-${{ github.sha }}
+        restore-keys: |
+          ${{ env.CACHE_PRIMARY_KEY }}-
+
+    - name: Upload session data as artifact
       uses: actions/upload-artifact@v4
       if: always()
       with:
-        name: linuxdo-session-data
+        name: linuxdo-comprehensive-session-data
         path: |
-          cf_cookies_linux_do.json
-          cf_cookies_idcflare.json
-          browser_state_linux_do.json
-          browser_state_idcflare.json
-        retention-days: 7
+          cf_cookies_*.json
+          browser_state_*.json
+          session_*.json
+          cache/
+          sessions/
+        retention-days: 14
         overwrite: true
 
     - name: Upload debug files
       uses: actions/upload-artifact@v4
       if: always()
       with:
-        name: connect-debug-files
+        name: automation-debug-files
         path: |
-          connect_debug_*.html
-          login_debug_*.html
-          login_error_*.html
-        retention-days: 3
+          *.html
+          *.log
+        retention-days: 7
 
-    - name: 清理旧的缓存
+    - name: 清理过期缓存文件
       if: always()
       run: |
-        echo "🧹 清理30天前的缓存文件"
-        find . -name "cf_cookies_*.json" -mtime +30 -delete 2>/dev/null || true
-        find . -name "login_debug_*.html" -mtime +7 -delete 2>/dev/null || true
+        echo "🧹 清理过期缓存文件..."
+        # 清理30天前的缓存文件
+        find . -name "*.json" -mtime +30 -delete 2>/dev/null || true
+        find . -name "*.html" -mtime +7 -delete 2>/dev/null || true
+        find . -name "*.log" -mtime +3 -delete 2>/dev/null || true
+        echo "✅ 缓存清理完成"
