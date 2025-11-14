@@ -209,8 +209,8 @@ class FastCloudflareHandler:
         logger.info("⏩ 跳过Cloudflare等待，继续流程")
         return True
 
-# ======================== 极速浏览器类 ========================
-class FastLinuxDoBrowser:
+# ======================== 改进的浏览器类 ========================
+class ImprovedLinuxDoBrowser:
     def __init__(self, site_config, credentials):
         self.site_config = site_config
         self.site_name = site_config['name']
@@ -221,7 +221,7 @@ class FastLinuxDoBrowser:
         self.initialize_browser()
 
     def initialize_browser(self):
-        """初始化浏览器 - 极速版本"""
+        """初始化浏览器"""
         chrome_options = Options()
         
         if HEADLESS:
@@ -229,7 +229,7 @@ class FastLinuxDoBrowser:
             chrome_options.add_argument('--no-sandbox')
             chrome_options.add_argument('--disable-dev-shm-usage')
         
-        # 最小化反检测配置
+        # 反检测配置
         chrome_options.add_argument('--disable-blink-features=AutomationControlled')
         chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
         chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
@@ -331,7 +331,7 @@ class FastLinuxDoBrowser:
         return False
 
     def ensure_logged_in_fast(self):
-        """确保登录 - 极速版本"""
+        """确保登录"""
         # 尝试恢复状态
         if not FORCE_LOGIN_EVERY_TIME and self.load_state():
             if self.verify_username_presence():
@@ -382,25 +382,26 @@ class FastLinuxDoBrowser:
             logger.error(f"登录失败: {str(e)}")
             return False
 
-    def quick_browse_topics(self):
-        """快速浏览主题"""
+    def enhanced_browse_topics(self):
+        """增强的浏览主题 - 确保被记录"""
         if not BROWSE_ENABLED:
             logger.info("⏭️ 浏览功能已禁用")
             return 0
 
         try:
             self.driver.get(self.site_config['latest_url'])
-            time.sleep(2)
+            time.sleep(3)
             FastCloudflareHandler.quick_bypass_check(self.driver, 3)
 
             # 查找主题
             topic_elements = []
-            for selector in [".title", "a.title"]:
+            for selector in [".title", "a.title", "tr.topic-list-item a"]:
                 try:
                     elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
                     if elements:
                         topic_elements = [elem for elem in elements if elem.get_attribute('href') and '/t/' in elem.get_attribute('href')]
                         if topic_elements:
+                            logger.info(f"✅ 使用选择器 '{selector}' 找到 {len(topic_elements)} 个主题")
                             break
                 except:
                     continue
@@ -409,44 +410,52 @@ class FastLinuxDoBrowser:
                 logger.error("❌ 没有找到主题列表")
                 return 0
 
-            # 只浏览3个主题，每个主题快速访问
-            browse_count = min(3, len(topic_elements))
+            # 浏览4-5个主题，每个主题有足够的停留时间
+            browse_count = min(random.randint(4, 5), len(topic_elements))
+            selected_indices = random.sample(range(len(topic_elements)), browse_count)
             success_count = 0
 
-            for i in range(browse_count):
-                try:
-                    # 重新获取元素避免过时
-                    current_elements = self.driver.find_elements(By.CSS_SELECTOR, ".title")
-                    if i >= len(current_elements):
-                        break
+            logger.info(f"发现 {len(topic_elements)} 个主题，增强浏览 {browse_count} 个")
 
-                    topic = current_elements[i]
+            for i, idx in enumerate(selected_indices):
+                try:
+                    # 重新获取当前主题列表避免元素过时
+                    self.driver.get(self.site_config['latest_url'])
+                    time.sleep(2)
+                    current_topic_elements = self.driver.find_elements(By.CSS_SELECTOR, ".title, a.title")
+                    if not current_topic_elements or idx >= len(current_topic_elements):
+                        continue
+
+                    topic = current_topic_elements[idx]
                     topic_url = topic.get_attribute("href")
                     if not topic_url:
                         continue
                     if not topic_url.startswith('http'):
                         topic_url = self.site_config['base_url'] + topic_url
 
-                    logger.info(f"📖 浏览第 {i+1}/{browse_count} 个主题")
+                    logger.info(f"📖 深度浏览第 {i+1}/{browse_count} 个主题")
                     
+                    # 访问主题页面
                     self.driver.get(topic_url)
-                    time.sleep(2)
+                    time.sleep(3)
                     
-                    # 快速滚动模拟阅读
-                    for _ in range(2):
-                        self.driver.execute_script("window.scrollBy(0, 500)")
-                        time.sleep(1)
+                    # 增强的阅读行为 - 确保被记录
+                    self.enhanced_reading_behavior()
                     
+                    # 返回主题列表
                     self.driver.back()
                     time.sleep(2)
                     
                     success_count += 1
                     
-                    # 短暂间隔
+                    # 合理的间隔时间
                     if i < browse_count - 1:
-                        time.sleep(3)
+                        wait_time = random.uniform(8, 12)
+                        logger.info(f"⏳ 浏览间隔等待 {wait_time:.1f} 秒...")
+                        time.sleep(wait_time)
                         
-                except:
+                except Exception as e:
+                    logger.debug(f"浏览主题失败: {str(e)}")
                     try:
                         self.driver.get(self.site_config['latest_url'])
                         time.sleep(2)
@@ -457,16 +466,171 @@ class FastLinuxDoBrowser:
             logger.info(f"✅ 浏览完成: {success_count} 个主题")
             return success_count
             
-        except:
+        except Exception as e:
+            logger.error(f"浏览主题失败: {str(e)}")
             return 0
 
-    def get_connect_info_fast(self):
-        """快速获取连接信息 - 改进版本"""
-        logger.info("🔗 尝试获取连接信息...")
+    def enhanced_reading_behavior(self, stay_time=25):
+        """增强的阅读行为 - 确保被网站记录"""
+        logger.info(f"📖 深度阅读行为，停留 {stay_time:.1f} 秒...")
+        start_time = time.time()
+        
+        scroll_actions = 0
+        read_sessions = 0
+        
+        while time.time() - start_time < stay_time:
+            try:
+                # 随机滚动距离
+                scroll_distance = random.randint(300, 800)
+                self.driver.execute_script(f"window.scrollBy(0, {scroll_distance})")
+                scroll_actions += 1
+                
+                # 模拟阅读停顿
+                if random.random() < 0.6:  # 60%的概率深度阅读
+                    read_time = random.uniform(4, 8)
+                    logger.debug(f"📚 深度阅读 {read_time:.1f} 秒...")
+                    time.sleep(read_time)
+                    read_sessions += 1
+                else:
+                    time.sleep(random.uniform(1, 3))
+                
+                # 偶尔回滚模拟真实阅读
+                if random.random() < 0.3:
+                    back_scroll = random.randint(100, 400)
+                    self.driver.execute_script(f"window.scrollBy(0, -{back_scroll})")
+                    time.sleep(random.uniform(1, 2))
+                
+                # 随机暂停思考
+                if random.random() < 0.2:
+                    pause_time = random.uniform(2, 4)
+                    logger.debug(f"⏸️ 思考暂停 {pause_time:.1f} 秒")
+                    time.sleep(pause_time)
+                    
+            except Exception as e:
+                logger.debug(f"阅读行为异常: {str(e)}")
+                time.sleep(1)
+        
+        logger.debug(f"📊 深度阅读完成: {scroll_actions} 次滚动, {read_sessions} 次深度阅读")
+
+    def analyze_connect_page_structure(self):
+        """分析连接页面的结构"""
+        logger.info("🔍 分析连接页面结构...")
+        
+        try:
+            # 获取页面所有元素信息
+            page_title = self.driver.title
+            current_url = self.driver.current_url
+            page_source = self.driver.page_source[:2000]  # 只取前2000字符用于分析
+            
+            logger.info(f"📄 页面标题: {page_title}")
+            logger.info(f"🌐 当前URL: {current_url}")
+            logger.info(f"📝 页面源码预览: {page_source[:500]}...")
+            
+            # 查找所有表格
+            tables = self.driver.find_elements(By.TAG_NAME, "table")
+            logger.info(f"📊 找到 {len(tables)} 个表格")
+            
+            for i, table in enumerate(tables):
+                try:
+                    table_html = table.get_attribute('outerHTML')[:500]
+                    table_text = table.text.strip()
+                    logger.info(f"📋 表格 {i+1} 文本预览: {table_text[:200]}...")
+                    logger.info(f"🔧 表格 {i+1} HTML预览: {table_html}")
+                    
+                    # 检查表格是否有连接信息关键词
+                    connect_keywords = ['访问次数', '回复', '浏览', '已读', '访问天数', 'trust level']
+                    has_connect_info = any(keyword in table_text for keyword in connect_keywords)
+                    
+                    if has_connect_info:
+                        logger.success(f"✅ 表格 {i+1} 可能包含连接信息")
+                        # 解析这个表格
+                        self.parse_connect_table(table, i+1)
+                    else:
+                        logger.info(f"❌ 表格 {i+1} 不包含连接信息")
+                        
+                except Exception as e:
+                    logger.debug(f"分析表格 {i+1} 失败: {str(e)}")
+            
+            # 如果没有找到表格，尝试查找其他可能包含统计信息的元素
+            if not tables:
+                logger.info("🔍 尝试查找其他统计元素...")
+                
+                # 查找包含统计信息的div或其他元素
+                stats_selectors = [
+                    ".stats", ".user-stats", ".trust-level", 
+                    ".progress-bar", ".user-info", ".profile-stats"
+                ]
+                
+                for selector in stats_selectors:
+                    try:
+                        elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                        if elements:
+                            logger.info(f"✅ 找到 {len(elements)} 个 '{selector}' 元素")
+                            for elem in elements[:2]:  # 只检查前2个
+                                logger.info(f"📋 {selector} 内容: {elem.text[:100]}...")
+                    except:
+                        pass
+                        
+        except Exception as e:
+            logger.error(f"分析页面结构失败: {str(e)}")
+
+    def parse_connect_table(self, table, table_index):
+        """解析连接信息表格"""
+        try:
+            rows = table.find_elements(By.TAG_NAME, "tr")
+            logger.info(f"📊 表格 {table_index} 有 {len(rows)} 行")
+            
+            info = []
+            
+            for row_index, row in enumerate(rows):
+                try:
+                    # 尝试多种方式获取单元格
+                    cells_by_td = row.find_elements(By.TAG_NAME, "td")
+                    cells_by_th = row.find_elements(By.TAG_NAME, "th")
+                    cells = cells_by_td if cells_by_td else cells_by_th
+                    
+                    if len(cells) >= 2:  # 至少需要2列数据
+                        row_data = []
+                        for cell_index, cell in enumerate(cells):
+                            cell_text = cell.text.strip()
+                            row_data.append(cell_text)
+                            if cell_index >= 2:  # 只取前3列
+                                break
+                        
+                        # 如果只有2列，用空字符串填充第3列
+                        while len(row_data) < 3:
+                            row_data.append("")
+                            
+                        info.append(row_data)
+                        logger.info(f"📝 行 {row_index}: {row_data}")
+                        
+                except Exception as e:
+                    logger.debug(f"解析行 {row_index} 失败: {str(e)}")
+            
+            if info:
+                print(f"\n📊 {self.site_name.upper()} 连接信息 (表格 {table_index}):")
+                print("=" * 70)
+                try:
+                    from tabulate import tabulate
+                    print(tabulate(info, headers=["项目", "当前", "要求/状态"], tablefmt="grid"))
+                except ImportError:
+                    for item in info:
+                        print(f"{item[0]:<25} {item[1]:<20} {item[2]:<20}")
+                print("=" * 70)
+                logger.success(f"✅ 成功解析 {len(info)} 项连接信息")
+            else:
+                logger.warning(f"❌ 表格 {table_index} 没有解析出有效数据")
+                
+        except Exception as e:
+            logger.error(f"解析表格失败: {str(e)}")
+
+    def get_connect_info_enhanced(self):
+        """增强的连接信息获取"""
+        logger.info("🔗 增强获取连接信息...")
         
         try:
             self.driver.get(self.site_config['connect_url'])
-            time.sleep(3)
+            time.sleep(4)
             
             # 快速Cloudflare检查
             FastCloudflareHandler.quick_bypass_check(self.driver, 5)
@@ -477,98 +641,24 @@ class FastLinuxDoBrowser:
                 logger.warning("⚠️ 获取连接信息前登录状态验证失败")
                 return
             
-            # 尝试多种表格选择器
-            table_selectors = [
-                "table",
-                ".table",
-                "table.stats-table",
-                ".stats-table",
-                "table tr",
-                "tbody"
-            ]
-            
-            table = None
-            for selector in table_selectors:
-                try:
-                    elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
-                    for element in elements:
-                        element_text = element.text
-                        # 检查元素是否包含连接信息的关键词
-                        if any(keyword in element_text for keyword in ['访问次数', '回复', '浏览', '已读', '访问天数']):
-                            table = element
-                            break
-                    if table:
-                        break
-                except:
-                    continue
-            
-            if not table:
-                logger.warning("⚠️ 未找到连接信息表格")
-                # 保存页面用于调试
-                try:
-                    with open(f"connect_debug_{self.site_name}.html", "w", encoding='utf-8') as f:
-                        f.write(self.driver.page_source)
-                    logger.info(f"💾 已保存连接页面源码: connect_debug_{self.site_name}.html")
-                except:
-                    pass
-                return
-            
-            # 尝试解析表格数据
-            info = []
-            try:
-                # 先尝试按行解析
-                rows = table.find_elements(By.TAG_NAME, "tr")
-                for row in rows:
-                    try:
-                        cells = row.find_elements(By.TAG_NAME, "td")
-                        if len(cells) >= 3:
-                            project = cells[0].text.strip()
-                            current = cells[1].text.strip()
-                            requirement = cells[2].text.strip()
-                            if project and current:  # 确保有有效数据
-                                info.append([project, current, requirement])
-                    except:
-                        continue
-                
-                # 如果按行解析失败，尝试直接获取所有文本
-                if not info:
-                    table_text = table.text
-                    lines = table_text.split('\n')
-                    for i in range(0, len(lines)-2, 3):
-                        if i+2 < len(lines):
-                            info.append([lines[i], lines[i+1], lines[i+2]])
-            except Exception as e:
-                logger.debug(f"表格解析失败: {str(e)}")
-            
-            if info:
-                print(f"\n📊 {self.site_name.upper()} 连接信息:")
-                print("-" * 60)
-                try:
-                    from tabulate import tabulate
-                    print(tabulate(info, headers=["项目", "当前", "要求"], tablefmt="simple"))
-                except ImportError:
-                    for item in info:
-                        print(f"{item[0]:<20} {item[1]:<20} {item[2]:<20}")
-                print("-" * 60)
-                logger.success(f"✅ 成功获取 {len(info)} 项连接信息")
-            else:
-                logger.warning("⚠️ 未解析到连接信息")
+            # 分析页面结构
+            self.analyze_connect_page_structure()
                 
         except Exception as e:
             logger.debug(f"获取连接信息失败: {str(e)}")
 
-    def run_ultra_fast(self):
-        """执行极速自动化流程"""
+    def run_enhanced(self):
+        """执行增强的自动化流程"""
         try:
             logger.info(f"🚀 开始处理: {self.site_name}")
 
-            # 1. 极速登录（核心：用户名验证）
+            # 1. 登录（核心：用户名验证）
             if not self.ensure_logged_in_fast():
                 logger.error(f"❌ {self.site_name} 登录失败")
                 return False
 
-            # 2. 快速浏览主题
-            browse_count = self.quick_browse_topics()
+            # 2. 增强浏览主题（确保被记录）
+            browse_count = self.enhanced_browse_topics()
             if browse_count == 0:
                 logger.warning(f"⚠️ {self.site_name} 浏览主题失败")
 
@@ -578,8 +668,8 @@ class FastLinuxDoBrowser:
                 logger.error("❌ 浏览后登录状态丢失")
                 return False
 
-            # 4. 快速获取连接信息（可选，不影响主要流程）
-            self.get_connect_info_fast()
+            # 4. 增强获取连接信息（包含页面结构分析）
+            self.get_connect_info_enhanced()
 
             # 5. 保存状态
             self.save_state(True, browse_count)
@@ -598,12 +688,12 @@ class FastLinuxDoBrowser:
             except:
                 pass
 
-# ======================== 极速主函数 ========================
-def main_ultra_fast():
-    """极速主函数"""
-    logger.info("⚡ Linux.Do 极速自动化脚本启动")
+# ======================== 增强主函数 ========================
+def main_enhanced():
+    """增强主函数"""
+    logger.info("🚀 Linux.Do 增强自动化脚本启动")
     
-    # 极简日志配置
+    # 日志配置
     logger.remove()
     logger.add(sys.stdout, format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{message}</cyan>")
     
@@ -624,8 +714,8 @@ def main_ultra_fast():
 
         logger.info(f"🔧 初始化 {site_name}")
         try:
-            browser = FastLinuxDoBrowser(site_config, credentials)
-            success = browser.run_ultra_fast()
+            browser = ImprovedLinuxDoBrowser(site_config, credentials)
+            success = browser.run_enhanced()
 
             if success:
                 success_sites.append(site_name)
@@ -633,12 +723,14 @@ def main_ultra_fast():
                 failed_sites.append(site_name)
                 
         except Exception as e:
-            logger.error(f"❌ {self.site_name} 异常: {str(e)}")
+            logger.error(f"❌ {site_name} 异常: {str(e)}")
             failed_sites.append(site_name)
 
-        # 短暂站点间等待
+        # 站点间等待
         if site_config != target_sites[-1]:
-            time.sleep(8)
+            wait_time = random.uniform(10, 15)
+            logger.info(f"⏳ 等待 {wait_time:.1f} 秒后处理下一个站点...")
+            time.sleep(wait_time)
 
     logger.info("📊 执行总结:")
     logger.info(f"✅ 成功: {', '.join(success_sites) if success_sites else '无'}")
@@ -650,4 +742,4 @@ def main_ultra_fast():
         sys.exit(1)
 
 if __name__ == "__main__":
-    main_ultra_fast()
+    main_enhanced()
