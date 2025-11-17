@@ -57,7 +57,9 @@ jobs:
           libxrandr2 \
           libgbm1 \
           libxss1 \
-          libasound2
+          libasound2 \
+          tesseract-ocr \
+          libtesseract-dev
 
     - name: Install Chrome
       run: |
@@ -66,10 +68,14 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y google-chrome-stable
 
-    - name: Install Python dependencies
+    - name: Install Python dependencies from requirements.txt
       run: |
         python -m pip install --upgrade pip
-        pip install selenium loguru requests
+        pip install -r requirements.txt
+
+    - name: Install Playwright browsers
+      run: |
+        python -m playwright install
 
     - name: Create turnstilePatch extension
       run: |
