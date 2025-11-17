@@ -17,7 +17,7 @@ on:
 
 env:
   PYTHON_VERSION: '3.11'
-  CACHE_PRIMARY_KEY: ${{ github.ref }}-linuxdo-smart-cache-v6
+  CACHE_PRIMARY_KEY: ${{ github.ref }}-linuxdo-smart-cache-v7
 
 jobs:
   automate-smart:
@@ -95,6 +95,7 @@ jobs:
         echo "缓存恢复: ${{ steps.cache-restore.outputs.cache-hit == 'true' && '✅' || '❌' }}"
         echo "Turnstile双重保护: ✅"
         echo "智能缓存管理: ✅"
+        echo "主要目的: 浏览记录收集 ✅"
         python main.py
         echo "✅ 智能脚本执行完成"
 
