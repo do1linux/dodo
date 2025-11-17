@@ -2,7 +2,8 @@
 # -*- coding: utf-8 -*-
 """
 LinuxDo 多站点自动化脚本 - 修复主题浏览版本
-修复：主题选择器问题、单标签页浏览、新标签页连接信息
+主题浏览: 单标签页,使用了@id=list-area和.:title来获取主题列表
+连接信息: 新标签页,使用 tabulate 库美化表格显示
 """
 
 import os
@@ -845,4 +846,5 @@ if __name__ == "__main__":
         logger.warning(f"⚠️ 以下环境变量未设置: {', '.join(missing_vars)}")
     
     main()
+
 
