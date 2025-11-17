@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+#说明：保持双重验证机制（私有主题访问+用户名确认）
+#主题浏览: 单标签页,使用了Discourse专用选择器来获取主题列表
+#连接信息: 新标签页,使用 tabulate 库美化表格显示
 """
 Discourse论坛专用版 - 使用正确的Discourse选择器
 """
@@ -751,3 +754,4 @@ if __name__ == "__main__":
         logger.warning(f"⚠️ 以下环境变量未设置: {', '.join(missing_vars)}")
     
     main()
+
