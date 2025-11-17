@@ -7,14 +7,22 @@ LinuxDo 多站点自动化脚本 - 完整修复版
 """
 
 import os
-import sys
-import time
 import random
+import time
+import sys
 import json
-from datetime import datetime
+import pickle
+import requests
+from datetime import datetime, timedelta
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.action_chains import ActionChains
+from selenium.common.exceptions import TimeoutException, NoSuchElementException, StaleElementReferenceException
 from loguru import logger
-from DrissionPage import ChromiumOptions, Chromium
-from tabulate import tabulate
+import hashlib
 
 # ======================== 配置常量 ========================
 # 站点认证信息配置 - 请确保环境变量已设置
@@ -1091,3 +1099,4 @@ if __name__ == "__main__":
         logger.warning("请确保在运行前设置所有必要的环境变量")
     
     main()
+
