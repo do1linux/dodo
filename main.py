@@ -488,17 +488,11 @@ class LinuxDoBrowser:
         
         # 更全面的选择器列表
         selectors = [
-            "a.title",
-            ".title a", 
-            "tr.topic-list-item a",
-            ".topic-list-body a",
-            "[data-topic-id] a",
-            ".main-link a",
-            "a.raw-topic-link",
-            ".topic-list .title a",
-            "#list-area .title a",
-            ".topic-list-item .title a"
-        ]
+                "@id=list-area",
+                ".topic-list",
+                "tr.topic-list-item",
+                "[data-topic-id]"
+            ]
         
         for selector in selectors:
             try:
@@ -679,52 +673,27 @@ class LinuxDoBrowser:
         except Exception as e:
             logger.debug(f"触发交互事件异常: {str(e)}")
 
-    def print_connect_info_new_tab(self):
-        """新标签页获取连接信息"""
-        logger.info("🔗 新标签页获取连接信息...")
+    def print_connect_info(self):
+        """打印连接信息 - 基于参考代码的实现"""
+        logger.info("🔗 获取连接信息...")
         try:
             # 在新标签页打开连接页面
             connect_tab = self.page.new_tab()
             connect_tab.get(self.site_config['connect_url'])
+            time.sleep(5)
+            
+            # 处理Cloudflare验证
+            CloudflareHandler.handle_cloudflare(connect_tab)
             time.sleep(3)
             
-            CloudflareHandler.handle_cloudflare_fast(connect_tab)
-            time.sleep(2)
+            # 查找表格
+            table = connect_tab.ele("tag:table")
+            if not table:
+                logger.warning("⚠️ 未找到连接信息表格")
+                connect_tab.close()
+                return
             
-            # 获取连接信息
-            connect_info = self.extract_connect_info(connect_tab)
-            if connect_info:
-                self.display_connect_info(connect_info)
-            else:
-                logger.warning("⚠️ 未获取到连接信息")
-            
-            # 关闭连接页面标签
-            connect_tab.close()
-            logger.info("✅ 连接信息获取完成")
-            
-        except Exception as e:
-            logger.error(f"❌ 获取连接信息失败: {str(e)}")
-
-    def extract_connect_info(self, page):
-        """提取连接信息"""
-        try:
-            # 尝试多种表格选择器
-            table_selectors = ["tag:table", ".connect-table", ".requirements-table"]
-            
-            for selector in table_selectors:
-                table = page.ele(selector)
-                if table:
-                    return self.parse_connect_table(table)
-            
-            return None
-            
-        except Exception as e:
-            logger.error(f"❌ 提取连接信息失败: {str(e)}")
-            return None
-
-    def parse_connect_table(self, table):
-        """解析连接信息表格"""
-        try:
+            # 提取表格数据
             rows = table.eles("tag:tr")
             info = []
             
@@ -734,29 +703,27 @@ class LinuxDoBrowser:
                     project = cells[0].text.strip()
                     current = cells[1].text.strip()
                     requirement = cells[2].text.strip()
-                    if project and current and requirement:
-                        info.append([project, current, requirement])
+                    info.append([project, current, requirement])
             
-            return info if info else None
+            if info:
+                print("\n" + "="*60)
+                print(f"📊 {self.site_name.upper()} 连接信息")
+                print("="*60)
+                print(tabulate(info, headers=["项目", "当前", "要求"], tablefmt="pretty"))
+                print("="*60 + "\n")
+                
+                # 统计达标情况
+                passed = sum(1 for item in info if any(indicator in str(item[1]) for indicator in ['✅', '✔', '✓', '≥']))
+                total = len(info)
+                logger.success(f"📈 统计完成: {passed}/{total} 项达标")
+            else:
+                logger.warning("⚠️ 未找到连接信息数据")
+            
+            # 关闭连接页面标签
+            connect_tab.close()
             
         except Exception as e:
-            logger.error(f"❌ 解析表格失败: {str(e)}")
-            return None
-
-    def display_connect_info(self, info):
-        """显示连接信息"""
-        if not info:
-            return
-            
-        print("\n" + "="*60)
-        print(f"📊 {self.site_name.upper()} 连接信息")
-        print("="*60)
-        print(tabulate(info, headers=["项目", "当前", "要求"], tablefmt="pretty"))
-        print("="*60 + "\n")
-        
-        passed = sum(1 for item in info if any(indicator in str(item[1]) for indicator in ['✅', '✔', '✓', '≥', '%']))
-        total = len(info)
-        logger.success(f"📈 统计完成: {passed}/{total} 项达标")
+            logger.error(f"❌ 获取连接信息失败: {str(e)}")
 
     def run_fixed_version(self):
         """修复版本的完整流程"""
@@ -878,3 +845,4 @@ if __name__ == "__main__":
         logger.warning(f"⚠️ 以下环境变量未设置: {', '.join(missing_vars)}")
     
     main()
+
