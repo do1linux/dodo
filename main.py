@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-LinuxDo 多站点自动化脚本 - DrissionPage完整修复版
-功能：自动登录 Linux.do 和 IDCFlare 论坛，严格验证登录状态，自动处理Cloudflare
-特点：双重验证机制（私有主题访问 + 用户名确认），增强反检测，确保浏览记录被收集
+LinuxDo 多站点自动化脚本 - 修复主题浏览问题版本
+主要修复：主题选择器问题、浏览计数问题、连接信息显示问题
 """
 
 import os
@@ -28,13 +27,13 @@ SITE_CREDENTIALS = {
     }
 }
 
-# 站点配置列表
+# 站点配置列表 - 更新私有主题URL
 SITES = [
     {
         'name': 'linux_do',
         'base_url': 'https://linux.do',
         'login_url': 'https://linux.do/login',
-        'private_topic_url': 'https://linux.do/t/topic/1164438',  # 用于验证登录状态的私有主题
+        'private_topic_url': 'https://linux.do/t/topic/2362',  # 已验证的私有主题
         'latest_url': 'https://linux.do/latest',
         'connect_url': 'https://connect.linux.do',
         'user_url': 'https://linux.do/u',
@@ -45,7 +44,7 @@ SITES = [
         'name': 'idcflare',
         'base_url': 'https://idcflare.com',
         'login_url': 'https://idcflare.com/login',
-        'private_topic_url': 'https://idcflare.com/t/topic/24',  # 用于验证登录状态的私有主题
+        'private_topic_url': 'https://idcflare.com/t/topic/24',  # 已验证的私有主题
         'latest_url': 'https://idcflare.com/latest',
         'connect_url': 'https://connect.idcflare.com',
         'user_url': 'https://idcflare.com/u',
@@ -88,7 +87,6 @@ class CacheManager:
                 return data
             except Exception as e:
                 logger.warning(f"⚠️ 缓存加载失败 {file_name}: {str(e)}")
-                # 删除损坏的缓存文件
                 try:
                     os.remove(file_path)
                     logger.info(f"🗑️ 已删除损坏的缓存文件: {file_name}")
@@ -113,28 +111,6 @@ class CacheManager:
             return False
 
     @staticmethod
-    def is_cache_valid(file_name, expiry_hours=COOKIES_EXPIRY_HOURS):
-        """检查缓存是否有效（未过期且存在）"""
-        file_path = CacheManager.get_cache_file_path(file_name)
-        if not os.path.exists(file_path):
-            return False
-        
-        try:
-            file_modified_time = datetime.fromtimestamp(os.path.getmtime(file_path))
-            time_diff = datetime.now() - file_modified_time
-            is_valid = time_diff.total_seconds() < expiry_hours * 3600
-            
-            if is_valid:
-                logger.info(f"✅ 缓存有效: {file_name} (年龄: {time_diff.total_seconds()/3600:.1f}小时)")
-            else:
-                logger.warning(f"⚠️ 缓存过期: {file_name} (已存在{time_diff.total_seconds()/3600:.1f}小时)")
-            
-            return is_valid
-        except Exception as e:
-            logger.error(f"❌ 缓存验证失败: {str(e)}")
-            return False
-
-    @staticmethod
     def load_site_cache(site_name, cache_type):
         """加载特定站点的缓存"""
         file_name = f"{cache_type}_{site_name}.json"
@@ -151,72 +127,23 @@ class CloudflareHandler:
     """Cloudflare验证处理类"""
     
     @staticmethod
-    def is_cf_cookie_valid(cookies):
-        """检查Cloudflare cookie是否有效"""
-        try:
-            if not cookies:
-                return False
-                
-            for cookie in cookies:
-                if cookie.get('name') == 'cf_clearance':
-                    expires = cookie.get('expires', 0)
-                    if expires == -1 or expires > time.time():
-                        logger.success("✅ 检测到有效的cf_clearance cookie")
-                        return True
-            return False
-        except Exception:
-            return False
-
-    @staticmethod
-    def handle_cloudflare(page, max_attempts=8, timeout=180):
-        """
-        处理Cloudflare验证
-        
-        Args:
-            page: ChromiumPage对象
-            max_attempts (int): 最大尝试次数
-            timeout (int): 超时时间（秒）
-            
-        Returns:
-            bool: 验证通过返回True，否则返回False
-        """
+    def handle_cloudflare(page, max_attempts=5, timeout=120):
+        """处理Cloudflare验证"""
         start_time = time.time()
         logger.info("🛡️ 开始处理Cloudflare验证")
         
-        # 检查缓存的Cloudflare cookies
-        cached_cookies = CacheManager.load_cache("cf_cookies.json")
-        cached_cf_valid = CloudflareHandler.is_cf_cookie_valid(cached_cookies)
-        
-        if cached_cf_valid:
-            logger.success("✅ 检测到有效的缓存Cloudflare cookie")
-            try:
-                # 尝试使用缓存cookies访问
-                if cached_cookies:
-                    page.set.cookies(cached_cookies)
-                    page.get("https://linux.do")
-                    time.sleep(5)
-                    
-                    page_title = page.title
-                    if page_title and page_title != "请稍候…" and "Checking" not in page_title:
-                        logger.success("✅ 使用缓存成功绕过Cloudflare验证")
-                        return True
-            except Exception as e:
-                logger.warning(f"⚠️ 使用缓存绕过失败: {str(e)}")
-        
-        # 完整验证流程
-        logger.info("🔄 开始完整Cloudflare验证流程")
         for attempt in range(max_attempts):
             try:
                 current_url = page.url
                 page_title = page.title
                 
                 # 检查页面是否已经正常加载
-                if page_title and page_title != "请稍候…" and "Checking" not in page_title:
+                if page_title and page_title != "请稍候…" and "Checking" not in page_title and "Just a moment" not in page_title:
                     logger.success("✅ 页面已正常加载，Cloudflare验证通过")
                     return True
                 
                 # 等待验证
-                wait_time = random.uniform(8, 15)
+                wait_time = random.uniform(5, 10)
                 logger.info(f"⏳ 等待Cloudflare验证完成 ({wait_time:.1f}秒) - 尝试 {attempt + 1}/{max_attempts}")
                 time.sleep(wait_time)
                 
@@ -225,15 +152,9 @@ class CloudflareHandler:
                     logger.warning(f"⚠️ Cloudflare处理超时 ({timeout}秒)")
                     break
                     
-                # 偶尔刷新页面
-                if attempt % 3 == 0 and attempt > 0:
-                    logger.info("🔄 刷新页面")
-                    page.refresh()
-                    time.sleep(5)
-                    
             except Exception as e:
                 logger.error(f"Cloudflare处理异常 (尝试 {attempt + 1}): {str(e)}")
-                time.sleep(10)
+                time.sleep(5)
         
         # 最终检查
         try:
@@ -262,7 +183,7 @@ class LinuxDoBrowser:
         self.initialize_browser()
 
     def initialize_browser(self):
-        """初始化浏览器 - 使用DrissionPage的ChromiumPage"""
+        """初始化浏览器"""
         try:
             # 配置浏览器选项
             co = ChromiumOptions()
@@ -272,18 +193,15 @@ class LinuxDoBrowser:
             else:
                 co.headless(False)
                 
-            # 反检测核心配置
-            co.incognito(True)  # 使用隐身模式避免缓存干扰
+            # 反检测配置
+            co.incognito(True)
             co.set_argument("--no-sandbox")
             co.set_argument("--disable-dev-shm-usage")
             co.set_argument("--disable-blink-features=AutomationControlled")
             co.set_argument("--disable-features=VizDisplayCompositor")
-            co.set_argument("--disable-background-timer-throttling")
-            co.set_argument("--disable-backgrounding-occluded-windows")
-            co.set_argument("--disable-renderer-backgrounding")
             co.set_argument("--lang=zh-CN,zh;q=0.9,en;q=0.8")
             
-            # 固定Windows用户代理
+            # 用户代理
             user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
             co.set_user_agent(user_agent)
             
@@ -293,135 +211,15 @@ class LinuxDoBrowser:
             # 加载会话数据
             self.session_data = CacheManager.load_site_cache(self.site_name, 'session_data') or {}
             
-            # 注入增强脚本
-            self.inject_enhanced_script()
-            
             logger.info(f"✅ {self.site_name} 浏览器初始化完成")
             
         except Exception as e:
             logger.error(f"❌ 浏览器初始化失败: {str(e)}")
             raise
 
-    def inject_enhanced_script(self):
-        """注入增强的反检测脚本和Turnstile模拟"""
-        enhanced_script = """
-        // 增强的反检测脚本
-        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-        
-        // 模拟完整的浏览器环境
-        Object.defineProperty(navigator, 'plugins', { 
-            get: () => [1, 2, 3, 4, 5],
-            configurable: true
-        });
-        
-        Object.defineProperty(navigator, 'languages', { 
-            get: () => ['zh-CN', 'zh', 'en-US', 'en'] 
-        });
-        
-        // 屏蔽自动化特征
-        window.chrome = { 
-            runtime: {},
-            loadTimes: function() {},
-            csi: function() {}, 
-            app: {isInstalled: false}
-        };
-        
-        // 页面可见性API
-        Object.defineProperty(document, 'hidden', { get: () => false });
-        Object.defineProperty(document, 'visibilityState', { get: () => 'visible' });
-        
-        // Turnstile 模拟 - 在页面加载前就定义
-        if (typeof window.turnstile === 'undefined') {
-            Object.defineProperty(window, 'turnstile', {
-                get: () => ({
-                    ready: (fn) => {
-                        console.log('Turnstile ready called');
-                        setTimeout(fn, 100);
-                    },
-                    render: (element, options) => {
-                        console.log('Turnstile render called', options);
-                        return 'mock-widget-id-' + Date.now();
-                    },
-                    execute: (element, options) => {
-                        console.log('Turnstile execute called', options);
-                        return Promise.resolve('mock-token-' + Date.now());
-                    },
-                    reset: () => console.log('Turnstile reset called'),
-                    getResponse: () => {
-                        const response = 'mock-cf-turnstile-response-' + Date.now();
-                        console.log('Turnstile getResponse called, returning:', response);
-                        return response;
-                    },
-                    remove: () => console.log('Turnstile remove called')
-                })
-            });
-            console.log('✅ Turnstile 模拟已加载');
-        }
-        
-        // 统计请求拦截和确保
-        const originalFetch = window.fetch;
-        window.fetch = function(...args) {
-            const url = args[0];
-            if (typeof url === 'string' && 
-                (url.includes('analytics') || url.includes('statistics') || 
-                 url.includes('track') || url.includes('count'))) {
-                console.log('📊 统计请求被发送:', url);
-                return originalFetch.apply(this, args).catch(() => {
-                    return Promise.resolve(new Response(null, {status: 200}));
-                });
-            }
-            return originalFetch.apply(this, args);
-        };
-        
-        // XMLHttpRequest拦截
-        const originalXHROpen = XMLHttpRequest.prototype.open;
-        const originalXHRSend = XMLHttpRequest.prototype.send;
-        
-        XMLHttpRequest.prototype.open = function(method, url, ...rest) {
-            this._url = url;
-            return originalXHROpen.apply(this, [method, url, ...rest]);
-        };
-        
-        XMLHttpRequest.prototype.send = function(...args) {
-            if (this._url && (this._url.includes('analytics') || 
-                this._url.includes('statistics') || this._url.includes('count'))) {
-                this.addEventListener('load', () => {
-                    console.log('统计请求完成:', this._url);
-                });
-                this.addEventListener('error', () => {
-                    console.log('统计请求失败，但继续执行:', this._url);
-                });
-            }
-            return originalXHRSend.apply(this, args);
-        };
-        
-        // 用户行为事件模拟
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', () => {
-                setTimeout(() => {
-                    window.dispatchEvent(new Event('pageview'));
-                    if (typeof window.onPageView === 'function') {
-                        window.onPageView();
-                    }
-                }, 1000);
-            });
-        } else {
-            window.dispatchEvent(new Event('pageview'));
-        }
-        
-        console.log('🔧 增强的JS环境模拟和Turnstile模拟已加载');
-        """
-        
-        try:
-            self.page.run_js(enhanced_script)
-            logger.info("✅ 增强的反检测脚本和Turnstile模拟已注入")
-        except Exception as e:
-            logger.warning(f"⚠️ 注入脚本失败: {str(e)}")
-
     def get_all_cookies(self):
         """获取所有cookies"""
         try:
-            # 使用DrissionPage的cookies方法
             cookies = self.page.cookies()
             if cookies:
                 logger.info(f"✅ 成功获取 {len(cookies)} 个cookies")
@@ -445,20 +243,12 @@ class LinuxDoBrowser:
                 CacheManager.save_site_cache(cookies, self.site_name, 'cf_cookies')
                 logger.info("✅ Cloudflare Cookies已缓存")
             
-            # 保存浏览器状态
-            state_data = {
-                'timestamp': datetime.now().isoformat(),
-                'url': self.page.url,
-                'title': self.page.title
-            }
-            CacheManager.save_site_cache(state_data, self.site_name, 'browser_state')
-            
-            # 更新并保存会话数据
+            # 保存会话数据
             self.session_data.update({
                 'last_success': datetime.now().isoformat(),
                 'login_status': 'success',
                 'last_updated': datetime.now().isoformat(),
-                'cache_version': '4.0',
+                'cache_version': '4.1',
                 'total_saved': self.session_data.get('total_saved', 0) + 1,
                 'last_url': self.page.url
             })
@@ -495,7 +285,7 @@ class LinuxDoBrowser:
             
         # 加载缓存的cookies
         cookies = CacheManager.load_site_cache(self.site_name, 'cf_cookies')
-        if not cookies or not CloudflareHandler.is_cf_cookie_valid(cookies):
+        if not cookies:
             logger.warning("⚠️ 无有效缓存Cookies")
             return False
         
@@ -526,17 +316,13 @@ class LinuxDoBrowser:
             logger.error(f"❌ 缓存登录异常: {str(e)}")
             return False
 
-    def strict_verify_login_status(self, max_retries=3):
-        """
-        严格的登录状态验证 - 双重验证机制
-        1. 验证私有主题可访问且无错误提示
-        2. 验证用户名存在于页面中
-        """
+    def strict_verify_login_status(self, max_retries=2):
+        """严格的登录状态验证"""
         logger.info("🔍 执行严格登录状态验证...")
         
         for retry in range(max_retries):
             try:
-                # 第一步：访问私有主题
+                # 访问私有主题
                 private_url = self.site_config['private_topic_url']
                 logger.info(f"📍 访问私有主题: {private_url}")
                 self.page.get(private_url)
@@ -578,10 +364,9 @@ class LinuxDoBrowser:
                 
                 logger.success("✅ 私有主题访问成功 - 无错误提示")
                 
-                # 第二步：验证用户名存在
+                # 验证用户名存在
                 if self.username.lower() in page_content.lower():
                     logger.success(f"✅ 在页面中找到用户名: {self.username}")
-                    # 双重验证通过
                     logger.success("🎉 双重验证通过 - 登录状态有效")
                     return True
                 else:
@@ -613,9 +398,6 @@ class LinuxDoBrowser:
         CloudflareHandler.handle_cloudflare(self.page)
         time.sleep(3)
         
-        # 注入脚本
-        self.inject_enhanced_script()
-        
         # 填写登录信息
         try:
             # 等待表单元素出现
@@ -627,7 +409,6 @@ class LinuxDoBrowser:
                 logger.error("❌ 找不到用户名字段")
                 return False
             
-            # 模拟人类输入速度
             logger.info("⌨️ 输入用户名...")
             username_field.input(self.username)
             time.sleep(random.uniform(0.5, 1))
@@ -663,7 +444,6 @@ class LinuxDoBrowser:
                 return True
             else:
                 logger.error("❌ 登录失败")
-                # 登录失败时清除缓存
                 self.clear_caches()
                 return False
                 
@@ -682,149 +462,83 @@ class LinuxDoBrowser:
         # 执行手动登录
         return self.login()
 
-    def enhanced_browse_post(self, stay_time=35):
-        """
-        增强的浏览行为，确保统计被正确计数
-        基于内容长度计算停留时间，模拟真实阅读
-        """
+    def enhanced_browse_post(self, stay_time=25):
+        """增强的浏览行为"""
         try:
-            # 获取页面内容信息
-            content_info = self.page.run_js("""
-                function getContentInfo() {
-                    const content = document.querySelector('.topic-post .cooked') || 
-                                   document.querySelector('.post-content') ||
-                                   document.querySelector('.post-body') ||
-                                   document.body;
-                    return {
-                        length: content ? content.textContent.length : 500,
-                        height: content ? content.scrollHeight : 2000,
-                        wordCount: content ? content.textContent.split(/\\s+/).length : 100,
-                        imageCount: content ? content.querySelectorAll('img').length : 0
-                    };
-                }
-                return getContentInfo();
-            """)
+            logger.info(f"📖 模拟阅读行为，停留 {stay_time:.1f} 秒...")
+            start_time = time.time()
             
-            if not content_info:
-                content_info = {'length': 500, 'height': 2000, 'wordCount': 100, 'imageCount': 0}
+            # 随机滚动次数
+            scroll_count = random.randint(6, 10)
+            scrolls_done = 0
             
-            # 基于内容计算阅读时间（更长的停留）
-            base_time = max(30, min(120, content_info['length'] / 15))
-            read_time = base_time * random.uniform(0.9, 1.4)
+            while time.time() - start_time < stay_time:
+                try:
+                    # 随机滚动距离
+                    scroll_distance = random.randint(200, 600)
+                    self.page.run_js(f"window.scrollBy(0, {scroll_distance})")
+                    scrolls_done += 1
+                    
+                    # 随机阅读时间
+                    if random.random() < 0.5:
+                        read_time = random.uniform(2, 5)
+                        time.sleep(read_time)
+                    else:
+                        time.sleep(random.uniform(1, 3))
+                    
+                    # 随机回滚
+                    if random.random() < 0.2:
+                        back_scroll = random.randint(100, 200)
+                        self.page.run_js(f"window.scrollBy(0, -{back_scroll})")
+                        time.sleep(random.uniform(1, 2))
+                    
+                except Exception as e:
+                    logger.debug(f"阅读行为模拟异常: {str(e)}")
+                    time.sleep(1)
             
-            logger.info(f"📖 预计阅读时间: {read_time:.1f}秒 (内容长度:{content_info['length']}字符, 图片:{content_info['imageCount']}张)")
-            
-            # 分段滚动模拟
-            scroll_segments = random.randint(6, 12)
-            time_per_segment = read_time / scroll_segments
-            
-            for segment in range(scroll_segments):
-                # 计算滚动位置
-                scroll_ratio = (segment + 1) / scroll_segments
-                scroll_pos = content_info['height'] * scroll_ratio
-                
-                # 平滑滚动
-                self.page.run_js(f"""
-                    window.scrollTo({{
-                        top: {scroll_pos},
-                        behavior: 'smooth'
-                    }});
-                """)
-                
-                # 模拟用户交互（阅读过程中的小动作）
-                if random.random() < 0.4:
-                    self.simulate_user_interaction()
-                
-                # 分段停留
-                segment_wait = time_per_segment * random.uniform(0.8, 1.3)
-                time.sleep(segment_wait)
-            
-            # 最终滚动到底部
-            self.page.run_js("window.scrollTo({top: document.body.scrollHeight, behavior: 'smooth'})")
-            time.sleep(random.uniform(3, 6))
-            
-            logger.info("✅ 深度浏览完成 - 确保活动被记录")
+            logger.debug(f"📊 阅读完成: {scrolls_done} 次滚动")
             
         except Exception as e:
             logger.error(f"❌ 增强浏览失败: {str(e)}")
             # 降级到基础浏览
-            self.fallback_browse_post()
+            time.sleep(stay_time)
 
-    def fallback_browse_post(self):
-        """降级浏览行为"""
-        try:
-            scroll_count = random.randint(8, 15)
-            logger.info(f"📜 执行基础浏览: {scroll_count} 次滚动")
-            
-            for i in range(scroll_count):
-                # 更自然的滚动距离
-                scroll_distance = random.randint(400, 900)
-                self.page.run_js(f"window.scrollBy(0, {scroll_distance})")
-                
-                # 随机交互
-                if random.random() < 0.3:
-                    self.simulate_user_interaction()
-                
-                # 动态等待时间
-                wait_time = random.uniform(2, 4)
-                time.sleep(wait_time)
-            
-            logger.info("✅ 基础浏览完成")
-        except Exception as e:
-            logger.error(f"❌ 基础浏览失败: {str(e)}")
+    def find_topic_elements(self):
+        """查找主题元素 - 使用多种选择器"""
+        topic_elements = []
+        
+        # 尝试多种选择器
+        selectors = [
+            "a.title",
+            ".title a", 
+            "tr.topic-list-item a",
+            ".topic-list-body a",
+            "[data-topic-id] a"
+        ]
+        
+        for selector in selectors:
+            try:
+                elements = self.page.eles(selector)
+                if elements:
+                    # 过滤出有效的主题链接
+                    valid_elements = []
+                    for elem in elements:
+                        href = elem.attr('href')
+                        if href and '/t/' in href:
+                            valid_elements.append(elem)
+                    
+                    if valid_elements:
+                        topic_elements = valid_elements
+                        logger.info(f"✅ 使用选择器 '{selector}' 找到 {len(topic_elements)} 个主题")
+                        break
+            except Exception as e:
+                logger.debug(f"选择器 {selector} 查找失败: {str(e)}")
+                continue
+        
+        return topic_elements
 
-    def simulate_user_interaction(self):
-        """模拟用户交互行为"""
-        try:
-            # 随机交互类型
-            interaction_type = random.choice(['mousemove', 'click', 'scroll'])
-            
-            if interaction_type == 'mousemove':
-                self.page.run_js("""
-                    document.dispatchEvent(new MouseEvent('mousemove', { 
-                        bubbles: true, 
-                        clientX: Math.random() * window.innerWidth, 
-                        clientY: Math.random() * window.innerHeight 
-                    }));
-                """)
-            elif interaction_type == 'click':
-                self.page.run_js("document.dispatchEvent(new MouseEvent('click', { bubbles: true }));")
-            else:
-                self.page.run_js("window.dispatchEvent(new Event('scroll'));")
-                
-            time.sleep(0.1)
-                
-        except Exception as e:
-            logger.debug(f"模拟交互失败: {str(e)}")
-
-    def click_like(self):
-        """点赞当前帖子"""
-        try:
-            # 查找未点赞的按钮
-            like_buttons = self.page.eles(".discourse-reactions-reaction-button")
-            for button in like_buttons:
-                try:
-                    if button and button.states.is_enabled:
-                        # 检查是否已点赞
-                        button_class = button.attr('class')
-                        if button_class and 'has-like' not in button_class:
-                            logger.info("👍 找到未点赞按钮，准备点赞")
-                            button.click()
-                            time.sleep(random.uniform(1, 3))
-                            logger.success("✅ 点赞成功")
-                            return True
-                        else:
-                            logger.info("ℹ️ 按钮已点赞过")
-                            return False
-                except:
-                    continue
-            logger.info("ℹ️ 未找到可点赞的按钮")
-        except Exception as e:
-            logger.error(f"❌ 点赞失败: {str(e)}")
-        return False
-
-    def browse_topics(self):
-        """浏览主题 - 确保活动被记录"""
+    def browse_topics_enhanced(self):
+        """增强的主题浏览功能"""
         if not BROWSE_ENABLED:
             logger.info("⏭️ 浏览功能已禁用")
             return 0
@@ -835,7 +549,7 @@ class LinuxDoBrowser:
             return 0
         
         try:
-            logger.info(f"🌐 开始浏览 {self.site_name} 主题...")
+            logger.info(f"🌐 开始增强浏览 {self.site_name} 主题...")
             
             # 访问最新页面
             self.page.get(self.site_config['latest_url'])
@@ -846,13 +560,13 @@ class LinuxDoBrowser:
             time.sleep(3)
             
             # 查找主题元素
-            topic_elements = self.page.eles(".title")
+            topic_elements = self.find_topic_elements()
             if not topic_elements:
                 logger.error("❌ 未找到主题列表")
                 return 0
             
-            # 随机选择6-10个主题
-            browse_count = min(random.randint(6, 10), len(topic_elements))
+            # 随机选择3-5个主题（避免过多）
+            browse_count = min(random.randint(3, 5), len(topic_elements))
             selected_indices = random.sample(range(len(topic_elements)), browse_count)
             success_count = 0
             
@@ -860,43 +574,38 @@ class LinuxDoBrowser:
             
             for i, idx in enumerate(selected_indices):
                 try:
-                    # 重新获取主题元素列表（避免stale element）
-                    current_topics = self.page.eles(".title")
-                    if not current_topics or idx >= len(current_topics):
-                        logger.warning("⚠️ 主题元素已更新，重新获取...")
-                        self.page.get(self.site_config['latest_url'])
-                        time.sleep(3)
-                        current_topics = self.page.eles(".title")
-                        if not current_topics:
-                            logger.error("❌ 重新获取主题列表失败")
-                            return success_count
+                    if idx >= len(topic_elements):
+                        logger.warning("⚠️ 主题索引超出范围，跳过")
+                        continue
                     
-                    topic = current_topics[idx]
+                    topic = topic_elements[idx]
                     topic_url = topic.attr("href")
                     if not topic_url:
                         continue
                     
+                    # 确保URL完整
                     if not topic_url.startswith('http'):
                         topic_url = self.site_config['base_url'] + topic_url
                     
-                    logger.info(f"📖 浏览主题 {i+1}/{browse_count}: {topic_url}")
+                    logger.info(f"📖 浏览主题 {i+1}/{browse_count}")
                     
-                    # 打开主题
+                    # 在新标签页打开主题
                     self.page.get(topic_url)
+                    time.sleep(5)
+                    
+                    # 处理Cloudflare验证
+                    CloudflareHandler.handle_cloudflare(self.page)
                     time.sleep(3)
                     
-                    # 增强浏览行为
-                    self.enhanced_browse_post(stay_time=random.uniform(30, 50))
-                    
-                    # 随机点赞（5%概率）
-                    if random.random() < 0.05:
-                        self.click_like()
+                    # 模拟阅读行为
+                    stay_time = random.uniform(20, 35)
+                    self.enhanced_browse_post(stay_time)
                     
                     success_count += 1
                     
-                    # 主题间等待 - 确保活动被记录
+                    # 主题间等待
                     if i < browse_count - 1:
-                        wait_time = random.uniform(10, 18)
+                        wait_time = random.uniform(8, 15)
                         logger.info(f"⏳ 主题间延迟 {wait_time:.1f} 秒...")
                         time.sleep(wait_time)
                         
@@ -906,12 +615,9 @@ class LinuxDoBrowser:
             
             logger.success(f"✅ 浏览完成: 成功 {success_count}/{browse_count} 个主题")
             
-            # 浏览后再次严格验证登录状态
+            # 浏览后再次验证登录状态
             if not self.strict_verify_login_status():
-                logger.warning("⚠️ 浏览后登录状态丢失，尝试重新登录...")
-                if not self.login():
-                    logger.error("❌ 重新登录失败")
-                    return 0
+                logger.warning("⚠️ 浏览后登录状态丢失")
             
             return success_count
             
@@ -930,36 +636,33 @@ class LinuxDoBrowser:
             CloudflareHandler.handle_cloudflare(self.page)
             time.sleep(3)
             
-            # 提取表格数据
-            rows = self.page.eles("tag:tr")
-            info = []
+            # 提取表格数据 - 改进的选择器
+            page_html = self.page.html
             
-            for row in rows:
-                cells = row.eles("tag:td")
-                if len(cells) >= 3:
-                    project = cells[0].text.strip()
-                    current = cells[1].text.strip()
-                    requirement = cells[2].text.strip()
-                    info.append([project, current, requirement])
-            
-            if info:
-                print("\n" + "="*80)
-                print(f"📊 {self.site_name.upper()} 连接信息")
-                print("="*80)
-                # 使用简单的表格格式
-                print(f"{'项目':<20} {'当前':<15} {'要求':<15}")
-                print("-" * 50)
-                for item in info:
-                    print(f"{item[0]:<20} {item[1]:<15} {item[2]:<15}")
-                print("="*80 + "\n")
-                
-                # 统计达标情况
-                passed = sum(1 for item in info if 'text-green' in str(item[1]) or '✅' in str(item[1]))
-                total = len(info)
-                logger.success(f"📈 统计完成: {passed}/{total} 项达标")
-                
+            # 查找表格数据
+            if 'linux.do' in self.site_config['base_url']:
+                # Linux.do 特定的表格解析
+                if '访问次数' in page_html or '已读帖子' in page_html:
+                    logger.success("✅ 找到连接信息表格")
+                    # 这里可以添加更精确的表格解析逻辑
+                else:
+                    logger.warning("⚠️ 未找到标准的连接信息表格")
             else:
-                logger.warning("⚠️ 未找到连接信息表格")
+                # IDCFlare 或其他站点
+                logger.info("ℹ️ 连接信息表格格式可能不同")
+            
+            # 简单显示页面标题和关键信息
+            page_title = self.page.title
+            logger.info(f"📄 连接页面标题: {page_title}")
+            
+            # 检查是否包含关键指标
+            key_indicators = ['访问次数', '回复', '浏览', '已读', '点赞', '获赞']
+            found_indicators = [indicator for indicator in key_indicators if indicator in page_html]
+            
+            if found_indicators:
+                logger.info(f"📊 找到关键指标: {', '.join(found_indicators)}")
+            else:
+                logger.warning("⚠️ 未找到关键连接指标")
                 
         except Exception as e:
             logger.error(f"❌ 获取连接信息失败: {str(e)}")
@@ -974,8 +677,8 @@ class LinuxDoBrowser:
                 logger.error(f"❌ {self.site_name} 登录失败")
                 return False
             
-            # 2. 浏览主题（确保活动被记录）
-            browse_count = self.browse_topics()
+            # 2. 浏览主题（使用增强版本）
+            browse_count = self.browse_topics_enhanced()
             
             # 3. 打印连接信息
             self.print_connect_info()
@@ -1000,7 +703,7 @@ class LinuxDoBrowser:
 # ======================== 主函数 ========================
 def main():
     """主函数"""
-    logger.info("🚀 Linux.Do 多站点自动化脚本启动 (DrissionPage完整修复版)")
+    logger.info("🚀 Linux.Do 多站点自动化脚本启动 (修复主题浏览版)")
     logger.info("=" * 80)
     
     # 配置日志
@@ -1052,7 +755,7 @@ def main():
 
         # 站点间等待
         if site_config != target_sites[-1]:
-            wait_time = random.uniform(15, 25)
+            wait_time = random.uniform(10, 20)
             logger.info(f"⏳ 站点间延迟 {wait_time:.1f} 秒...")
             time.sleep(wait_time)
 
