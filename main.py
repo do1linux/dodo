@@ -195,12 +195,13 @@ class ImprovedCloudflareHandler:
                 # 显示等待进度
                 elapsed = time.time() - start_time
                 remaining = timeout - elapsed
-                logger.info(f"⏳ 等待Cloudflare验证... ({elapsed:.0f}/{timeout}秒)")
+                if int(elapsed) % 5 == 0:  # 每5秒显示一次
+                    logger.info(f"⏳ 等待Cloudflare验证... ({elapsed:.0f}/{timeout}秒)")
                 
-                time.sleep(3)
+                time.sleep(2)
                 
-                # 每10秒刷新一次
-                if int(elapsed) % 10 == 0:
+                # 每15秒刷新一次
+                if int(elapsed) % 15 == 0:
                     try:
                         driver.refresh()
                         logger.info("🔄 刷新页面")
@@ -210,9 +211,48 @@ class ImprovedCloudflareHandler:
                         
             except Exception as e:
                 logger.debug(f"Cloudflare检查异常: {str(e)}")
-                time.sleep(3)
+                time.sleep(2)
 
         logger.warning(f"⚠️ Cloudflare验证超时 ({timeout}秒)")
+        return False
+
+    @staticmethod
+    def bypass_cloudflare_challenge(driver, max_attempts=3):
+        """绕过Cloudflare挑战"""
+        logger.info("🛡️ 尝试绕过Cloudflare挑战...")
+        
+        for attempt in range(max_attempts):
+            try:
+                # 方法1: 等待JavaScript挑战完成
+                logger.info(f"🔄 尝试绕过挑战 (方法 {attempt + 1}/{max_attempts})")
+                
+                # 等待一段时间让Cloudflare JavaScript执行
+                wait_time = random.uniform(8, 15)
+                logger.info(f"⏳ 等待Cloudflare挑战完成 ({wait_time:.1f}秒)...")
+                time.sleep(wait_time)
+                
+                # 检查是否仍然在挑战页面
+                page_title = driver.title.lower() if driver.title else ""
+                page_source = driver.page_source.lower() if driver.page_source else ""
+                
+                cloudflare_indicators = ["just a moment", "checking", "please wait"]
+                is_cloudflare_page = any(indicator in page_title for indicator in cloudflare_indicators)
+                
+                if not is_cloudflare_page:
+                    logger.success("✅ Cloudflare挑战绕过成功")
+                    return True
+                
+                # 方法2: 刷新页面
+                if attempt < max_attempts - 1:
+                    logger.info("🔄 刷新页面重试...")
+                    driver.refresh()
+                    time.sleep(5)
+                    
+            except Exception as e:
+                logger.debug(f"绕过Cloudflare挑战异常: {str(e)}")
+                time.sleep(3)
+        
+        logger.error("❌ Cloudflare挑战绕过失败")
         return False
 
 # ======================== 改进的浏览器类 ========================
@@ -290,7 +330,7 @@ class ImprovedLinuxDoBrowser:
         return False
 
     def verify_login_status(self, max_retries=2):
-        """核心登录状态验证 - 使用私有主题链接作为主要标准"""
+        """核心登录状态验证 - 严格双重验证"""
         logger.info("🔍 验证登录状态...")
         
         for retry in range(max_retries):
@@ -310,7 +350,7 @@ class ImprovedLinuxDoBrowser:
                 page_title = self.driver.title
                 current_url = self.driver.current_url
                 
-                logger.info(f"📄 页面标题: {page_title}")
+                logger.info(f"📄 私有主题页面标题: {page_title}")
                 logger.info(f"🌐 当前URL: {current_url}")
                 
                 # 检查是否能够访问私有主题
@@ -325,19 +365,21 @@ class ImprovedLinuxDoBrowser:
                 has_error = any(indicator in page_content for indicator in error_indicators)
                 
                 if not has_error:
-                    # 验证用户名是否在页面中
+                    # 严格验证：用户名必须在页面中
                     username_in_page = self.username.lower() in page_content.lower()
-                    logger.info(f"👤 用户名验证: {'✅ 成功' if username_in_page else '⚠️ 未找到用户名'}")
+                    logger.info(f"👤 用户名验证: {'✅ 成功' if username_in_page else '❌ 失败'}")
                     
-                    logger.success("✅ 私有主题访问成功 - 登录状态有效")
-                    return True
+                    # 双重验证必须同时通过
+                    if username_in_page:
+                        logger.success("✅ 私有主题访问成功 + 用户名验证成功 = 登录状态有效")
+                        return True
+                    else:
+                        logger.warning("❌ 私有主题可访问但用户名未找到，登录状态可疑")
+                        if retry < max_retries - 1:
+                            continue
+                        return False
                 else:
                     logger.warning(f"❌ 私有主题访问失败 - 显示错误页面 (尝试 {retry + 1}/{max_retries})")
-                    
-                    # 如果显示错误页面，立即返回失败，触发重新登录
-                    if retry == 0:  # 第一次尝试就失败，直接返回
-                        logger.error("❌ 私有主题显示错误页面，需要重新登录")
-                        return False
                     
             except Exception as e:
                 logger.error(f"登录状态验证异常: {str(e)}")
@@ -351,33 +393,8 @@ class ImprovedLinuxDoBrowser:
         logger.error("❌ 所有登录状态验证方法均失败")
         return False
 
-    def verify_username_backup(self):
-        """备用用户名验证方案"""
-        try:
-            # 访问用户主页作为备用验证
-            user_url = f"{self.site_config['user_url']}/{self.username}"
-            logger.info(f"📍 备用验证: 访问用户主页")
-            self.driver.get(user_url)
-            time.sleep(2)
-            
-            ImprovedCloudflareHandler.wait_for_cloudflare(self.driver, 15)
-            time.sleep(1)
-            
-            page_content = self.driver.page_source
-            page_title = self.driver.title
-            logger.info(f"📄 用户页面标题: {page_title}")
-            
-            username_found = self.username.lower() in page_content.lower()
-            logger.info(f"👤 用户名验证: {'✅ 成功' if username_found else '❌ 失败'}")
-            
-            return username_found
-                
-        except Exception as e:
-            logger.debug(f"备用验证异常: {str(e)}")
-            return False
-
     def ensure_logged_in_fast(self):
-        """确保登录 - 增强版本"""
+        """确保登录 - 严格版本"""
         # 尝试恢复状态
         if not FORCE_LOGIN_EVERY_TIME and self.load_state():
             if self.verify_login_status():
@@ -387,52 +404,71 @@ class ImprovedLinuxDoBrowser:
                 logger.warning("⚠️ 缓存会话已失效，需要重新登录")
 
         # 手动登录
-        logger.info("🔐 执行快速登录...")
-        return self.fast_login()
+        logger.info("🔐 执行严格登录流程...")
+        return self.strict_login()
 
-    def fast_login(self):
-        """快速登录"""
-        try:
-            logger.info(f"📍 访问登录页面: {self.site_config['login_url']}")
-            self.driver.get(self.site_config['login_url'])
-            time.sleep(2)
+    def strict_login(self):
+        """严格登录流程"""
+        max_login_attempts = 2
+        
+        for attempt in range(max_login_attempts):
+            try:
+                logger.info(f"📍 登录尝试 {attempt + 1}/{max_login_attempts}")
+                logger.info(f"🌐 访问登录页面: {self.site_config['login_url']}")
+                
+                self.driver.get(self.site_config['login_url'])
+                time.sleep(3)
 
-            # 等待Cloudflare验证
-            if not ImprovedCloudflareHandler.wait_for_cloudflare(self.driver, 30):
-                logger.warning("⚠️ Cloudflare验证可能有问题，继续尝试登录...")
+                # 等待Cloudflare验证
+                cf_success = ImprovedCloudflareHandler.wait_for_cloudflare(self.driver, 30)
+                if not cf_success:
+                    logger.warning("⚠️ Cloudflare验证可能有问题，尝试绕过...")
+                    ImprovedCloudflareHandler.bypass_cloudflare_challenge(self.driver)
 
-            # 快速查找表单
-            username_field = self.driver.find_element(By.CSS_SELECTOR, "#login-account-name")
-            password_field = self.driver.find_element(By.CSS_SELECTOR, "#login-account-password")
-            login_button = self.driver.find_element(By.CSS_SELECTOR, "#login-button")
+                # 查找登录表单
+                logger.info("🔍 查找登录表单元素...")
+                username_field = self.driver.find_element(By.CSS_SELECTOR, "#login-account-name")
+                password_field = self.driver.find_element(By.CSS_SELECTOR, "#login-account-password")
+                login_button = self.driver.find_element(By.CSS_SELECTOR, "#login-button")
 
-            # 快速输入
-            username_field.clear()
-            username_field.send_keys(self.username)
-            time.sleep(0.5)
-            
-            password_field.clear()
-            password_field.send_keys(self.password)
-            time.sleep(0.5)
+                # 输入凭据
+                logger.info("⌨️ 输入登录凭据...")
+                username_field.clear()
+                username_field.send_keys(self.username)
+                time.sleep(0.5)
+                
+                password_field.clear()
+                password_field.send_keys(self.password)
+                time.sleep(0.5)
 
-            login_button.click()
-            time.sleep(3)
+                # 点击登录
+                logger.info("🔑 提交登录表单...")
+                login_button.click()
+                time.sleep(5)
 
-            # 登录后等待Cloudflare
-            ImprovedCloudflareHandler.wait_for_cloudflare(self.driver, 20)
+                # 登录后等待Cloudflare
+                ImprovedCloudflareHandler.wait_for_cloudflare(self.driver, 25)
 
-            # 核心验证：使用私有主题链接检查登录状态
-            if self.verify_login_status():
-                logger.info("✅ 登录成功")
-                self.save_state(True, 0)
-                return True
-            else:
-                logger.error("❌ 登录失败 - 私有主题验证未通过")
-                return False
+                # 严格验证：双重验证登录状态
+                if self.verify_login_status():
+                    logger.info("✅ 严格登录成功")
+                    self.save_state(True, 0)
+                    return True
+                else:
+                    logger.warning(f"❌ 登录尝试 {attempt + 1} 验证失败")
+                    if attempt < max_login_attempts - 1:
+                        logger.info("🔄 清理cookies后重试...")
+                        self.driver.delete_all_cookies()
+                        time.sleep(2)
+                        
+            except Exception as e:
+                logger.error(f"登录失败: {str(e)}")
+                if attempt < max_login_attempts - 1:
+                    logger.info("🔄 准备重试登录...")
+                    time.sleep(5)
 
-        except Exception as e:
-            logger.error(f"登录失败: {str(e)}")
-            return False
+        logger.error("❌ 所有登录尝试均失败")
+        return False
 
     def enhanced_browse_topics(self):
         """增强的浏览主题 - 确保被记录"""
@@ -565,20 +601,20 @@ class ImprovedLinuxDoBrowser:
         logger.debug(f"📊 深度阅读完成: {scroll_actions} 次滚动, {read_sessions} 次深度阅读")
 
     def get_connect_info_properly(self):
-        """正确获取连接信息 - 增强版本，遇到Cloudflare拦截时重新登录"""
+        """正确获取连接信息 - 增强抗Cloudflare版本"""
         logger.info("🔗 获取连接信息...")
         
-        max_retries = 2
+        max_retries = 3
         for attempt in range(max_retries):
             try:
                 # 直接访问连接页面
                 connect_url = self.site_config['connect_url']
-                logger.info(f"📍 访问连接页面: {connect_url}")
+                logger.info(f"📍 访问连接页面: {connect_url} (尝试 {attempt + 1}/{max_retries})")
                 self.driver.get(connect_url)
                 time.sleep(5)
                 
                 # 等待Cloudflare验证完成
-                cf_success = ImprovedCloudflareHandler.wait_for_cloudflare(self.driver, 30)
+                cf_success = ImprovedCloudflareHandler.wait_for_cloudflare(self.driver, 35)
                 
                 # 检查当前页面状态
                 current_url = self.driver.current_url
@@ -595,28 +631,38 @@ class ImprovedLinuxDoBrowser:
                 if is_cloudflare_blocked and not cf_success:
                     logger.warning(f"❌ 被Cloudflare拦截 (尝试 {attempt + 1}/{max_retries})")
                     
-                    if attempt < max_retries - 1:
-                        logger.info("🔄 被Cloudflare拦截，重新登录...")
-                        if self.fast_login():
-                            logger.info("✅ 重新登录成功，重试获取连接信息...")
-                            continue
+                    # 尝试绕过Cloudflare挑战
+                    if ImprovedCloudflareHandler.bypass_cloudflare_challenge(self.driver):
+                        logger.info("✅ Cloudflare挑战绕过成功，继续获取连接信息")
+                        # 重新检查页面状态
+                        page_title = self.driver.title.lower() if self.driver.title else ""
+                        is_cloudflare_blocked = any(indicator in page_title for indicator in cloudflare_indicators)
+                    
+                    if is_cloudflare_blocked:
+                        if attempt < max_retries - 1:
+                            logger.info("🔄 被Cloudflare拦截，重新登录...")
+                            if self.strict_login():
+                                logger.info("✅ 重新登录成功，重试获取连接信息...")
+                                continue
+                            else:
+                                logger.error("❌ 重新登录失败")
+                                break
                         else:
-                            logger.error("❌ 重新登录失败")
+                            logger.error("❌ 多次尝试后仍被Cloudflare拦截")
                             break
-                    else:
-                        logger.error("❌ 多次尝试后仍被Cloudflare拦截")
-                        break
                 
                 # 如果通过了Cloudflare，分析页面内容
                 if not is_cloudflare_blocked:
+                    logger.success("✅ 成功访问连接页面")
                     self.analyze_connect_page_content()
                     return  # 成功获取信息，退出函数
                 
             except Exception as e:
                 logger.error(f"获取连接信息失败: {str(e)}")
                 if attempt < max_retries - 1:
-                    logger.info(f"🔄 等待后重试... (尝试 {attempt + 1}/{max_retries})")
-                    time.sleep(5)
+                    wait_time = random.uniform(5, 8)
+                    logger.info(f"🔄 等待 {wait_time:.1f} 秒后重试... (尝试 {attempt + 1}/{max_retries})")
+                    time.sleep(wait_time)
                 else:
                     logger.error("❌ 所有重试均失败")
 
@@ -772,7 +818,7 @@ class ImprovedLinuxDoBrowser:
         try:
             logger.info(f"🚀 开始处理: {self.site_name}")
 
-            # 1. 登录（核心：私有主题验证）
+            # 1. 严格登录（双重验证）
             if not self.ensure_logged_in_fast():
                 logger.error(f"❌ {self.site_name} 登录失败")
                 return False
@@ -782,15 +828,15 @@ class ImprovedLinuxDoBrowser:
             if browse_count == 0:
                 logger.warning(f"⚠️ {self.site_name} 浏览主题失败")
 
-            # 3. 浏览后再次验证登录状态（使用私有主题）
-            logger.info("🔍 浏览后验证登录状态...")
+            # 3. 浏览后再次严格验证登录状态
+            logger.info("🔍 浏览后严格验证登录状态...")
             if not self.verify_login_status(max_retries=1):
                 logger.error("❌ 浏览后登录状态丢失，尝试重新登录...")
-                if not self.fast_login():
+                if not self.strict_login():
                     logger.error("❌ 重新登录失败")
                     return False
 
-            # 4. 正确获取连接信息（增强版本，遇到Cloudflare会重新登录）
+            # 4. 增强获取连接信息（抗Cloudflare）
             self.get_connect_info_properly()
 
             # 5. 保存状态
@@ -813,7 +859,7 @@ class ImprovedLinuxDoBrowser:
 # ======================== 增强主函数 ========================
 def main_enhanced():
     """增强主函数"""
-    logger.info("🚀 Linux.Do 增强自动化脚本启动")
+    logger.info("🚀 Linux.Do 严格验证自动化脚本启动")
     
     # 日志配置
     logger.remove()
