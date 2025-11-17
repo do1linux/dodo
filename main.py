@@ -383,6 +383,9 @@ class LinuxDoBrowser:
             ".topic-list-item .title",
             "a.raw-topic-link",
             "a.title.raw-link",
+            "tr.topic-list-item a",
+            ".title", 
+            "a.title"
             # 备用选择器
             ".topic-list a[href*='/t/']",
             "@id=list-area a[href*='/t/']",
@@ -718,3 +721,4 @@ if __name__ == "__main__":
         logger.warning(f"⚠️ 以下环境变量未设置: {', '.join(missing_vars)}")
     
     main()
+
