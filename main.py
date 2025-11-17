@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-LinuxDo 多站点自动化脚本 - 完整修复版
+LinuxDo 多站点自动化脚本 - DrissionPage完整修复版
 功能：自动登录 Linux.do 和 IDCFlare 论坛，严格验证登录状态，自动处理Cloudflare
 特点：双重验证机制（私有主题访问 + 用户名确认），增强反检测，确保浏览记录被收集
 """
@@ -11,18 +11,9 @@ import random
 import time
 import sys
 import json
-import pickle
-import requests
-from datetime import datetime, timedelta
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.action_chains import ActionChains
-from selenium.common.exceptions import TimeoutException, NoSuchElementException, StaleElementReferenceException
+from datetime import datetime
 from loguru import logger
-import hashlib
+from DrissionPage import ChromiumPage, ChromiumOptions, SessionPage
 
 # ======================== 配置常量 ========================
 # 站点认证信息配置 - 请确保环境变量已设置
@@ -182,7 +173,7 @@ class CloudflareHandler:
         处理Cloudflare验证
         
         Args:
-            page: 页面对象
+            page: ChromiumPage对象
             max_attempts (int): 最大尝试次数
             timeout (int): 超时时间（秒）
             
@@ -264,7 +255,6 @@ class LinuxDoBrowser:
         self.site_name = site_config['name']
         self.username = credentials['username']
         self.password = credentials['password']
-        self.browser = None
         self.page = None
         self.cache_saved = False
         
@@ -272,7 +262,7 @@ class LinuxDoBrowser:
         self.initialize_browser()
 
     def initialize_browser(self):
-        """初始化浏览器 - 使用DrissionPage"""
+        """初始化浏览器 - 使用DrissionPage的ChromiumPage"""
         try:
             # 配置浏览器选项
             co = ChromiumOptions()
@@ -297,9 +287,8 @@ class LinuxDoBrowser:
             user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
             co.set_user_agent(user_agent)
             
-            # 初始化浏览器
-            self.browser = Chromium(co)
-            self.page = self.browser.new_tab()
+            # 初始化页面
+            self.page = ChromiumPage(addr_or_opts=co)
             
             # 加载会话数据
             self.session_data = CacheManager.load_site_cache(self.site_name, 'session_data') or {}
@@ -433,7 +422,7 @@ class LinuxDoBrowser:
         """获取所有cookies"""
         try:
             # 使用DrissionPage的cookies方法
-            cookies = self.browser.cookies()
+            cookies = self.page.cookies()
             if cookies:
                 logger.info(f"✅ 成功获取 {len(cookies)} 个cookies")
                 return cookies
@@ -640,9 +629,7 @@ class LinuxDoBrowser:
             
             # 模拟人类输入速度
             logger.info("⌨️ 输入用户名...")
-            for char in self.username:
-                username_field.input(char)
-                time.sleep(random.uniform(0.05, 0.15))
+            username_field.input(self.username)
             time.sleep(random.uniform(0.5, 1))
             
             # 查找并填写密码
@@ -652,9 +639,7 @@ class LinuxDoBrowser:
                 return False
             
             logger.info("⌨️ 输入密码...")
-            for char in self.password:
-                password_field.input(char)
-                time.sleep(random.uniform(0.05, 0.15))
+            password_field.input(self.password)
             time.sleep(random.uniform(0.5, 1))
             
             # 点击登录按钮
@@ -697,14 +682,14 @@ class LinuxDoBrowser:
         # 执行手动登录
         return self.login()
 
-    def enhanced_browse_post(self, page, stay_time=35):
+    def enhanced_browse_post(self, stay_time=35):
         """
         增强的浏览行为，确保统计被正确计数
         基于内容长度计算停留时间，模拟真实阅读
         """
         try:
             # 获取页面内容信息
-            content_info = page.run_js("""
+            content_info = self.page.run_js("""
                 function getContentInfo() {
                     const content = document.querySelector('.topic-post .cooked') || 
                                    document.querySelector('.post-content') ||
@@ -739,7 +724,7 @@ class LinuxDoBrowser:
                 scroll_pos = content_info['height'] * scroll_ratio
                 
                 # 平滑滚动
-                page.run_js(f"""
+                self.page.run_js(f"""
                     window.scrollTo({{
                         top: {scroll_pos},
                         behavior: 'smooth'
@@ -748,14 +733,14 @@ class LinuxDoBrowser:
                 
                 # 模拟用户交互（阅读过程中的小动作）
                 if random.random() < 0.4:
-                    self.simulate_user_interaction(page)
+                    self.simulate_user_interaction()
                 
                 # 分段停留
                 segment_wait = time_per_segment * random.uniform(0.8, 1.3)
                 time.sleep(segment_wait)
             
             # 最终滚动到底部
-            page.run_js("window.scrollTo({top: document.body.scrollHeight, behavior: 'smooth'})")
+            self.page.run_js("window.scrollTo({top: document.body.scrollHeight, behavior: 'smooth'})")
             time.sleep(random.uniform(3, 6))
             
             logger.info("✅ 深度浏览完成 - 确保活动被记录")
@@ -763,9 +748,9 @@ class LinuxDoBrowser:
         except Exception as e:
             logger.error(f"❌ 增强浏览失败: {str(e)}")
             # 降级到基础浏览
-            self.fallback_browse_post(page)
+            self.fallback_browse_post()
 
-    def fallback_browse_post(self, page):
+    def fallback_browse_post(self):
         """降级浏览行为"""
         try:
             scroll_count = random.randint(8, 15)
@@ -774,11 +759,11 @@ class LinuxDoBrowser:
             for i in range(scroll_count):
                 # 更自然的滚动距离
                 scroll_distance = random.randint(400, 900)
-                page.run_js(f"window.scrollBy(0, {scroll_distance})")
+                self.page.run_js(f"window.scrollBy(0, {scroll_distance})")
                 
                 # 随机交互
                 if random.random() < 0.3:
-                    self.simulate_user_interaction(page)
+                    self.simulate_user_interaction()
                 
                 # 动态等待时间
                 wait_time = random.uniform(2, 4)
@@ -788,14 +773,14 @@ class LinuxDoBrowser:
         except Exception as e:
             logger.error(f"❌ 基础浏览失败: {str(e)}")
 
-    def simulate_user_interaction(self, page):
+    def simulate_user_interaction(self):
         """模拟用户交互行为"""
         try:
             # 随机交互类型
             interaction_type = random.choice(['mousemove', 'click', 'scroll'])
             
             if interaction_type == 'mousemove':
-                page.run_js("""
+                self.page.run_js("""
                     document.dispatchEvent(new MouseEvent('mousemove', { 
                         bubbles: true, 
                         clientX: Math.random() * window.innerWidth, 
@@ -803,25 +788,25 @@ class LinuxDoBrowser:
                     }));
                 """)
             elif interaction_type == 'click':
-                page.run_js("document.dispatchEvent(new MouseEvent('click', { bubbles: true }));")
+                self.page.run_js("document.dispatchEvent(new MouseEvent('click', { bubbles: true }));")
             else:
-                page.run_js("window.dispatchEvent(new Event('scroll'));")
+                self.page.run_js("window.dispatchEvent(new Event('scroll'));")
                 
             time.sleep(0.1)
                 
         except Exception as e:
             logger.debug(f"模拟交互失败: {str(e)}")
 
-    def click_like(self, page):
+    def click_like(self):
         """点赞当前帖子"""
         try:
             # 查找未点赞的按钮
-            like_buttons = page.eles(".discourse-reactions-reaction-button")
+            like_buttons = self.page.eles(".discourse-reactions-reaction-button")
             for button in like_buttons:
                 try:
                     if button and button.states.is_enabled:
                         # 检查是否已点赞
-                        button_class = button.get_attribute('class')
+                        button_class = button.attr('class')
                         if button_class and 'has-like' not in button_class:
                             logger.info("👍 找到未点赞按钮，准备点赞")
                             button.click()
@@ -896,23 +881,18 @@ class LinuxDoBrowser:
                     
                     logger.info(f"📖 浏览主题 {i+1}/{browse_count}: {topic_url}")
                     
-                    # 在新标签页打开主题
-                    topic_tab = self.browser.new_tab()
-                    try:
-                        topic_tab.get(topic_url)
-                        time.sleep(3)
-                        
-                        # 增强浏览行为
-                        self.enhanced_browse_post(topic_tab, stay_time=random.uniform(30, 50))
-                        
-                        # 随机点赞（5%概率）
-                        if random.random() < 0.05:
-                            self.click_like(topic_tab)
-                        
-                        success_count += 1
-                        
-                    finally:
-                        topic_tab.close()
+                    # 打开主题
+                    self.page.get(topic_url)
+                    time.sleep(3)
+                    
+                    # 增强浏览行为
+                    self.enhanced_browse_post(stay_time=random.uniform(30, 50))
+                    
+                    # 随机点赞（5%概率）
+                    if random.random() < 0.05:
+                        self.click_like()
+                    
+                    success_count += 1
                     
                     # 主题间等待 - 确保活动被记录
                     if i < browse_count - 1:
@@ -942,17 +922,16 @@ class LinuxDoBrowser:
     def print_connect_info(self):
         """打印连接信息"""
         logger.info("🔗 获取连接信息...")
-        info_tab = self.browser.new_tab()
         try:
-            info_tab.get(self.site_config['connect_url'])
+            self.page.get(self.site_config['connect_url'])
             time.sleep(5)
             
             # 处理Cloudflare验证
-            CloudflareHandler.handle_cloudflare(info_tab)
+            CloudflareHandler.handle_cloudflare(self.page)
             time.sleep(3)
             
             # 提取表格数据
-            rows = info_tab.eles("tag:tr")
+            rows = self.page.eles("tag:tr")
             info = []
             
             for row in rows:
@@ -967,7 +946,11 @@ class LinuxDoBrowser:
                 print("\n" + "="*80)
                 print(f"📊 {self.site_name.upper()} 连接信息")
                 print("="*80)
-                print(tabulate(info, headers=["项目", "当前", "要求"], tablefmt="grid"))
+                # 使用简单的表格格式
+                print(f"{'项目':<20} {'当前':<15} {'要求':<15}")
+                print("-" * 50)
+                for item in info:
+                    print(f"{item[0]:<20} {item[1]:<15} {item[2]:<15}")
                 print("="*80 + "\n")
                 
                 # 统计达标情况
@@ -980,8 +963,6 @@ class LinuxDoBrowser:
                 
         except Exception as e:
             logger.error(f"❌ 获取连接信息失败: {str(e)}")
-        finally:
-            info_tab.close()
 
     def run(self):
         """执行完整自动化流程"""
@@ -1011,15 +992,15 @@ class LinuxDoBrowser:
             
         finally:
             try:
-                if self.browser:
-                    self.browser.quit()
+                if self.page:
+                    self.page.quit()
             except:
                 pass
 
 # ======================== 主函数 ========================
 def main():
     """主函数"""
-    logger.info("🚀 Linux.Do 多站点自动化脚本启动 (完整修复版)")
+    logger.info("🚀 Linux.Do 多站点自动化脚本启动 (DrissionPage完整修复版)")
     logger.info("=" * 80)
     
     # 配置日志
@@ -1099,4 +1080,3 @@ if __name__ == "__main__":
         logger.warning("请确保在运行前设置所有必要的环境变量")
     
     main()
-
