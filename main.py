@@ -47,7 +47,7 @@ SITES = [
         'connect_url': 'https://connect.idcflare.com',
         'user_url': 'https://idcflare.com/u',
         # 需要为idcflare也设置一个私有主题链接
-        'private_topic_url': 'https://idcflare.com/t/topic/1'  # 需要替换为实际的私有主题
+        'private_topic_url': 'https://idcflare.com/t/topic/24'  
     }
 ]
 
@@ -825,3 +825,4 @@ def main_enhanced():
 
 if __name__ == "__main__":
     main_enhanced()
+
