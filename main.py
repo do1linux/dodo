@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+#说明：保持双重验证机制（私有主题访问+用户名确认）
+#主题浏览: 单标签页,使用了@id=list-area和.:title来获取主题列表
+#连接信息: 新标签页,使用 tabulate 库美化表格显示
 """
-保持双重验证机制（私有主题访问+用户名确认）
-主题浏览: 单标签页,使用了@id=list-area和.:title来获取主题列表
-连接信息: 新标签页,使用 tabulate 库美化表格显示
+修复版 - 改进主题选择器逻辑，确保能够正确找到并浏览主题
 """
 
 import os
@@ -372,8 +373,49 @@ class LinuxDoBrowser:
         
         return login_success
 
+    def find_topic_elements(self):
+        """改进的主题元素查找方法 - 多重选择器策略"""
+        selectors = [
+            # 主要选择器
+            "@id=list-area .title",
+            "@id=list-area a.title",
+            ".topic-list .title",
+            ".topic-list-item .title",
+            "a.raw-topic-link",
+            "a.title.raw-link",
+            # 备用选择器
+            ".topic-list a[href*='/t/']",
+            "@id=list-area a[href*='/t/']",
+            # 通用选择器
+            "a[href*='/t/']"
+        ]
+        
+        for selector in selectors:
+            try:
+                elements = self.page.eles(selector)
+                if elements:
+                    logger.info(f"✅ 使用选择器 '{selector}' 找到 {len(elements)} 个主题")
+                    
+                    # 过滤有效的主题链接
+                    valid_elements = []
+                    for elem in elements:
+                        href = elem.attr('href')
+                        if href and '/t/' in href:
+                            valid_elements.append(elem)
+                    
+                    if valid_elements:
+                        logger.info(f"📚 过滤后有效主题: {len(valid_elements)} 个")
+                        return valid_elements
+                        
+            except Exception as e:
+                logger.debug(f"选择器 '{selector}' 查找失败: {str(e)}")
+                continue
+        
+        logger.error("❌ 所有选择器都找不到主题元素")
+        return []
+
     def browse_topics_single_tab(self):
-        """单标签页主题浏览"""
+        """改进的单标签页主题浏览"""
         if not BROWSE_ENABLED:
             logger.info("⏭️ 浏览功能已禁用")
             return 0
@@ -393,19 +435,10 @@ class LinuxDoBrowser:
             CloudflareHandler.handle_cloudflare(self.page)
             time.sleep(2)
             
-            # 使用 @id=list-area 和 .title 选择器查找主题
-            logger.info("🔍 使用 @id=list-area 和 .title 选择器查找主题...")
-            
-            # 首先查找列表区域
-            list_area = self.page.ele("@id=list-area")
-            if not list_area:
-                logger.error("❌ 找不到主题列表区域 (#list-area)")
-                return 0
-            
-            # 在列表区域内查找主题元素
-            topic_elements = list_area.eles(".title")
+            # 使用改进的主题查找方法
+            topic_elements = self.find_topic_elements()
             if not topic_elements:
-                logger.error("❌ 在列表区域内找不到主题元素 (.title)")
+                logger.error("❌ 无法找到任何主题元素")
                 return 0
             
             logger.info(f"📚 发现 {len(topic_elements)} 个主题帖")
@@ -431,7 +464,7 @@ class LinuxDoBrowser:
                     if not topic_url.startswith('http'):
                         topic_url = self.site_config['base_url'] + topic_url
                     
-                    logger.info(f"📖 浏览主题 {i+1}/{browse_count}")
+                    logger.info(f"📖 浏览主题 {i+1}/{browse_count}: {topic_url}")
                     
                     # 在当前标签页打开主题（单标签页）
                     self.page.get(topic_url)
@@ -452,10 +485,8 @@ class LinuxDoBrowser:
                         CloudflareHandler.handle_cloudflare(self.page)
                         
                         # 重新获取主题元素
-                        list_area = self.page.ele("@id=list-area")
-                        if list_area:
-                            topic_elements = list_area.eles(".title")
-                        else:
+                        topic_elements = self.find_topic_elements()
+                        if not topic_elements:
                             logger.error("❌ 重新获取主题列表失败")
                             break
                     
@@ -477,7 +508,7 @@ class LinuxDoBrowser:
             return 0
 
     def simulate_reading_behavior(self):
-        """模拟阅读行为，确保浏览记录被收集"""
+        """改进的阅读行为模拟"""
         try:
             # 随机滚动次数
             scroll_count = random.randint(5, 8)
@@ -511,6 +542,9 @@ class LinuxDoBrowser:
                 
                 // 触发滚动事件
                 window.dispatchEvent(new Event('scroll'));
+                
+                // 触发焦点事件
+                window.dispatchEvent(new Event('focus'));
             """)
             
             logger.debug("✅ 阅读行为模拟完成")
@@ -607,7 +641,7 @@ class LinuxDoBrowser:
 
 # ======================== 主函数 ========================
 def main():
-    logger.info("🚀 Linux.Do 多站点自动化脚本启动 (最终修复版)")
+    logger.info("🚀 Linux.Do 多站点自动化脚本启动 (主题选择器修复版)")
     logger.info("=" * 80)
     
     logger.remove()
