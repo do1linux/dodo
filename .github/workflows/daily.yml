@@ -1,4 +1,4 @@
-name: LinuxDo Ultra Fast Automation
+name: LinuxDo Smart Automation
 
 on:
   workflow_dispatch:
@@ -13,17 +13,16 @@ on:
           - linux_do
           - idcflare
   schedule:
-    - cron: '0 */3 * * *'  # 每3小时运行一次，减少频率
-    - cron: '0 6,18 * * *' # 每天早晚6点运行
+    - cron: '0 * * * *'  # 每小时运行一次，增加频率以收集更多浏览记录
 
 env:
   PYTHON_VERSION: '3.11'
-  CACHE_PRIMARY_KEY: ${{ github.ref }}-linuxdo-ultra-cache-v5
+  CACHE_PRIMARY_KEY: ${{ github.ref }}-linuxdo-smart-cache-v6
 
 jobs:
-  automate-fast:
+  automate-smart:
     runs-on: ubuntu-22.04
-    timeout-minutes: 20  # 进一步减少超时时间
+    timeout-minutes: 25
 
     steps:
     - name: Checkout repository
@@ -46,9 +45,7 @@ jobs:
           libxrandr2 \
           libgbm1 \
           libxss1 \
-          libasound2 \
-          wget \
-          curl
+          libasound2
 
     - name: Install Chrome
       run: |
@@ -61,7 +58,6 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        # 确保DrissionPage安装正确
         pip install DrissionPage --upgrade
 
     - name: Setup turnstilePatch extension
@@ -69,7 +65,7 @@ jobs:
         python setup_directories.py
         echo "✅ TurnstilePatch扩展设置完成"
 
-    - name: 恢复缓存
+    - name: 恢复智能缓存
       uses: actions/cache@v3
       id: cache-restore
       with:
@@ -82,7 +78,7 @@ jobs:
         restore-keys: |
           ${{ env.CACHE_PRIMARY_KEY }}-
 
-    - name: Run optimized automation script
+    - name: Run smart automation for tracking
       env:
         LINUXDO_USERNAME: ${{ secrets.LINUXDO_USERNAME }}
         LINUXDO_PASSWORD: ${{ secrets.LINUXDO_PASSWORD }}
@@ -92,16 +88,17 @@ jobs:
         HEADLESS: 'true'
         BROWSE_ENABLED: 'true'
         FORCE_LOGIN: 'false'
-        MAX_CACHE_AGE_HOURS: '168'
+        USE_TURNSTILE_PATCH: 'true'
       run: |
-        echo "⚡ 开始执行优化版自动化脚本..."
+        echo "🎯 开始执行智能自动化脚本 (浏览记录收集)"
         echo "站点选择: $SITE_SELECTOR"
         echo "缓存恢复: ${{ steps.cache-restore.outputs.cache-hit == 'true' && '✅' || '❌' }}"
-        echo "使用TurnstilePatch扩展: ✅"
+        echo "Turnstile双重保护: ✅"
+        echo "智能缓存管理: ✅"
         python main.py
-        echo "✅ 优化脚本执行完成"
+        echo "✅ 智能脚本执行完成"
 
-    - name: 保存缓存
+    - name: 保存智能缓存
       if: always()
       uses: actions/cache@v3
       with:
@@ -112,22 +109,11 @@ jobs:
           turnstilePatch/
         key: ${{ env.CACHE_PRIMARY_KEY }}-${{ github.sha }}
 
-    - name: Upload session artifacts
+    - name: Upload tracking artifacts
       uses: actions/upload-artifact@v4
       if: always()
       with:
-        name: linuxdo-session-data-${{ github.run_id }}
+        name: linuxdo-tracking-data-${{ github.run_id }}
         path: |
-          cf_cookies_*.json
           session_data_*.json
-          browser_state_*.json
-        retention-days: 7
-
-    - name: Upload logs
-      uses: actions/upload-artifact@v4
-      if: always()
-      with:
-        name: linuxdo-logs-${{ github.run_id }}
-        path: |
-          *.log
-        retention-days: 3
+        retention-days: 14
