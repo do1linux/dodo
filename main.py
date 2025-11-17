@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-LinuxDo 多站点自动化脚本 - 修复主题列表和连接信息问题版本
-修复：主题列表选择器、连接信息表格解析
+LinuxDo 多站点自动化脚本 - 优化缓存和Cloudflare处理版本
+优化：减少Cloudflare验证、改进缓存管理、单标签页浏览
 """
 
 import os
@@ -38,7 +38,8 @@ SITES = [
         'connect_url': 'https://connect.linux.do',
         'user_url': 'https://linux.do/u',
         'cf_cookies_file': "cf_cookies_linux_do.json",
-        'session_file': "session_data_linux_do.json"
+        'session_file': "session_data_linux_do.json",
+        'browser_state_file': "browser_state_linux_do.json"
     },
     {
         'name': 'idcflare',
@@ -49,7 +50,8 @@ SITES = [
         'connect_url': 'https://connect.idcflare.com',
         'user_url': 'https://idcflare.com/u',
         'cf_cookies_file': "cf_cookies_idcflare.json",
-        'session_file': "session_data_idcflare.json"
+        'session_file': "session_data_idcflare.json",
+        'browser_state_file': "browser_state_idcflare.json"
     }
 ]
 
@@ -70,6 +72,7 @@ class CacheManager:
 
     @staticmethod
     def load_cache(file_name):
+        """加载缓存，始终返回最新数据"""
         file_path = CacheManager.get_cache_file_path(file_name)
         if os.path.exists(file_path):
             try:
@@ -81,12 +84,14 @@ class CacheManager:
                 logger.warning(f"⚠️ 缓存加载失败 {file_name}: {str(e)}")
                 try:
                     os.remove(file_path)
+                    logger.info(f"🗑️ 已删除损坏的缓存文件: {file_name}")
                 except:
                     pass
         return None
 
     @staticmethod
     def save_cache(data, file_name):
+        """保存缓存，始终覆盖旧文件"""
         try:
             file_path = CacheManager.get_cache_file_path(file_name)
             with open(file_path, "w", encoding='utf-8') as f:
@@ -107,49 +112,88 @@ class CacheManager:
         file_name = f"{cache_type}_{site_name}.json"
         return CacheManager.save_cache(data, file_name)
 
-# ======================== Cloudflare处理器 ========================
+    @staticmethod
+    def clear_old_caches():
+        """清除所有旧缓存文件，确保新运行使用新缓存"""
+        try:
+            cache_files = [
+                "cf_cookies_linux_do.json", "session_data_linux_do.json", "browser_state_linux_do.json",
+                "cf_cookies_idcflare.json", "session_data_idcflare.json", "browser_state_idcflare.json"
+            ]
+            
+            for cache_file in cache_files:
+                file_path = CacheManager.get_cache_file_path(cache_file)
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                    logger.info(f"🗑️ 已清除旧缓存: {cache_file}")
+            
+            logger.info("✅ 所有旧缓存已清除")
+        except Exception as e:
+            logger.error(f"❌ 清除旧缓存失败: {str(e)}")
+
+# ======================== Cloudflare优化处理器 ========================
 class CloudflareHandler:
     @staticmethod
-    def handle_cloudflare(page, max_attempts=5, timeout=120):
+    def handle_cloudflare_light(page, max_attempts=3, timeout=60):
+        """轻量级Cloudflare处理 - 减少验证等待"""
         start_time = time.time()
-        logger.info("🛡️ 开始处理Cloudflare验证")
+        logger.info("🛡️ 快速处理Cloudflare验证")
+        
+        # 首先检查是否已经通过验证
+        try:
+            page_title = page.title
+            if page_title and page_title != "请稍候…" and "Checking" not in page_title and "Just a moment" not in page_title:
+                logger.success("✅ 页面已正常加载，无需Cloudflare验证")
+                return True
+        except:
+            pass
         
         for attempt in range(max_attempts):
             try:
                 page_title = page.title
                 if page_title and page_title != "请稍候…" and "Checking" not in page_title and "Just a moment" not in page_title:
-                    logger.success("✅ 页面已正常加载，Cloudflare验证通过")
+                    logger.success("✅ Cloudflare验证通过")
                     return True
                 
-                wait_time = random.uniform(5, 10)
-                logger.info(f"⏳ 等待Cloudflare验证完成 ({wait_time:.1f}秒) - 尝试 {attempt + 1}/{max_attempts}")
+                # 更短的等待时间
+                wait_time = random.uniform(3, 6)
+                logger.info(f"⏳ 等待Cloudflare验证 ({wait_time:.1f}秒) - 尝试 {attempt + 1}/{max_attempts}")
                 time.sleep(wait_time)
                 
                 if time.time() - start_time > timeout:
+                    logger.warning("⚠️ Cloudflare处理超时，继续执行")
                     break
                     
             except Exception as e:
-                logger.error(f"Cloudflare处理异常: {str(e)}")
-                time.sleep(5)
+                logger.debug(f"Cloudflare检查异常: {str(e)}")
+                time.sleep(3)
         
         return True
 
-# ======================== 重试装饰器 ========================
-def retry_decorator(max_retries=3, delay=2):
-    def decorator(func):
-        def wrapper(*args, **kwargs):
-            for attempt in range(max_retries):
-                try:
-                    return func(*args, **kwargs)
-                except Exception as e:
-                    logger.warning(f"⚠️ {func.__name__} 失败 (尝试 {attempt + 1}/{max_retries}): {str(e)}")
-                    if attempt < max_retries - 1:
-                        time.sleep(delay)
-            return None
-        return wrapper
-    return decorator
+    @staticmethod
+    def inject_cloudflare_bypass(page):
+        """注入Cloudflare绕过脚本"""
+        try:
+            bypass_script = """
+            // Cloudflare绕过脚本
+            if (typeof window.console !== 'undefined') {
+                console.constructor = window.console.constructor;
+            }
+            
+            // 屏蔽自动化检测
+            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+            Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh', 'en'] });
+            
+            // 模拟真实浏览器行为
+            window.chrome = { runtime: {} };
+            """
+            page.run_js(bypass_script)
+            logger.info("✅ Cloudflare绕过脚本已注入")
+        except Exception as e:
+            logger.debug(f"注入Cloudflare绕过脚本失败: {str(e)}")
 
-# ======================== 主浏览器类 ========================
+# ======================== 主浏览器类 - 优化版本 ========================
 class LinuxDoBrowser:
     def __init__(self, site_config, credentials):
         self.site_config = site_config
@@ -161,6 +205,7 @@ class LinuxDoBrowser:
         self.initialize_browser()
 
     def initialize_browser(self):
+        """初始化浏览器并加载缓存状态"""
         try:
             co = ChromiumOptions()
             if HEADLESS:
@@ -172,12 +217,20 @@ class LinuxDoBrowser:
             co.set_argument("--no-sandbox")
             co.set_argument("--disable-dev-shm-usage")
             co.set_argument("--disable-blink-features=AutomationControlled")
+            co.set_argument("--disable-features=VizDisplayCompositor")
+            co.set_argument("--disable-background-timer-throttling")
             
             user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
             co.set_user_agent(user_agent)
             
             self.page = ChromiumPage(addr_or_opts=co)
+            
+            # 加载所有可能的缓存
             self.session_data = CacheManager.load_site_cache(self.site_name, 'session_data') or {}
+            self.browser_state = CacheManager.load_site_cache(self.site_name, 'browser_state') or {}
+            
+            # 注入Cloudflare绕过
+            CloudflareHandler.inject_cloudflare_bypass(self.page)
             
             logger.info(f"✅ {self.site_name} 浏览器初始化完成")
             
@@ -185,56 +238,104 @@ class LinuxDoBrowser:
             logger.error(f"❌ 浏览器初始化失败: {str(e)}")
             raise
 
-    def get_all_cookies(self):
-        try:
-            cookies = self.page.cookies()
-            if cookies:
-                logger.info(f"✅ 成功获取 {len(cookies)} 个cookies")
-                return cookies
-            return []
-        except Exception as e:
-            logger.error(f"❌ 获取cookies失败: {str(e)}")
-            return []
-
-    def save_all_caches(self):
+    def save_comprehensive_caches(self):
+        """保存全面的缓存数据"""
         if self.cache_saved:
             return
             
         try:
-            cookies = self.get_all_cookies()
+            # 1. 保存cookies
+            cookies = self.page.cookies()
             if cookies:
                 CacheManager.save_site_cache(cookies, self.site_name, 'cf_cookies')
+                logger.info(f"✅ 已保存 {len(cookies)} 个Cookies")
             
-            self.session_data.update({
+            # 2. 保存会话数据
+            session_data = {
                 'last_success': datetime.now().isoformat(),
                 'login_status': 'success',
                 'last_updated': datetime.now().isoformat(),
-                'cache_version': '4.3'
-            })
-            CacheManager.save_site_cache(self.session_data, self.site_name, 'session_data')
+                'cache_version': '5.0',
+                'site_name': self.site_name,
+                'username': self.username[:3] + '***',  # 部分隐藏用户名
+                'total_saved': self.session_data.get('total_saved', 0) + 1,
+                'last_url': self.page.url,
+                'user_agent': self.page.run_js("return navigator.userAgent;")
+            }
+            CacheManager.save_site_cache(session_data, self.site_name, 'session_data')
+            
+            # 3. 保存浏览器状态
+            browser_state = {
+                'timestamp': datetime.now().isoformat(),
+                'url': self.page.url,
+                'title': self.page.title,
+                'cookies_count': len(cookies) if cookies else 0,
+                'window_size': self.page.run_js("return {width: window.innerWidth, height: window.innerHeight};")
+            }
+            CacheManager.save_site_cache(browser_state, self.site_name, 'browser_state')
+            
+            # 4. 保存页面HTML快照（简化版）
+            try:
+                html_snapshot = {
+                    'timestamp': datetime.now().isoformat(),
+                    'title': self.page.title,
+                    'url': self.page.url,
+                    'content_length': len(self.page.html) if self.page.html else 0
+                }
+                CacheManager.save_site_cache(html_snapshot, self.site_name, 'html_snapshot')
+            except:
+                pass
             
             self.cache_saved = True
-            logger.info(f"✅ {self.site_name} 所有缓存已保存")
+            logger.info(f"✅ {self.site_name} 所有缓存已保存完成")
             
         except Exception as e:
             logger.error(f"❌ 保存缓存失败: {str(e)}")
 
-    def try_cache_login(self):
+    def restore_browser_state(self):
+        """恢复浏览器状态"""
+        try:
+            if self.browser_state and self.browser_state.get('url'):
+                logger.info("🔄 恢复浏览器状态...")
+                self.page.get(self.browser_state['url'])
+                time.sleep(2)
+                return True
+        except Exception as e:
+            logger.debug(f"恢复浏览器状态失败: {str(e)}")
+        return False
+
+    def try_cache_login_enhanced(self):
+        """增强的缓存登录尝试"""
         if FORCE_LOGIN_EVERY_TIME:
+            logger.info("⚠️ 强制重新登录，跳过缓存")
             return False
             
         cookies = CacheManager.load_site_cache(self.site_name, 'cf_cookies')
         if not cookies:
+            logger.warning("⚠️ 无有效缓存Cookies")
             return False
         
         try:
-            logger.info("🎯 尝试使用Cookies缓存登录...")
-            self.page.get(self.site_config['base_url'])
-            time.sleep(3)
+            logger.info("🎯 尝试使用增强缓存登录...")
+            
+            # 先恢复浏览器状态
+            if self.restore_browser_state():
+                logger.info("✅ 浏览器状态恢复成功")
+            else:
+                # 如果状态恢复失败，访问首页
+                self.page.get(self.site_config['base_url'])
+                time.sleep(2)
+            
+            # 设置cookies
             self.page.set.cookies(cookies)
-            time.sleep(2)
+            time.sleep(1)
+            
+            # 刷新页面
             self.page.refresh()
             time.sleep(3)
+            
+            # 轻量级Cloudflare处理
+            CloudflareHandler.handle_cloudflare_light(self.page)
             
             if self.strict_verify_login_status():
                 logger.success("✅ 缓存登录成功")
@@ -246,6 +347,7 @@ class LinuxDoBrowser:
             return False
 
     def strict_verify_login_status(self, max_retries=2):
+        """严格的登录状态验证"""
         logger.info("🔍 执行严格登录状态验证...")
         
         for retry in range(max_retries):
@@ -253,28 +355,24 @@ class LinuxDoBrowser:
                 private_url = self.site_config['private_topic_url']
                 logger.info(f"📍 访问私有主题: {private_url}")
                 self.page.get(private_url)
-                time.sleep(5)
+                time.sleep(3)  # 减少等待时间
                 
-                CloudflareHandler.handle_cloudflare(self.page)
-                time.sleep(3)
+                CloudflareHandler.handle_cloudflare_light(self.page)
+                time.sleep(2)
                 
                 page_content = self.page.html
                 page_title = self.page.title
-                current_url = self.page.url
                 
                 logger.info(f"📄 私有主题页面标题: {page_title}")
                 
-                if 'login' in current_url or 'signin' in current_url:
-                    logger.warning(f"❌ 被重定向到登录页面 (尝试 {retry + 1}/{max_retries})")
-                    continue
-                
+                # 检查是否有错误提示
                 error_indicators = ["Page Not Found", "糟糕！该页面不存在或者是一个不公开页面。"]
                 for indicator in error_indicators:
                     if indicator.lower() in page_content.lower():
                         logger.error(f"❌ 私有主题访问失败: {indicator}")
                         return False
                 
-                logger.success("✅ 私有主题访问成功 - 无错误提示")
+                logger.success("✅ 私有主题访问成功")
                 
                 if self.username.lower() in page_content.lower():
                     logger.success(f"✅ 在页面中找到用户名: {self.username}")
@@ -289,51 +387,43 @@ class LinuxDoBrowser:
         
         return False
 
-    def login(self):
-        self.page.set.cookies([])
-        logger.info("🔐 执行登录流程...")
-        self.page.get(self.site_config['login_url'])
-        time.sleep(3)
+    def login_optimized(self):
+        """优化的登录流程"""
+        self.page.set.cookies([])  # 清除旧cookies
+        logger.info("🔐 执行优化登录流程...")
         
-        CloudflareHandler.handle_cloudflare(self.page)
-        time.sleep(3)
+        self.page.get(self.site_config['login_url'])
+        time.sleep(2)
+        
+        CloudflareHandler.handle_cloudflare_light(self.page)
+        time.sleep(2)
         
         try:
-            time.sleep(2)
-            
             username_field = self.page.ele("#login-account-name")
-            if not username_field:
-                logger.error("❌ 找不到用户名字段")
-                return False
-            
-            logger.info("⌨️ 输入用户名...")
-            username_field.input(self.username)
-            time.sleep(random.uniform(0.5, 1))
-            
             password_field = self.page.ele("#login-account-password")
-            if not password_field:
-                logger.error("❌ 找不到密码字段")
-                return False
-            
-            logger.info("⌨️ 输入密码...")
-            password_field.input(self.password)
-            time.sleep(random.uniform(0.5, 1))
-            
             login_button = self.page.ele("#login-button")
-            if not login_button:
-                logger.error("❌ 找不到登录按钮")
+            
+            if not all([username_field, password_field, login_button]):
+                logger.error("❌ 登录表单元素未找到")
                 return False
+            
+            logger.info("⌨️ 输入登录信息...")
+            username_field.input(self.username)
+            time.sleep(random.uniform(0.3, 0.7))
+            
+            password_field.input(self.password)
+            time.sleep(random.uniform(0.3, 0.7))
             
             logger.info("🔑 点击登录按钮...")
             login_button.click()
-            time.sleep(10)
+            time.sleep(8)  # 减少等待时间
             
-            CloudflareHandler.handle_cloudflare(self.page)
-            time.sleep(5)
+            CloudflareHandler.handle_cloudflare_light(self.page)
+            time.sleep(3)
             
             if self.strict_verify_login_status():
                 logger.success("✅ 登录成功")
-                self.save_all_caches()
+                self.save_comprehensive_caches()
                 return True
             else:
                 logger.error("❌ 登录失败")
@@ -344,62 +434,13 @@ class LinuxDoBrowser:
             return False
 
     def ensure_logged_in(self):
-        if not FORCE_LOGIN_EVERY_TIME and self.try_cache_login():
+        """确保用户已登录"""
+        if not FORCE_LOGIN_EVERY_TIME and self.try_cache_login_enhanced():
             return True
-        return self.login()
+        return self.login_optimized()
 
-    def find_topic_elements_advanced(self):
-        """高级主题元素查找 - 使用多种策略"""
-        topic_elements = []
-        
-        # 策略1: 尝试多种CSS选择器
-        selectors = [
-            "a.title", 
-            ".topic-list-item a",
-            ".topic-list-body a",
-            "[data-topic-id] a",
-            "tr.topic-list-item a",
-            ".main-link a",
-            "a.raw-topic-link"
-        ]
-        
-        for selector in selectors:
-            try:
-                elements = self.page.eles(selector)
-                if elements:
-                    valid_elements = []
-                    for elem in elements:
-                        href = elem.attr('href')
-                        if href and '/t/' in href and not href.endswith('/latest'):
-                            valid_elements.append(elem)
-                    
-                    if valid_elements:
-                        topic_elements = valid_elements
-                        logger.info(f"✅ 使用选择器 '{selector}' 找到 {len(topic_elements)} 个主题")
-                        return topic_elements
-            except Exception:
-                continue
-        
-        # 策略2: 查找所有包含/t/的链接
-        try:
-            all_links = self.page.eles('tag:a')
-            for link in all_links:
-                href = link.attr('href')
-                if href and '/t/' in href and not href.endswith('/latest'):
-                    # 过滤掉非主题链接
-                    if not any(x in href for x in ['/c/', '/tag/', '/u/', '/latest']):
-                        topic_elements.append(link)
-            
-            if topic_elements:
-                logger.info(f"🔍 通过链接分析找到 {len(topic_elements)} 个主题")
-                return topic_elements
-        except Exception as e:
-            logger.error(f"❌ 链接分析失败: {str(e)}")
-        
-        return topic_elements
-
-    def browse_topics_advanced(self):
-        """高级主题浏览功能"""
+    def browse_topics_single_tab(self):
+        """单标签页主题浏览 - 减少Cloudflare验证"""
         if not BROWSE_ENABLED:
             logger.info("⏭️ 浏览功能已禁用")
             return 0
@@ -409,25 +450,23 @@ class LinuxDoBrowser:
             return 0
         
         try:
-            logger.info(f"🌐 开始浏览 {self.site_name} 主题...")
+            logger.info(f"🌐 开始单标签页浏览 {self.site_name} 主题...")
             
             # 访问最新页面
             self.page.get(self.site_config['latest_url'])
-            time.sleep(5)
-            
-            CloudflareHandler.handle_cloudflare(self.page)
             time.sleep(3)
             
-            # 使用高级主题查找
+            CloudflareHandler.handle_cloudflare_light(self.page)
+            time.sleep(2)
+            
+            # 查找主题元素
             topic_elements = self.find_topic_elements_advanced()
             if not topic_elements:
                 logger.error("❌ 未找到主题列表")
-                # 尝试调试页面结构
-                self.debug_page_structure()
                 return 0
             
-            # 选择3-6个主题浏览
-            browse_count = min(random.randint(3, 6), len(topic_elements))
+            # 选择主题浏览
+            browse_count = min(random.randint(4, 8), len(topic_elements))
             selected_indices = random.sample(range(len(topic_elements)), browse_count)
             success_count = 0
             
@@ -448,31 +487,48 @@ class LinuxDoBrowser:
                     
                     logger.info(f"📖 浏览主题 {i+1}/{browse_count}")
                     
-                    # 在新标签页打开
-                    new_tab = self.page.new_tab()
-                    new_tab.get(topic_url)
-                    time.sleep(3)
-                    
-                    CloudflareHandler.handle_cloudflare(new_tab)
+                    # 在当前标签页打开主题（不再新建标签页）
+                    self.page.get(topic_url)
                     time.sleep(2)
                     
-                    # 浏览帖子
-                    self.browse_post_content(new_tab)
+                    CloudflareHandler.handle_cloudflare_light(self.page)
+                    time.sleep(2)
                     
-                    # 随机点赞
-                    if random.random() < 0.03:
-                        self.click_like(new_tab)
+                    # 浏览帖子内容
+                    self.browse_post_optimized()
                     
-                    new_tab.close()
+                    # 随机点赞（低概率）
+                    if random.random() < 0.02:
+                        self.click_like_optimized()
+                    
                     success_count += 1
+                    
+                    # 返回主题列表页面
+                    if i < browse_count - 1:
+                        self.page.get(self.site_config['latest_url'])
+                        time.sleep(2)
+                        CloudflareHandler.handle_cloudflare_light(self.page)
+                        
+                        # 重新获取主题元素（避免stale reference）
+                        topic_elements = self.find_topic_elements_advanced()
+                        if not topic_elements:
+                            logger.error("❌ 重新获取主题列表失败")
+                            break
                     
                     # 主题间等待
                     if i < browse_count - 1:
-                        wait_time = random.uniform(5, 10)
+                        wait_time = random.uniform(4, 8)
                         time.sleep(wait_time)
                         
                 except Exception as e:
                     logger.error(f"❌ 浏览主题失败: {str(e)}")
+                    # 尝试恢复状态
+                    try:
+                        self.page.get(self.site_config['latest_url'])
+                        time.sleep(2)
+                        topic_elements = self.find_topic_elements_advanced()
+                    except:
+                        pass
                     continue
             
             logger.success(f"✅ 浏览完成: 成功 {success_count}/{browse_count} 个主题")
@@ -482,43 +538,68 @@ class LinuxDoBrowser:
             logger.error(f"❌ 浏览主题失败: {str(e)}")
             return 0
 
-    def debug_page_structure(self):
-        """调试页面结构"""
-        try:
-            logger.info("🐛 开始调试页面结构...")
-            page_html = self.page.html
-            
-            # 检查是否有常见的选择器
-            selectors_to_check = ['.title', '#list-area', '.topic-list', '.topic-list-item']
-            for selector in selectors_to_check:
+    def find_topic_elements_advanced(self):
+        """高级主题元素查找"""
+        topic_elements = []
+        
+        selectors = [
+            "a.title", 
+            ".topic-list-item a",
+            ".topic-list-body a",
+            "[data-topic-id] a",
+            "tr.topic-list-item a"
+        ]
+        
+        for selector in selectors:
+            try:
                 elements = self.page.eles(selector)
                 if elements:
-                    logger.info(f"🔍 找到 {len(elements)} 个 '{selector}' 元素")
-            
-            # 检查链接数量
-            all_links = self.page.eles('tag:a')
-            topic_links = [link for link in all_links if link.attr('href') and '/t/' in link.attr('href')]
-            logger.info(f"🔗 找到 {len(topic_links)} 个包含 '/t/' 的链接")
-            
-        except Exception as e:
-            logger.error(f"❌ 调试页面结构失败: {str(e)}")
-
-    def browse_post_content(self, page):
-        """浏览帖子内容"""
+                    valid_elements = []
+                    for elem in elements:
+                        href = elem.attr('href')
+                        if href and '/t/' in href and not href.endswith('/latest'):
+                            valid_elements.append(elem)
+                    
+                    if valid_elements:
+                        topic_elements = valid_elements
+                        logger.info(f"✅ 使用选择器 '{selector}' 找到 {len(topic_elements)} 个主题")
+                        return topic_elements
+            except Exception:
+                continue
+        
+        # 备用方法：链接分析
         try:
-            scroll_count = random.randint(5, 8)
+            all_links = self.page.eles('tag:a')
+            for link in all_links:
+                href = link.attr('href')
+                if href and '/t/' in href and not href.endswith('/latest'):
+                    if not any(x in href for x in ['/c/', '/tag/', '/u/', '/latest']):
+                        topic_elements.append(link)
+            
+            if topic_elements:
+                logger.info(f"🔍 通过链接分析找到 {len(topic_elements)} 个主题")
+                return topic_elements
+        except Exception as e:
+            logger.error(f"❌ 链接分析失败: {str(e)}")
+        
+        return topic_elements
+
+    def browse_post_optimized(self):
+        """优化的帖子浏览"""
+        try:
+            scroll_count = random.randint(4, 7)  # 减少滚动次数
             logger.info(f"📜 开始浏览帖子，计划滚动 {scroll_count} 次")
             
             for i in range(scroll_count):
-                scroll_distance = random.randint(400, 700)
-                page.run_js(f"window.scrollBy(0, {scroll_distance})")
+                scroll_distance = random.randint(300, 500)  # 减少滚动距离
+                self.page.run_js(f"window.scrollBy(0, {scroll_distance})")
                 
-                # 随机等待
-                wait_time = random.uniform(2, 4)
+                # 随机等待时间
+                wait_time = random.uniform(1.5, 3)
                 time.sleep(wait_time)
                 
                 # 检查是否到达底部
-                at_bottom = page.run_js(
+                at_bottom = self.page.run_js(
                     "return window.innerHeight + window.pageYOffset >= document.body.offsetHeight - 10"
                 )
                 if at_bottom:
@@ -530,70 +611,54 @@ class LinuxDoBrowser:
         except Exception as e:
             logger.error(f"❌ 浏览帖子失败: {str(e)}")
 
-    def click_like(self, page):
-        """点赞帖子"""
+    def click_like_optimized(self):
+        """优化的点赞功能"""
         try:
-            like_buttons = page.eles(".discourse-reactions-reaction-button")
+            like_buttons = self.page.eles(".discourse-reactions-reaction-button")
             for button in like_buttons:
                 if button and button.states.is_enabled:
-                    logger.info("👍 尝试点赞")
-                    button.click()
-                    time.sleep(1)
-                    logger.success("✅ 点赞成功")
-                    return
+                    button_class = button.attr('class') or ''
+                    if 'has-like' not in button_class:
+                        logger.info("👍 尝试点赞")
+                        button.click()
+                        time.sleep(1)
+                        logger.success("✅ 点赞成功")
+                        return
             logger.info("ℹ️ 未找到可点赞的按钮")
         except Exception as e:
-            logger.error(f"❌ 点赞失败: {str(e)}")
+            logger.debug(f"点赞失败: {str(e)}")
 
-    def print_connect_info_advanced(self):
-        """高级连接信息获取"""
+    def print_connect_info_optimized(self):
+        """优化的连接信息获取"""
         logger.info("🔗 获取连接信息...")
         try:
-            connect_tab = self.page.new_tab()
-            connect_tab.get(self.site_config['connect_url'])
-            time.sleep(5)
+            # 保存当前URL
+            current_url = self.page.url
             
-            CloudflareHandler.handle_cloudflare(connect_tab)
+            self.page.get(self.site_config['connect_url'])
             time.sleep(3)
             
-            page_html = connect_tab.html
-            page_title = connect_tab.title
+            CloudflareHandler.handle_cloudflare_light(self.page)
+            time.sleep(2)
             
-            logger.info(f"📄 连接页面标题: {page_title}")
-            
-            # 尝试多种表格选择器
-            table_selectors = [
-                "tag:table",
-                ".connect-table",
-                ".requirements-table",
-                ".stats-table",
-                ".user-statistics"
-            ]
-            
-            table_found = False
-            for selector in table_selectors:
-                table = connect_tab.ele(selector)
-                if table:
-                    logger.info(f"✅ 使用选择器 '{selector}' 找到表格")
-                    table_found = True
-                    break
-            
-            if not table_found:
-                logger.warning("⚠️ 未找到标准表格，尝试解析页面内容")
-                self.parse_connect_info_from_html(page_html)
+            # 解析表格数据
+            table = self.page.ele("tag:table")
+            if table:
+                self.parse_connect_table()
             else:
-                # 解析表格数据
-                self.parse_connect_table(connect_tab)
+                logger.warning("⚠️ 未找到标准表格")
             
-            connect_tab.close()
+            # 返回原页面
+            self.page.get(current_url)
+            time.sleep(2)
             
         except Exception as e:
             logger.error(f"❌ 获取连接信息失败: {str(e)}")
 
-    def parse_connect_table(self, page):
+    def parse_connect_table(self):
         """解析连接表格"""
         try:
-            rows = page.eles("tag:tr")
+            rows = self.page.eles("tag:tr")
             info = []
             
             for row in rows:
@@ -622,49 +687,24 @@ class LinuxDoBrowser:
         except Exception as e:
             logger.error(f"❌ 解析表格失败: {str(e)}")
 
-    def parse_connect_info_from_html(self, html):
-        """从HTML解析连接信息"""
+    def run_optimized(self):
+        """优化的完整流程"""
         try:
-            # 提取关键指标
-            indicators = {
-                '访问次数': r'访问次数.*?(\d+%?\s*\(\d+\s*/\s*\d+\s*天数\)|\d+%?)',
-                '回复的话题': r'回复的话题.*?([≥\d]+)',
-                '浏览的话题': r'浏览的话题.*?(\d+)',
-                '已读帖子': r'已读帖子.*?(\d+)',
-                '点赞': r'点赞.*?(\d+)',
-                '获赞': r'获赞.*?(\d+)'
-            }
+            logger.info(f"🚀 开始优化处理站点: {self.site_name}")
             
-            found_indicators = []
-            for name, pattern in indicators.items():
-                match = re.search(pattern, html)
-                if match:
-                    found_indicators.append([name, match.group(1), "未知"])
-            
-            if found_indicators:
-                print("\n" + "="*60)
-                print(f"📊 {self.site_name.upper()} 连接信息 (简化版)")
-                print("="*60)
-                print(tabulate(found_indicators, headers=["项目", "当前", "要求"], tablefmt="pretty"))
-                print("="*60 + "\n")
-                logger.info(f"📈 找到 {len(found_indicators)} 个关键指标")
-            else:
-                logger.warning("⚠️ 未找到关键连接指标")
-                
-        except Exception as e:
-            logger.error(f"❌ 解析HTML失败: {str(e)}")
-
-    def run(self):
-        try:
-            logger.info(f"🚀 开始处理站点: {self.site_name}")
-            
+            # 确保登录
             if not self.ensure_logged_in():
                 logger.error(f"❌ {self.site_name} 登录失败")
                 return False
             
-            browse_count = self.browse_topics_advanced()
-            self.print_connect_info_advanced()
-            self.save_all_caches()
+            # 浏览主题
+            browse_count = self.browse_topics_single_tab()
+            
+            # 显示连接信息
+            self.print_connect_info_optimized()
+            
+            # 保存完整缓存
+            self.save_comprehensive_caches()
             
             logger.success(f"✅ {self.site_name} 处理完成 - 浏览 {browse_count} 个主题")
             return True
@@ -680,9 +720,12 @@ class LinuxDoBrowser:
             except:
                 pass
 
-# ======================== 主函数 ========================
+# ======================== 主函数 - 优化版本 ========================
 def main():
-    logger.info("🚀 Linux.Do 多站点自动化脚本启动 (高级修复版)")
+    # 清除旧缓存，确保新运行使用新缓存
+    CacheManager.clear_old_caches()
+    
+    logger.info("🚀 Linux.Do 多站点自动化脚本启动 (优化缓存和Cloudflare版)")
     logger.info("=" * 80)
     
     logger.remove()
@@ -691,10 +734,12 @@ def main():
     success_sites = []
     failed_sites = []
 
+    # 检查凭证配置
     for site_name, creds in SITE_CREDENTIALS.items():
         if not creds.get('username') or not creds.get('password'):
             logger.warning(f"⏭️ {site_name} 的用户名或密码未配置")
 
+    # 站点选择
     site_selector = os.environ.get("SITE_SELECTOR", "all")
     target_sites = SITES if site_selector == "all" else [s for s in SITES if s['name'] == site_selector]
 
@@ -718,7 +763,7 @@ def main():
         
         try:
             browser = LinuxDoBrowser(site_config, credentials)
-            success = browser.run()
+            success = browser.run_optimized()
 
             if success:
                 success_sites.append(site_name)
@@ -729,11 +774,13 @@ def main():
             logger.error(f"❌ {site_name} 执行异常: {str(e)}")
             failed_sites.append(site_name)
 
+        # 站点间等待
         if site_config != target_sites[-1]:
             wait_time = random.uniform(8, 15)
             logger.info(f"⏳ 站点间延迟 {wait_time:.1f} 秒...")
             time.sleep(wait_time)
 
+    # 最终总结
     logger.info("=" * 80)
     logger.info("📊 执行总结:")
     logger.info(f"✅ 成功站点: {', '.join(success_sites) if success_sites else '无'}")
