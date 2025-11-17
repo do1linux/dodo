@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 LinuxDo 多站点自动化脚本 - 修复主题浏览问题版本
-主要修复：主题选择器问题、浏览计数问题、连接信息显示问题
+基于参考代码修复主题选择器和浏览逻辑
 """
 
 import os
@@ -12,7 +12,8 @@ import sys
 import json
 from datetime import datetime
 from loguru import logger
-from DrissionPage import ChromiumPage, ChromiumOptions, SessionPage
+from DrissionPage import ChromiumPage, ChromiumOptions
+from tabulate import tabulate
 
 # ======================== 配置常量 ========================
 # 站点认证信息配置 - 请确保环境变量已设置
@@ -27,13 +28,13 @@ SITE_CREDENTIALS = {
     }
 }
 
-# 站点配置列表 - 更新私有主题URL
+# 站点配置列表 - 移除URL末尾的空格
 SITES = [
     {
         'name': 'linux_do',
         'base_url': 'https://linux.do',
         'login_url': 'https://linux.do/login',
-        'private_topic_url': 'https://linux.do/t/topic/2362',  # 已验证的私有主题
+        'private_topic_url': 'https://linux.do/t/topic/2362',
         'latest_url': 'https://linux.do/latest',
         'connect_url': 'https://connect.linux.do',
         'user_url': 'https://linux.do/u',
@@ -44,7 +45,7 @@ SITES = [
         'name': 'idcflare',
         'base_url': 'https://idcflare.com',
         'login_url': 'https://idcflare.com/login',
-        'private_topic_url': 'https://idcflare.com/t/topic/24',  # 已验证的私有主题
+        'private_topic_url': 'https://idcflare.com/t/topic/24',
         'latest_url': 'https://idcflare.com/latest',
         'connect_url': 'https://connect.idcflare.com',
         'user_url': 'https://idcflare.com/u',
@@ -57,8 +58,6 @@ SITES = [
 BROWSE_ENABLED = os.environ.get("BROWSE_ENABLED", "true").strip().lower() not in ["false", "0", "off"]
 HEADLESS = os.environ.get("HEADLESS", "true").strip().lower() not in ["false", "0", "off"]
 FORCE_LOGIN_EVERY_TIME = os.environ.get("FORCE_LOGIN", "false").strip().lower() in ["true", "1", "on"]
-COOKIES_EXPIRY_HOURS = int(os.environ.get("COOKIES_EXPIRY_HOURS", "24"))
-MAX_CACHE_AGE_HOURS = int(os.environ.get("MAX_CACHE_AGE_HOURS", "168"))
 
 # ======================== 缓存管理器 ========================
 class CacheManager:
@@ -169,6 +168,23 @@ class CloudflareHandler:
             logger.warning("⚠️ 无法获取页面标题，继续后续流程")
             return True
 
+# ======================== 重试装饰器 ========================
+def retry_decorator(max_retries=3, delay=2):
+    """重试装饰器"""
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    logger.warning(f"⚠️ {func.__name__} 失败 (尝试 {attempt + 1}/{max_retries}): {str(e)}")
+                    if attempt < max_retries - 1:
+                        time.sleep(delay)
+                    else:
+                        raise
+        return wrapper
+    return decorator
+
 # ======================== 主浏览器类 ========================
 class LinuxDoBrowser:
     def __init__(self, site_config, credentials):
@@ -198,7 +214,6 @@ class LinuxDoBrowser:
             co.set_argument("--no-sandbox")
             co.set_argument("--disable-dev-shm-usage")
             co.set_argument("--disable-blink-features=AutomationControlled")
-            co.set_argument("--disable-features=VizDisplayCompositor")
             co.set_argument("--lang=zh-CN,zh;q=0.9,en;q=0.8")
             
             # 用户代理
@@ -248,7 +263,7 @@ class LinuxDoBrowser:
                 'last_success': datetime.now().isoformat(),
                 'login_status': 'success',
                 'last_updated': datetime.now().isoformat(),
-                'cache_version': '4.1',
+                'cache_version': '4.2',
                 'total_saved': self.session_data.get('total_saved', 0) + 1,
                 'last_url': self.page.url
             })
@@ -263,7 +278,7 @@ class LinuxDoBrowser:
     def clear_caches(self):
         """清除所有缓存文件"""
         try:
-            cache_types = ['session_data', 'browser_state', 'cf_cookies']
+            cache_types = ['session_data', 'cf_cookies']
             for cache_type in cache_types:
                 file_name = f"{cache_type}_{self.site_name}.json"
                 file_path = CacheManager.get_cache_file_path(file_name)
@@ -462,95 +477,13 @@ class LinuxDoBrowser:
         # 执行手动登录
         return self.login()
 
-    def enhanced_browse_post(self, stay_time=25):
-        """增强的浏览行为"""
-        try:
-            logger.info(f"📖 模拟阅读行为，停留 {stay_time:.1f} 秒...")
-            start_time = time.time()
-            
-            # 随机滚动次数
-            scroll_count = random.randint(6, 10)
-            scrolls_done = 0
-            
-            while time.time() - start_time < stay_time:
-                try:
-                    # 随机滚动距离
-                    scroll_distance = random.randint(200, 600)
-                    self.page.run_js(f"window.scrollBy(0, {scroll_distance})")
-                    scrolls_done += 1
-                    
-                    # 随机阅读时间
-                    if random.random() < 0.5:
-                        read_time = random.uniform(2, 5)
-                        time.sleep(read_time)
-                    else:
-                        time.sleep(random.uniform(1, 3))
-                    
-                    # 随机回滚
-                    if random.random() < 0.2:
-                        back_scroll = random.randint(100, 200)
-                        self.page.run_js(f"window.scrollBy(0, -{back_scroll})")
-                        time.sleep(random.uniform(1, 2))
-                    
-                except Exception as e:
-                    logger.debug(f"阅读行为模拟异常: {str(e)}")
-                    time.sleep(1)
-            
-            logger.debug(f"📊 阅读完成: {scrolls_done} 次滚动")
-            
-        except Exception as e:
-            logger.error(f"❌ 增强浏览失败: {str(e)}")
-            # 降级到基础浏览
-            time.sleep(stay_time)
-
-    def find_topic_elements(self):
-        """查找主题元素 - 使用多种选择器"""
-        topic_elements = []
-        
-        # 尝试多种选择器
-        selectors = [
-            "a.title",
-            ".title a", 
-            "tr.topic-list-item a",
-            ".topic-list-body a",
-            "[data-topic-id] a"
-        ]
-        
-        for selector in selectors:
-            try:
-                elements = self.page.eles(selector)
-                if elements:
-                    # 过滤出有效的主题链接
-                    valid_elements = []
-                    for elem in elements:
-                        href = elem.attr('href')
-                        if href and '/t/' in href:
-                            valid_elements.append(elem)
-                    
-                    if valid_elements:
-                        topic_elements = valid_elements
-                        logger.info(f"✅ 使用选择器 '{selector}' 找到 {len(topic_elements)} 个主题")
-                        break
-            except Exception as e:
-                logger.debug(f"选择器 {selector} 查找失败: {str(e)}")
-                continue
-        
-        return topic_elements
-
-    def browse_topics_enhanced(self):
-        """增强的主题浏览功能"""
+    def click_topic(self):
+        """浏览主题 - 基于参考代码的实现"""
         if not BROWSE_ENABLED:
             logger.info("⏭️ 浏览功能已禁用")
             return 0
         
-        # 浏览前严格验证登录状态
-        if not self.strict_verify_login_status():
-            logger.error("❌ 浏览前登录状态验证失败")
-            return 0
-        
         try:
-            logger.info(f"🌐 开始增强浏览 {self.site_name} 主题...")
-            
             # 访问最新页面
             self.page.get(self.site_config['latest_url'])
             time.sleep(5)
@@ -559,26 +492,26 @@ class LinuxDoBrowser:
             CloudflareHandler.handle_cloudflare(self.page)
             time.sleep(3)
             
-            # 查找主题元素
-            topic_elements = self.find_topic_elements()
-            if not topic_elements:
-                logger.error("❌ 未找到主题列表")
+            # 查找主题列表区域
+            list_area = self.page.ele("@id=list-area")
+            if not list_area:
+                logger.error("❌ 找不到主题列表区域")
                 return 0
             
-            # 随机选择3-5个主题（避免过多）
-            browse_count = min(random.randint(3, 5), len(topic_elements))
-            selected_indices = random.sample(range(len(topic_elements)), browse_count)
+            # 查找主题元素
+            topic_list = list_area.eles(".title")
+            if not topic_list:
+                logger.error("❌ 找不到主题列表")
+                return 0
+            
+            logger.info(f"📚 发现 {len(topic_list)} 个主题帖，随机选择10个")
+            
+            # 随机选择10个主题
+            selected_topics = random.sample(topic_list, min(10, len(topic_list)))
             success_count = 0
             
-            logger.info(f"📊 发现 {len(topic_elements)} 个主题，计划浏览 {browse_count} 个")
-            
-            for i, idx in enumerate(selected_indices):
+            for i, topic in enumerate(selected_topics):
                 try:
-                    if idx >= len(topic_elements):
-                        logger.warning("⚠️ 主题索引超出范围，跳过")
-                        continue
-                    
-                    topic = topic_elements[idx]
                     topic_url = topic.attr("href")
                     if not topic_url:
                         continue
@@ -587,25 +520,32 @@ class LinuxDoBrowser:
                     if not topic_url.startswith('http'):
                         topic_url = self.site_config['base_url'] + topic_url
                     
-                    logger.info(f"📖 浏览主题 {i+1}/{browse_count}")
+                    logger.info(f"📖 浏览主题 {i+1}/{len(selected_topics)}: {topic_url}")
                     
                     # 在新标签页打开主题
-                    self.page.get(topic_url)
-                    time.sleep(5)
-                    
-                    # 处理Cloudflare验证
-                    CloudflareHandler.handle_cloudflare(self.page)
+                    new_tab = self.page.new_tab()
+                    new_tab.get(topic_url)
                     time.sleep(3)
                     
-                    # 模拟阅读行为
-                    stay_time = random.uniform(20, 35)
-                    self.enhanced_browse_post(stay_time)
+                    # 处理Cloudflare验证
+                    CloudflareHandler.handle_cloudflare(new_tab)
+                    time.sleep(2)
+                    
+                    # 随机点赞 (3%概率)
+                    if random.random() < 0.03:
+                        self.click_like(new_tab)
+                    
+                    # 浏览帖子内容
+                    self.browse_post(new_tab)
+                    
+                    # 关闭标签页
+                    new_tab.close()
                     
                     success_count += 1
                     
                     # 主题间等待
-                    if i < browse_count - 1:
-                        wait_time = random.uniform(8, 15)
+                    if i < len(selected_topics) - 1:
+                        wait_time = random.uniform(5, 10)
                         logger.info(f"⏳ 主题间延迟 {wait_time:.1f} 秒...")
                         time.sleep(wait_time)
                         
@@ -613,57 +553,117 @@ class LinuxDoBrowser:
                     logger.error(f"❌ 浏览主题失败: {str(e)}")
                     continue
             
-            logger.success(f"✅ 浏览完成: 成功 {success_count}/{browse_count} 个主题")
-            
-            # 浏览后再次验证登录状态
-            if not self.strict_verify_login_status():
-                logger.warning("⚠️ 浏览后登录状态丢失")
-            
+            logger.success(f"✅ 浏览完成: 成功 {success_count}/{len(selected_topics)} 个主题")
             return success_count
             
         except Exception as e:
             logger.error(f"❌ 浏览主题失败: {str(e)}")
             return 0
 
+    @retry_decorator(max_retries=2)
+    def browse_post(self, page):
+        """浏览帖子内容 - 基于参考代码的实现"""
+        prev_url = None
+        
+        # 开始自动滚动，最多滚动10次
+        for scroll_count in range(10):
+            try:
+                # 随机滚动一段距离
+                scroll_distance = random.randint(550, 650)
+                logger.info(f"📜 向下滚动 {scroll_distance} 像素 (滚动 {scroll_count + 1}/10)")
+                page.run_js(f"window.scrollBy(0, {scroll_distance})")
+                
+                # 检查是否到达页面底部
+                at_bottom = page.run_js(
+                    "return window.scrollY + window.innerHeight >= document.body.scrollHeight"
+                )
+                
+                current_url = page.url
+                if current_url != prev_url:
+                    prev_url = current_url
+                    logger.info(f"🌐 已加载页面: {current_url}")
+                elif at_bottom and prev_url == current_url:
+                    logger.success("🏁 已到达页面底部，退出浏览")
+                    break
+
+                # 随机退出浏览 (3%概率)
+                if random.random() < 0.03:
+                    logger.success("🎲 随机退出浏览")
+                    break
+
+                # 动态随机等待
+                wait_time = random.uniform(2, 4)
+                logger.info(f"⏳ 等待 {wait_time:.2f} 秒...")
+                time.sleep(wait_time)
+                
+            except Exception as e:
+                logger.error(f"❌ 滚动浏览失败: {str(e)}")
+                break
+
+    def click_like(self, page):
+        """点赞帖子"""
+        try:
+            # 查找点赞按钮
+            like_button = page.ele(".discourse-reactions-reaction-button")
+            if like_button:
+                logger.info("👍 找到未点赞的帖子，准备点赞")
+                like_button.click()
+                time.sleep(random.uniform(1, 2))
+                logger.success("✅ 点赞成功")
+            else:
+                logger.info("ℹ️ 帖子可能已经点过赞了")
+        except Exception as e:
+            logger.error(f"❌ 点赞失败: {str(e)}")
+
     def print_connect_info(self):
-        """打印连接信息"""
+        """打印连接信息 - 基于参考代码的实现"""
         logger.info("🔗 获取连接信息...")
         try:
-            self.page.get(self.site_config['connect_url'])
+            # 在新标签页打开连接页面
+            connect_tab = self.page.new_tab()
+            connect_tab.get(self.site_config['connect_url'])
             time.sleep(5)
             
             # 处理Cloudflare验证
-            CloudflareHandler.handle_cloudflare(self.page)
+            CloudflareHandler.handle_cloudflare(connect_tab)
             time.sleep(3)
             
-            # 提取表格数据 - 改进的选择器
-            page_html = self.page.html
+            # 查找表格
+            table = connect_tab.ele("tag:table")
+            if not table:
+                logger.warning("⚠️ 未找到连接信息表格")
+                connect_tab.close()
+                return
             
-            # 查找表格数据
-            if 'linux.do' in self.site_config['base_url']:
-                # Linux.do 特定的表格解析
-                if '访问次数' in page_html or '已读帖子' in page_html:
-                    logger.success("✅ 找到连接信息表格")
-                    # 这里可以添加更精确的表格解析逻辑
-                else:
-                    logger.warning("⚠️ 未找到标准的连接信息表格")
-            else:
-                # IDCFlare 或其他站点
-                logger.info("ℹ️ 连接信息表格格式可能不同")
+            # 提取表格数据
+            rows = table.eles("tag:tr")
+            info = []
             
-            # 简单显示页面标题和关键信息
-            page_title = self.page.title
-            logger.info(f"📄 连接页面标题: {page_title}")
+            for row in rows:
+                cells = row.eles("tag:td")
+                if len(cells) >= 3:
+                    project = cells[0].text.strip()
+                    current = cells[1].text.strip()
+                    requirement = cells[2].text.strip()
+                    info.append([project, current, requirement])
             
-            # 检查是否包含关键指标
-            key_indicators = ['访问次数', '回复', '浏览', '已读', '点赞', '获赞']
-            found_indicators = [indicator for indicator in key_indicators if indicator in page_html]
-            
-            if found_indicators:
-                logger.info(f"📊 找到关键指标: {', '.join(found_indicators)}")
-            else:
-                logger.warning("⚠️ 未找到关键连接指标")
+            if info:
+                print("\n" + "="*60)
+                print(f"📊 {self.site_name.upper()} 连接信息")
+                print("="*60)
+                print(tabulate(info, headers=["项目", "当前", "要求"], tablefmt="pretty"))
+                print("="*60 + "\n")
                 
+                # 统计达标情况
+                passed = sum(1 for item in info if any(indicator in str(item[1]) for indicator in ['✅', '✔', '✓', '≥']))
+                total = len(info)
+                logger.success(f"📈 统计完成: {passed}/{total} 项达标")
+            else:
+                logger.warning("⚠️ 未找到连接信息数据")
+            
+            # 关闭连接页面标签
+            connect_tab.close()
+            
         except Exception as e:
             logger.error(f"❌ 获取连接信息失败: {str(e)}")
 
@@ -677,8 +677,8 @@ class LinuxDoBrowser:
                 logger.error(f"❌ {self.site_name} 登录失败")
                 return False
             
-            # 2. 浏览主题（使用增强版本）
-            browse_count = self.browse_topics_enhanced()
+            # 2. 浏览主题（使用修复版本）
+            browse_count = self.click_topic()
             
             # 3. 打印连接信息
             self.print_connect_info()
@@ -703,7 +703,7 @@ class LinuxDoBrowser:
 # ======================== 主函数 ========================
 def main():
     """主函数"""
-    logger.info("🚀 Linux.Do 多站点自动化脚本启动 (修复主题浏览版)")
+    logger.info("🚀 Linux.Do 多站点自动化脚本启动 (基于参考代码修复版)")
     logger.info("=" * 80)
     
     # 配置日志
