@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-精简优化版 - 减少选择器复杂度，保持核心功能
+最终优化版 - 集成turnstilePatch扩展和反检测功能
 """
 
 import os
@@ -56,21 +56,25 @@ SITES = [
 BROWSE_ENABLED = os.environ.get("BROWSE_ENABLED", "true").strip().lower() not in ["false", "0", "off"]
 HEADLESS = os.environ.get("HEADLESS", "true").strip().lower() not in ["false", "0", "off"]
 FORCE_LOGIN_EVERY_TIME = os.environ.get("FORCE_LOGIN", "false").strip().lower() in ["true", "1", "on"]
+TURNSTILE_PATCH_ENABLED = os.environ.get("TURNSTILE_PATCH", "true").strip().lower() in ["true", "1", "on"]
 
-# ======================== 精简缓存管理器 ========================
-class SimpleCacheManager:
+# ======================== 扩展路径配置 ========================
+TURNSTILE_PATCH_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "turnstilePatch")
+
+# ======================== 缓存管理器 ========================
+class CacheManager:
     @staticmethod
     def get_cache_directory():
         return os.path.dirname(os.path.abspath(__file__))
 
     @staticmethod
     def get_cache_file_path(file_name):
-        cache_dir = SimpleCacheManager.get_cache_directory()
+        cache_dir = CacheManager.get_cache_directory()
         return os.path.join(cache_dir, file_name)
 
     @staticmethod
     def load_cache(file_name):
-        file_path = SimpleCacheManager.get_cache_file_path(file_name)
+        file_path = CacheManager.get_cache_file_path(file_name)
         if os.path.exists(file_path):
             try:
                 with open(file_path, "r", encoding='utf-8') as f:
@@ -88,7 +92,7 @@ class SimpleCacheManager:
     @staticmethod
     def save_cache(data, file_name):
         try:
-            file_path = SimpleCacheManager.get_cache_file_path(file_name)
+            file_path = CacheManager.get_cache_file_path(file_name)
             with open(file_path, "w", encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
             logger.info(f"💾 保存缓存: {file_name}")
@@ -100,12 +104,12 @@ class SimpleCacheManager:
     @staticmethod
     def load_site_cache(site_name, cache_type):
         file_name = f"{cache_type}_{site_name}.json"
-        return SimpleCacheManager.load_cache(file_name)
+        return CacheManager.load_cache(file_name)
 
     @staticmethod
     def save_site_cache(data, site_name, cache_type):
         file_name = f"{cache_type}_{site_name}.json"
-        return SimpleCacheManager.save_cache(data, file_name)
+        return CacheManager.save_cache(data, file_name)
 
     @staticmethod
     def clear_site_cache_on_failure(site_name):
@@ -114,7 +118,7 @@ class SimpleCacheManager:
             cache_types = ['cf_cookies', 'session_data']
             for cache_type in cache_types:
                 file_name = f"{cache_type}_{site_name}.json"
-                file_path = SimpleCacheManager.get_cache_file_path(file_name)
+                file_path = CacheManager.get_cache_file_path(file_name)
                 if os.path.exists(file_path):
                     os.remove(file_path)
                     logger.info(f"🗑️ 清除缓存: {file_name}")
@@ -124,11 +128,11 @@ class SimpleCacheManager:
         except Exception as e:
             logger.error(f"❌ 清除缓存失败: {str(e)}")
 
-# ======================== 精简Cloudflare处理器 ========================
-class SimpleCloudflareHandler:
+# ======================== Cloudflare处理器 ========================
+class CloudflareHandler:
     @staticmethod
     def handle_cloudflare(page, timeout=30):
-        """简化Cloudflare验证处理"""
+        """处理Cloudflare验证"""
         start_time = time.time()
         logger.info("🛡️ 处理Cloudflare验证")
         
@@ -150,8 +154,8 @@ class SimpleCloudflareHandler:
         logger.warning("⚠️ Cloudflare处理超时，继续执行")
         return True
 
-# ======================== 精简浏览器类 ========================
-class SimpleLinuxDoBrowser:
+# ======================== 主浏览器类 ========================
+class LinuxDoBrowser:
     def __init__(self, site_config, credentials):
         self.site_config = site_config
         self.site_name = site_config['name']
@@ -162,9 +166,11 @@ class SimpleLinuxDoBrowser:
         self.initialize_browser()
 
     def initialize_browser(self):
-        """初始化浏览器"""
+        """初始化浏览器 - 集成反检测和扩展"""
         try:
             co = ChromiumOptions()
+            
+            # 基础配置
             if HEADLESS:
                 co.headless(True)
             else:
@@ -173,21 +179,91 @@ class SimpleLinuxDoBrowser:
             co.incognito(True)
             co.set_argument("--no-sandbox")
             co.set_argument("--disable-dev-shm-usage")
-            co.set_argument("--disable-blink-features=AutomationControlled")
             
-            user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+            # 反检测配置
+            co.set_argument("--disable-blink-features=AutomationControlled")
+            co.set_argument("--disable-features=VizDisplayCompositor")
+            co.set_argument("--disable-background-timer-throttling")
+            co.set_argument("--disable-backgrounding-occluded-windows")
+            co.set_argument("--disable-renderer-backgrounding")
+            co.set_argument("--disable-web-security")
+            co.set_argument("--disable-features=TranslateUI")
+            co.set_argument("--disable-ipc-flooding-protection")
+            
+            # 用户代理和窗口设置
+            user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             co.set_user_agent(user_agent)
+            co.set_argument("--window-size=1920,1080")
+            co.set_argument("--lang=zh-CN,zh;q=0.9,en;q=0.8")
+            
+            # 加载turnstilePatch扩展
+            if TURNSTILE_PATCH_ENABLED and os.path.exists(TURNSTILE_PATCH_PATH):
+                co.set_argument(f"--load-extension={TURNSTILE_PATCH_PATH}")
+                logger.info("✅ 加载turnstilePatch扩展")
             
             self.page = ChromiumPage(addr_or_opts=co)
             
+            # 执行反检测脚本
+            self._apply_anti_detection()
+            
             # 加载会话数据
-            self.session_data = SimpleCacheManager.load_site_cache(self.site_name, 'session_data') or {}
+            self.session_data = CacheManager.load_site_cache(self.site_name, 'session_data') or {}
             
             logger.info(f"✅ {self.site_name} 浏览器初始化完成")
             
         except Exception as e:
             logger.error(f"❌ 浏览器初始化失败: {str(e)}")
             raise
+
+    def _apply_anti_detection(self):
+        """应用反检测脚本"""
+        try:
+            # 移除自动化特征
+            self.page.run_js("""
+                // 移除webdriver属性
+                Object.defineProperty(navigator, 'webdriver', {
+                    get: () => undefined,
+                });
+                
+                // 移除chrome属性
+                Object.defineProperty(window, 'chrome', {
+                    value: {
+                        runtime: {},
+                    },
+                });
+                
+                // 覆盖权限
+                const originalQuery = window.navigator.permissions.query;
+                window.navigator.permissions.query = (parameters) => (
+                    parameters.name === 'notifications' ?
+                        Promise.resolve({ state: Notification.permission }) :
+                        originalQuery(parameters)
+                );
+                
+                // 覆盖plugins
+                Object.defineProperty(navigator, 'plugins', {
+                    get: () => [1, 2, 3, 4, 5],
+                });
+                
+                // 覆盖languages
+                Object.defineProperty(navigator, 'languages', {
+                    get: () => ['zh-CN', 'zh', 'en'],
+                });
+                
+                // 添加随机鼠标移动
+                document.addEventListener('DOMContentLoaded', function() {
+                    setInterval(() => {
+                        document.dispatchEvent(new MouseEvent('mousemove', {
+                            bubbles: true,
+                            clientX: Math.random() * window.innerWidth,
+                            clientY: Math.random() * window.innerHeight
+                        }));
+                    }, 30000 + Math.random() * 20000);
+                });
+            """)
+            logger.debug("✅ 反检测脚本已应用")
+        except Exception as e:
+            logger.debug(f"反检测脚本应用异常: {str(e)}")
 
     def save_caches(self):
         """保存缓存"""
@@ -198,7 +274,7 @@ class SimpleLinuxDoBrowser:
             # 保存cookies
             cookies = self.page.cookies()
             if cookies:
-                SimpleCacheManager.save_site_cache(cookies, self.site_name, 'cf_cookies')
+                CacheManager.save_site_cache(cookies, self.site_name, 'cf_cookies')
                 logger.info(f"✅ 保存 {len(cookies)} 个Cookies")
             
             # 保存会话数据
@@ -210,7 +286,7 @@ class SimpleLinuxDoBrowser:
                 'username_hash': hash(self.username) if self.username else 0,
                 'total_runs': self.session_data.get('total_runs', 0) + 1
             }
-            SimpleCacheManager.save_site_cache(session_data, self.site_name, 'session_data')
+            CacheManager.save_site_cache(session_data, self.site_name, 'session_data')
             
             self.cache_saved = True
             logger.info(f"✅ {self.site_name} 缓存保存完成")
@@ -224,7 +300,7 @@ class SimpleLinuxDoBrowser:
             logger.info("⚠️ 强制重新登录，跳过缓存")
             return False
             
-        cookies = SimpleCacheManager.load_site_cache(self.site_name, 'cf_cookies')
+        cookies = CacheManager.load_site_cache(self.site_name, 'cf_cookies')
         if not cookies:
             logger.warning("⚠️ 无有效缓存Cookies")
             return False
@@ -241,7 +317,7 @@ class SimpleLinuxDoBrowser:
             self.page.refresh()
             time.sleep(2)
             
-            SimpleCloudflareHandler.handle_cloudflare(self.page)
+            CloudflareHandler.handle_cloudflare(self.page)
             
             if self.verify_login_status():
                 logger.success("✅ 缓存登录成功")
@@ -263,7 +339,7 @@ class SimpleLinuxDoBrowser:
             self.page.get(private_url)
             time.sleep(3)
             
-            SimpleCloudflareHandler.handle_cloudflare(self.page)
+            CloudflareHandler.handle_cloudflare(self.page)
             time.sleep(2)
             
             page_content = self.page.html
@@ -299,7 +375,7 @@ class SimpleLinuxDoBrowser:
         self.page.get(self.site_config['login_url'])
         time.sleep(2)
         
-        SimpleCloudflareHandler.handle_cloudflare(self.page)
+        CloudflareHandler.handle_cloudflare(self.page)
         time.sleep(2)
         
         try:
@@ -336,7 +412,7 @@ class SimpleLinuxDoBrowser:
             login_button.click()
             time.sleep(8)
             
-            SimpleCloudflareHandler.handle_cloudflare(self.page)
+            CloudflareHandler.handle_cloudflare(self.page)
             time.sleep(3)
             
             if self.verify_login_status():
@@ -361,12 +437,12 @@ class SimpleLinuxDoBrowser:
         login_success = self.login()
         if not login_success:
             # 登录失败时清除缓存
-            SimpleCacheManager.clear_site_cache_on_failure(self.site_name)
+            CacheManager.clear_site_cache_on_failure(self.site_name)
         
         return login_success
 
-    def find_topic_elements_simple(self):
-        """简化的主题元素查找 - 只使用href模式"""
+    def find_topic_elements(self):
+        """主题元素查找 - 使用href模式"""
         logger.info("🎯 查找主题...")
         
         try:
@@ -379,7 +455,7 @@ class SimpleLinuxDoBrowser:
                 if not href:
                     continue
                 
-                # 只使用href模式过滤主题链接
+                # 使用href模式过滤主题链接
                 if '/t/' in href and not any(exclude in href for exclude in ['/tags/', '/c/', '/u/']):
                     # 确保URL完整
                     if not href.startswith('http'):
@@ -399,8 +475,8 @@ class SimpleLinuxDoBrowser:
             logger.error(f"❌ 查找主题失败: {str(e)}")
             return []
 
-    def browse_topics_simple(self):
-        """简化的主题浏览"""
+    def browse_topics(self):
+        """主题浏览 - 深度滚动和交互"""
         if not BROWSE_ENABLED:
             logger.info("⏭️ 浏览功能已禁用")
             return 0
@@ -417,11 +493,11 @@ class SimpleLinuxDoBrowser:
             self.page.get(self.site_config['latest_url'])
             time.sleep(3)
             
-            SimpleCloudflareHandler.handle_cloudflare(self.page)
+            CloudflareHandler.handle_cloudflare(self.page)
             time.sleep(2)
             
-            # 使用简化的查找方法
-            topic_urls = self.find_topic_elements_simple()
+            # 查找主题
+            topic_urls = self.find_topic_elements()
             if not topic_urls:
                 logger.error("❌ 无法找到主题")
                 return 0
@@ -443,7 +519,7 @@ class SimpleLinuxDoBrowser:
                     self.page.get(topic_url)
                     time.sleep(3)
                     
-                    SimpleCloudflareHandler.handle_cloudflare(self.page)
+                    CloudflareHandler.handle_cloudflare(self.page)
                     time.sleep(2)
                     
                     # 深度滚动浏览
@@ -456,7 +532,7 @@ class SimpleLinuxDoBrowser:
                     if i < browse_count - 1:
                         self.page.get(self.site_config['latest_url'])
                         time.sleep(3)
-                        SimpleCloudflareHandler.handle_cloudflare(self.page)
+                        CloudflareHandler.handle_cloudflare(self.page)
                         time.sleep(2)
                     
                     # 主题间等待
@@ -559,8 +635,8 @@ class SimpleLinuxDoBrowser:
         except:
             pass
 
-    def print_connect_info_simple(self):
-        """简化的连接信息获取"""
+    def print_connect_info(self):
+        """连接信息获取"""
         logger.info("🔗 获取连接信息...")
         try:
             # 在新标签页打开连接页面
@@ -568,7 +644,7 @@ class SimpleLinuxDoBrowser:
             connect_tab.get(self.site_config['connect_url'])
             time.sleep(3)
             
-            SimpleCloudflareHandler.handle_cloudflare(connect_tab)
+            CloudflareHandler.handle_cloudflare(connect_tab)
             time.sleep(2)
             
             # 简化选择器：只使用tag:table
@@ -624,11 +700,11 @@ class SimpleLinuxDoBrowser:
                 logger.error(f"❌ {self.site_name} 登录失败")
                 return False
             
-            # 2. 简化的主题浏览（深度滚动）
-            browse_count = self.browse_topics_simple()
+            # 2. 主题浏览（深度滚动）
+            browse_count = self.browse_topics()
             
-            # 3. 简化的连接信息获取
-            self.print_connect_info_simple()
+            # 3. 连接信息获取
+            self.print_connect_info()
             
             # 4. 保存缓存
             self.save_caches()
@@ -649,8 +725,15 @@ class SimpleLinuxDoBrowser:
 
 # ======================== 主函数 ========================
 def main():
-    logger.info("🚀 Linux.Do 多站点自动化脚本启动 (精简版)")
+    logger.info("🚀 Linux.Do 多站点自动化脚本启动 (最终版)")
     logger.info("=" * 80)
+    
+    # 检查扩展目录
+    if TURNSTILE_PATCH_ENABLED:
+        if os.path.exists(TURNSTILE_PATCH_PATH):
+            logger.info("✅ turnstilePatch扩展已配置")
+        else:
+            logger.warning("⚠️ turnstilePatch扩展目录不存在")
     
     logger.remove()
     logger.add(sys.stdout, format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{message}</cyan>", level="INFO")
@@ -686,7 +769,7 @@ def main():
         logger.info(f"🔧 初始化 {site_name}")
         
         try:
-            browser = SimpleLinuxDoBrowser(site_config, credentials)
+            browser = LinuxDoBrowser(site_config, credentials)
             success = browser.run()
 
             if success:
