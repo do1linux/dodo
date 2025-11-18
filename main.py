@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-最终优化版 - 集成turnstilePatch扩展和反检测功能
+优化版 - 集成指纹优化和反检测功能
 """
 
 import os
@@ -10,6 +10,8 @@ import time
 import sys
 import json
 import re
+import base64
+import requests
 from datetime import datetime
 from loguru import logger
 from DrissionPage import ChromiumPage, ChromiumOptions
@@ -56,10 +58,7 @@ SITES = [
 BROWSE_ENABLED = os.environ.get("BROWSE_ENABLED", "true").strip().lower() not in ["false", "0", "off"]
 HEADLESS = os.environ.get("HEADLESS", "true").strip().lower() not in ["false", "0", "off"]
 FORCE_LOGIN_EVERY_TIME = os.environ.get("FORCE_LOGIN", "false").strip().lower() in ["true", "1", "on"]
-TURNSTILE_PATCH_ENABLED = os.environ.get("TURNSTILE_PATCH", "true").strip().lower() in ["true", "1", "on"]
-
-# ======================== 扩展路径配置 ========================
-TURNSTILE_PATCH_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "turnstilePatch")
+OCR_API_KEY = os.getenv("OCR_API_KEY")
 
 # ======================== 缓存管理器 ========================
 class CacheManager:
@@ -128,32 +127,6 @@ class CacheManager:
         except Exception as e:
             logger.error(f"❌ 清除缓存失败: {str(e)}")
 
-# ======================== Cloudflare处理器 ========================
-class CloudflareHandler:
-    @staticmethod
-    def handle_cloudflare(page, timeout=30):
-        """处理Cloudflare验证"""
-        start_time = time.time()
-        logger.info("🛡️ 处理Cloudflare验证")
-        
-        while time.time() - start_time < timeout:
-            try:
-                page_title = page.title
-                if page_title and page_title != "请稍候…" and "Checking" not in page_title and "Just a moment" not in page_title:
-                    logger.success("✅ Cloudflare验证通过")
-                    return True
-                
-                wait_time = random.uniform(2, 4)
-                logger.debug(f"⏳ 等待验证 {wait_time:.1f}秒")
-                time.sleep(wait_time)
-                    
-            except Exception as e:
-                logger.debug(f"Cloudflare检查异常: {str(e)}")
-                time.sleep(2)
-        
-        logger.warning("⚠️ Cloudflare处理超时，继续执行")
-        return True
-
 # ======================== 主浏览器类 ========================
 class LinuxDoBrowser:
     def __init__(self, site_config, credentials):
@@ -166,7 +139,7 @@ class LinuxDoBrowser:
         self.initialize_browser()
 
     def initialize_browser(self):
-        """初始化浏览器 - 集成反检测和扩展"""
+        """初始化浏览器 - 集成反检测和指纹优化"""
         try:
             co = ChromiumOptions()
             
@@ -196,15 +169,10 @@ class LinuxDoBrowser:
             co.set_argument("--window-size=1920,1080")
             co.set_argument("--lang=zh-CN,zh;q=0.9,en;q=0.8")
             
-            # 加载turnstilePatch扩展
-            if TURNSTILE_PATCH_ENABLED and os.path.exists(TURNSTILE_PATCH_PATH):
-                co.set_argument(f"--load-extension={TURNSTILE_PATCH_PATH}")
-                logger.info("✅ 加载turnstilePatch扩展")
-            
             self.page = ChromiumPage(addr_or_opts=co)
             
-            # 执行反检测脚本
-            self._apply_anti_detection()
+            # 执行指纹优化和反检测脚本
+            self.enhance_github_actions_fingerprint()
             
             # 加载会话数据
             self.session_data = CacheManager.load_site_cache(self.site_name, 'session_data') or {}
@@ -215,17 +183,35 @@ class LinuxDoBrowser:
             logger.error(f"❌ 浏览器初始化失败: {str(e)}")
             raise
 
-    def _apply_anti_detection(self):
-        """应用反检测脚本"""
+    def enhance_github_actions_fingerprint(self):
+        """针对 GitHub Actions 环境的指纹优化"""
         try:
-            # 移除自动化特征
             self.page.run_js("""
-                // 移除webdriver属性
-                Object.defineProperty(navigator, 'webdriver', {
-                    get: () => undefined,
+                // 深度修改 navigator 属性
+                Object.defineProperties(navigator, {
+                    webdriver: { get: () => undefined },
+                    language: { get: () => 'zh-CN' },
+                    languages: { get: () => ['zh-CN', 'zh', 'en'] },
+                    platform: { get: () => 'Win32' },
+                    hardwareConcurrency: { get: () => 4 },
+                    deviceMemory: { get: () => 8 },
+                    
+                    // 修改插件信息
+                    plugins: {
+                        get: () => [
+                            { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer' },
+                            { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai' },
+                            { name: 'Native Client', filename: 'internal-nacl-plugin' }
+                        ]
+                    }
                 });
+
+                // 修改屏幕属性
+                Object.defineProperty(screen, 'width', { get: () => 1920 });
+                Object.defineProperty(screen, 'height', { get: () => 1080 });
+                Object.defineProperty(screen, 'colorDepth', { get: () => 24 });
                 
-                // 移除chrome属性
+                // 移除自动化特征
                 Object.defineProperty(window, 'chrome', {
                     value: {
                         runtime: {},
@@ -240,16 +226,6 @@ class LinuxDoBrowser:
                         originalQuery(parameters)
                 );
                 
-                // 覆盖plugins
-                Object.defineProperty(navigator, 'plugins', {
-                    get: () => [1, 2, 3, 4, 5],
-                });
-                
-                // 覆盖languages
-                Object.defineProperty(navigator, 'languages', {
-                    get: () => ['zh-CN', 'zh', 'en'],
-                });
-                
                 // 添加随机鼠标移动
                 document.addEventListener('DOMContentLoaded', function() {
                     setInterval(() => {
@@ -261,9 +237,211 @@ class LinuxDoBrowser:
                     }, 30000 + Math.random() * 20000);
                 });
             """)
-            logger.debug("✅ 反检测脚本已应用")
+            logger.debug("✅ 指纹优化脚本已应用")
         except Exception as e:
-            logger.debug(f"反检测脚本应用异常: {str(e)}")
+            logger.debug(f"指纹优化异常: {str(e)}")
+
+    def github_optimized_timing(self):
+        """GitHub Actions 环境的时间行为优化"""
+        # 更长的随机延迟，避免 GitHub IP 被标记
+        delays = {
+            'page_load': random.uniform(5, 10),
+            'between_actions': random.uniform(3, 8),
+            'scroll_pause': random.uniform(4, 9),
+            'topic_switch': random.uniform(10, 25)
+        }
+        return delays
+
+    def human_like_scroll_github(self):
+        """GitHub 环境特制的滚动行为"""
+        scroll_patterns = [
+            # 快速滚动到中部
+            {'distance': 800, 'speed': 'fast', 'pause': 2},
+            # 慢速详细阅读
+            {'distance': 300, 'speed': 'slow', 'pause': 5},
+            # 小幅回滚
+            {'distance': -150, 'speed': 'medium', 'pause': 3},
+            # 继续阅读
+            {'distance': 400, 'speed': 'slow', 'pause': 4},
+            # 快速到底部
+            {'distance': 1000, 'speed': 'fast', 'pause': 2},
+            # 回滚到感兴趣内容
+            {'distance': -600, 'speed': 'medium', 'pause': 6}
+        ]
+        
+        for pattern in scroll_patterns:
+            self.page.scroll.to(y=pattern['distance'])
+            time.sleep(pattern['pause'])
+            self.trigger_random_interaction()
+
+    def trigger_random_interaction(self):
+        """触发随机交互"""
+        try:
+            self.page.run_js("""
+                // 随机鼠标移动
+                document.dispatchEvent(new MouseEvent('mousemove', {
+                    bubbles: true,
+                    clientX: Math.random() * window.innerWidth,
+                    clientY: Math.random() * window.innerHeight
+                }));
+            """)
+        except:
+            pass
+
+    def handle_cloudflare(self, timeout=30):
+        """处理Cloudflare验证，包括验证码挑战"""
+        start_time = time.time()
+        logger.info("🛡️ 处理Cloudflare验证")
+        
+        while time.time() - start_time < timeout:
+            try:
+                page_title = self.page.title
+                page_content = self.page.html
+                
+                # 如果页面标题不包含等待信息，并且没有验证码挑战，则认为通过
+                if page_title and page_title != "请稍候…" and "Checking" not in page_title and "Just a moment" not in page_title:
+                    # 检查是否有验证码挑战
+                    if self.is_captcha_page():
+                        logger.info("🛡️ 检测到验证码挑战，尝试处理...")
+                        if self.handle_captcha_challenge():
+                            # 处理完验证码后，继续等待，因为提交验证码后可能还有挑战
+                            time.sleep(5)
+                            continue
+                        else:
+                            logger.error("❌ 验证码处理失败")
+                            return False
+                    else:
+                        logger.success("✅ Cloudflare验证通过")
+                        return True
+                
+                # 如果页面是验证码挑战，直接处理
+                if self.is_captcha_page():
+                    logger.info("🛡️ 检测到验证码挑战，尝试处理...")
+                    if self.handle_captcha_challenge():
+                        time.sleep(5)
+                        continue
+                    else:
+                        logger.error("❌ 验证码处理失败")
+                        return False
+                
+                wait_time = random.uniform(2, 4)
+                logger.debug(f"⏳ 等待验证 {wait_time:.1f}秒")
+                time.sleep(wait_time)
+                    
+            except Exception as e:
+                logger.debug(f"Cloudflare检查异常: {str(e)}")
+                time.sleep(2)
+        
+        logger.warning("⚠️ Cloudflare处理超时，继续执行")
+        return True
+
+    def is_captcha_page(self):
+        """检查当前页面是否是验证码挑战页面"""
+        # 检查是否有验证码图片和输入框
+        captcha_img = self.page.ele('img[src*="challenge"]') or self.page.ele('img[src*="captcha"]')
+        captcha_input = self.page.ele('input[name="cf_captcha_answer"]') or self.page.ele('input[type="text"]@@placeholder*=captcha', timeout=2)
+        
+        return captcha_img and captcha_input
+
+    def handle_captcha_challenge(self):
+        """处理验证码挑战"""
+        try:
+            # 获取验证码图片
+            captcha_img = self.page.ele('img[src*="challenge"]') or self.page.ele('img[src*="captcha"]')
+            if not captcha_img:
+                logger.error("❌ 找不到验证码图片")
+                return False
+
+            # 获取图片的src属性
+            img_src = captcha_img.attr('src')
+
+            # 如果src是base64数据，直接使用；如果是URL，则下载
+            if img_src.startswith('data:image'):
+                base64_data = img_src
+            else:
+                # 如果是相对路径，补全URL
+                if not img_src.startswith('http'):
+                    img_src = self.site_config['base_url'] + img_src
+                # 下载图片并转换为base64
+                response = requests.get(img_src)
+                if response.status_code != 200:
+                    logger.error("❌ 下载验证码图片失败")
+                    return False
+                base64_data = "data:image/png;base64," + base64.b64encode(response.content).decode('utf-8')
+
+            # 调用OCR.space API
+            if not OCR_API_KEY:
+                logger.error("❌ 未设置OCR_API_KEY环境变量")
+                return False
+
+            ocr_result = self.call_ocr_space_api(base64_data, OCR_API_KEY)
+            if not ocr_result:
+                logger.error("❌ OCR识别失败")
+                return False
+
+            # 填写验证码
+            captcha_input = self.page.ele('input[name="cf_captcha_answer"]') or self.page.ele('input[type="text"]@@placeholder*=captcha')
+            if not captcha_input:
+                logger.error("❌ 找不到验证码输入框")
+                return False
+
+            captcha_input.input(ocr_result)
+            time.sleep(1)
+
+            # 提交验证码
+            submit_btn = self.page.ele('button[type="submit"]') or self.page.ele('input[type="submit"]')
+            if not submit_btn:
+                logger.error("❌ 找不到提交按钮")
+                return False
+
+            submit_btn.click()
+            logger.info("✅ 已提交验证码")
+            return True
+
+        except Exception as e:
+            logger.error(f"❌ 处理验证码挑战时出错: {str(e)}")
+            return False
+
+    def call_ocr_space_api(self, base64_image, api_key, retries=3):
+        """
+        调用OCR.Space API识别验证码
+        """
+        for attempt in range(retries):
+            try:
+                url = "https://api.ocr.space/parse/image"
+                payload = {
+                    "apikey": api_key,
+                    "base64Image": base64_image,
+                    "language": "eng",
+                    "OCREngine": "2",  # 使用引擎2
+                }
+
+                response = requests.post(url, data=payload, timeout=30)
+                result = response.json()
+
+                if result.get("IsErroredOnProcessing"):
+                    error_msg = result.get("ErrorMessage", "Unknown error")
+                    logger.warning(f"⚠️ OCR API 错误: {error_msg}")
+                    continue
+
+                parsed_results = result.get("ParsedResults", [])
+                if parsed_results:
+                    parsed_text = parsed_results[0].get("ParsedText", "").strip()
+                    if parsed_text:
+                        logger.info(f"🔍 OCR 识别结果: {parsed_text}")
+                        return parsed_text
+
+                logger.warning(f"⚠️ 第 {attempt + 1} 次OCR尝试未识别出文本")
+
+            except Exception as e:
+                logger.warning(f"⚠️ 第 {attempt + 1} 次OCR尝试失败: {str(e)}")
+
+            if attempt < retries - 1:
+                wait_time = (attempt + 1) * 5
+                logger.info(f"⏳ {wait_time}秒后重试OCR...")
+                time.sleep(wait_time)
+
+        return None
 
     def save_caches(self):
         """保存缓存"""
@@ -317,7 +495,7 @@ class LinuxDoBrowser:
             self.page.refresh()
             time.sleep(2)
             
-            CloudflareHandler.handle_cloudflare(self.page)
+            self.handle_cloudflare()
             
             if self.verify_login_status():
                 logger.success("✅ 缓存登录成功")
@@ -339,7 +517,7 @@ class LinuxDoBrowser:
             self.page.get(private_url)
             time.sleep(3)
             
-            CloudflareHandler.handle_cloudflare(self.page)
+            self.handle_cloudflare()
             time.sleep(2)
             
             page_content = self.page.html
@@ -375,7 +553,7 @@ class LinuxDoBrowser:
         self.page.get(self.site_config['login_url'])
         time.sleep(2)
         
-        CloudflareHandler.handle_cloudflare(self.page)
+        self.handle_cloudflare()
         time.sleep(2)
         
         try:
@@ -412,7 +590,7 @@ class LinuxDoBrowser:
             login_button.click()
             time.sleep(8)
             
-            CloudflareHandler.handle_cloudflare(self.page)
+            self.handle_cloudflare()
             time.sleep(3)
             
             if self.verify_login_status():
@@ -493,7 +671,7 @@ class LinuxDoBrowser:
             self.page.get(self.site_config['latest_url'])
             time.sleep(3)
             
-            CloudflareHandler.handle_cloudflare(self.page)
+            self.handle_cloudflare()
             time.sleep(2)
             
             # 查找主题
@@ -519,7 +697,7 @@ class LinuxDoBrowser:
                     self.page.get(topic_url)
                     time.sleep(3)
                     
-                    CloudflareHandler.handle_cloudflare(self.page)
+                    self.handle_cloudflare()
                     time.sleep(2)
                     
                     # 深度滚动浏览
@@ -532,7 +710,7 @@ class LinuxDoBrowser:
                     if i < browse_count - 1:
                         self.page.get(self.site_config['latest_url'])
                         time.sleep(3)
-                        CloudflareHandler.handle_cloudflare(self.page)
+                        self.handle_cloudflare()
                         time.sleep(2)
                     
                     # 主题间等待
@@ -644,7 +822,7 @@ class LinuxDoBrowser:
             connect_tab.get(self.site_config['connect_url'])
             time.sleep(3)
             
-            CloudflareHandler.handle_cloudflare(connect_tab)
+            self.handle_cloudflare(connect_tab)
             time.sleep(2)
             
             # 简化选择器：只使用tag:table
@@ -725,15 +903,8 @@ class LinuxDoBrowser:
 
 # ======================== 主函数 ========================
 def main():
-    logger.info("🚀 Linux.Do 多站点自动化脚本启动 (最终版)")
+    logger.info("🚀 Linux.Do 多站点自动化脚本启动 (优化版)")
     logger.info("=" * 80)
-    
-    # 检查扩展目录
-    if TURNSTILE_PATCH_ENABLED:
-        if os.path.exists(TURNSTILE_PATCH_PATH):
-            logger.info("✅ turnstilePatch扩展已配置")
-        else:
-            logger.warning("⚠️ turnstilePatch扩展目录不存在")
     
     logger.remove()
     logger.add(sys.stdout, format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{message}</cyan>", level="INFO")
