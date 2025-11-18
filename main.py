@@ -60,12 +60,15 @@ SITES = [
     }
 ]
 
-# 环境变量配置
+# GitHub Actions 环境优化配置
 BROWSE_ENABLED = os.environ.get("BROWSE_ENABLED", "true").strip().lower() not in ["false", "0", "off"]
 HEADLESS = os.environ.get("HEADLESS", "true").strip().lower() not in ["false", "0", "off"]
 FORCE_LOGIN_EVERY_TIME = os.environ.get("FORCE_LOGIN", "false").strip().lower() in ["true", "1", "on"]
 TURNSTILE_PATCH_ENABLED = os.environ.get("TURNSTILE_PATCH_ENABLED", "true").strip().lower() not in ["false", "0", "off"]
 OCR_API_KEY = os.getenv("OCR_API_KEY")
+
+# GitHub Actions 特定优化
+GITHUB_ACTIONS = os.environ.get("GITHUB_ACTIONS") == "true"
 
 # ======================== 扩展路径配置 ========================
 TURNSTILE_PATCH_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "turnstilePatch")
@@ -145,20 +148,32 @@ class LinuxDoBrowser:
         self.username = credentials['username']
         self.password = credentials['password']
         self.page = None
-        self.main_tab = None
         self.cache_saved = False
         self.initialize_browser()
 
     def initialize_browser(self):
-        """初始化浏览器 - 集成反检测和指纹优化，加载turnstilePatch扩展"""
+        """GitHub Actions 优化版浏览器初始化"""
         try:
             co = ChromiumOptions()
             
-            # 基础配置
-            if HEADLESS:
+            # GitHub Actions 环境特殊配置
+            if GITHUB_ACTIONS:
+                logger.info("🎯 GitHub Actions 环境优化配置")
+                # 在CI环境中强制无头模式
                 co.headless(True)
+                # 减少内存使用
+                co.set_argument("--disable-dev-shm-usage")
+                co.set_argument("--disable-gpu")
+                co.set_argument("--no-sandbox")
+                co.set_argument("--disable-software-rasterizer")
+                co.set_argument("--disable-background-timer-throttling")
+                co.set_argument("--disable-backgrounding-occluded-windows")
+                co.set_argument("--disable-renderer-backgrounding")
             else:
-                co.headless(False)
+                if HEADLESS:
+                    co.headless(True)
+                else:
+                    co.headless(False)
                 
             co.incognito(True)
             co.set_argument("--no-sandbox")
@@ -167,16 +182,12 @@ class LinuxDoBrowser:
             # 反检测配置
             co.set_argument("--disable-blink-features=AutomationControlled")
             co.set_argument("--disable-features=VizDisplayCompositor")
-            co.set_argument("--disable-background-timer-throttling")
-            co.set_argument("--disable-backgrounding-occluded-windows")
-            co.set_argument("--disable-renderer-backgrounding")
             co.set_argument("--disable-web-security")
             co.set_argument("--disable-features=TranslateUI")
             co.set_argument("--disable-ipc-flooding-protection")
             co.set_argument("--no-default-browser-check")
             co.set_argument("--disable-component-extensions-with-background-pages")
             co.set_argument("--disable-default-apps")
-            co.set_argument("--disable-extensions")
             co.set_argument("--disable-popup-blocking")
             co.set_argument("--disable-prompt-on-repost")
             co.set_argument("--disable-background-networking")
@@ -198,17 +209,12 @@ class LinuxDoBrowser:
             if TURNSTILE_PATCH_ENABLED and os.path.exists(TURNSTILE_PATCH_PATH):
                 co.set_argument(f"--load-extension={TURNSTILE_PATCH_PATH}")
                 logger.info(f"✅ 加载turnstilePatch扩展，路径: {TURNSTILE_PATCH_PATH}")
-                # 检查扩展是否有效
-                if os.path.exists(os.path.join(TURNSTILE_PATCH_PATH, "manifest.json")):
-                    logger.info("✅ turnstilePatch扩展完整")
-                else:
-                    logger.warning("⚠️ turnstilePatch扩展可能不完整")
             else:
                 logger.warning(f"⚠️ 未加载turnstilePatch扩展，路径存在: {os.path.exists(TURNSTILE_PATCH_PATH)}")
         
             self.page = ChromiumPage(addr_or_opts=co)
             
-            # 执行增强版指纹优化
+            # 执行GitHub Actions优化版指纹优化
             self.enhance_github_actions_fingerprint()
             
             # 加载会话数据
@@ -221,42 +227,29 @@ class LinuxDoBrowser:
             raise
 
     def enhance_github_actions_fingerprint(self):
-        """增强版指纹优化"""
+        """GitHub Actions 环境专用指纹优化"""
         try:
             self.page.run_js("""
-                // 深度修改 navigator 属性
+                // GitHub Actions 环境专用指纹优化
                 Object.defineProperties(navigator, {
                     webdriver: { get: () => undefined },
                     language: { get: () => 'zh-CN' },
                     languages: { get: () => ['zh-CN', 'zh', 'en'] },
                     platform: { get: () => 'Win32' },
-                    hardwareConcurrency: { get: () => 8 },
-                    deviceMemory: { get: () => 16 },
+                    hardwareConcurrency: { get: () => 2 },  // GitHub Actions通常2核
+                    deviceMemory: { get: () => 4 },         // 适中的内存配置
                     
-                    // 修改插件信息 - 更真实的插件列表
                     plugins: {
                         get: () => [
                             { 
                                 name: 'Chrome PDF Plugin', 
-                                filename: 'internal-pdf-viewer',
-                                description: 'Portable Document Format'
+                                filename: 'internal-pdf-viewer'
                             },
                             { 
                                 name: 'Chrome PDF Viewer', 
-                                filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai',
-                                description: 'Portable Document Format'
-                            },
-                            { 
-                                name: 'Native Client', 
-                                filename: 'internal-nacl-plugin',
-                                description: 'Native Client Executable'
+                                filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai'
                             }
                         ]
-                    },
-                    
-                    // 添加更多属性
-                    userAgent: {
-                        get: () => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
                     }
                 });
 
@@ -264,119 +257,63 @@ class LinuxDoBrowser:
                 Object.defineProperty(screen, 'width', { get: () => 1920 });
                 Object.defineProperty(screen, 'height', { get: () => 1080 });
                 Object.defineProperty(screen, 'colorDepth', { get: () => 24 });
-                Object.defineProperty(screen, 'pixelDepth', { get: () => 24 });
                 
-                // Canvas 指纹伪装
-                const originalGetContext = HTMLCanvasElement.prototype.getContext;
-                HTMLCanvasElement.prototype.getContext = function(contextType, ...args) {
-                    const context = originalGetContext.call(this, contextType, ...args);
-                    if (contextType === '2d') {
-                        const originalFillText = context.fillText;
-                        context.fillText = function(...fillTextArgs) {
-                            // 微调文本渲染，增加随机性
-                            if (fillTextArgs.length > 3) {
-                                fillTextArgs[3] = fillTextArgs[3] + Math.random() * 0.1 - 0.05;
-                            }
-                            return originalFillText.apply(this, fillTextArgs);
-                        };
-                    }
-                    return context;
-                };
-
-                // WebGL 指纹伪装
-                const originalGetParameter = WebGLRenderingContext.prototype.getParameter;
-                WebGLRenderingContext.prototype.getParameter = function(parameter) {
-                    if (parameter === 37445) {
-                        return 'Google Inc. (Intel)';
-                    }
-                    if (parameter === 37446) {
-                        return 'Intel Iris OpenGL Engine';
-                    }
-                    return originalGetParameter.call(this, parameter);
-                };
-
                 // 移除自动化特征
                 Object.defineProperty(window, 'chrome', {
                     value: {
                         runtime: {},
-                        loadTimes: () => {},
-                        csi: () => {},
-                        app: {}
                     },
                 });
                 
-                // 覆盖权限
-                const originalQuery = window.navigator.permissions.query;
-                window.navigator.permissions.query = (parameters) => (
-                    parameters.name === 'notifications' ?
-                        Promise.resolve({ state: Notification.permission }) :
-                        originalQuery(parameters)
-                );
-
-                // 覆盖时区和语言
-                Object.defineProperty(Intl, 'DateTimeFormat', {
-                    value: class extends Intl.DateTimeFormat {
-                        constructor(locales, options) {
-                            super(locales || ['zh-CN', 'zh', 'en-US'], options);
-                        }
-                    }
-                });
-
-                // 添加更频繁的随机交互
+                // 简化的随机交互 - 减少GitHub Actions负载
                 document.addEventListener('DOMContentLoaded', function() {
-                    // 更频繁的鼠标移动
                     setInterval(() => {
-                        ['mousemove', 'mouseover', 'mousedown', 'mouseup'].forEach(eventType => {
-                            document.dispatchEvent(new MouseEvent(eventType, {
-                                bubbles: true,
-                                cancelable: true,
-                                clientX: Math.random() * window.innerWidth,
-                                clientY: Math.random() * window.innerHeight
-                            }));
-                        });
-                    }, 5000 + Math.random() * 10000);
-                    
-                    // 随机键盘事件
-                    setInterval(() => {
-                        document.dispatchEvent(new KeyboardEvent('keydown', { 
-                            key: ' ', 
-                            bubbles: true 
+                        document.dispatchEvent(new MouseEvent('mousemove', {
+                            bubbles: true,
+                            clientX: Math.random() * window.innerWidth,
+                            clientY: Math.random() * window.innerHeight
                         }));
-                    }, 8000 + Math.random() * 12000);
-                });
-
-                // 覆盖连接属性
-                Object.defineProperty(navigator, 'connection', {
-                    value: {
-                        downlink: 10,
-                        effectiveType: "4g",
-                        rtt: 50,
-                        saveData: false
-                    }
+                    }, 15000 + Math.random() * 15000); // 减少交互频率
                 });
             """)
-            logger.debug("✅ 增强版指纹优化脚本已应用")
+            logger.debug("✅ GitHub Actions指纹优化已应用")
         except Exception as e:
             logger.debug(f"指纹优化异常: {str(e)}")
 
-    def handle_cloudflare(self, timeout=30):
-        """处理Cloudflare验证，包括验证码挑战"""
+    def github_actions_timing(self):
+        """GitHub Actions 环境时间优化"""
+        if GITHUB_ACTIONS:
+            # GitHub Actions中减少等待时间，提高效率
+            return {
+                'page_load': random.uniform(3, 6),
+                'between_actions': random.uniform(2, 5),
+                'scroll_pause': random.uniform(2, 4),
+                'topic_switch': random.uniform(8, 15)
+            }
+        else:
+            # 本地环境保持原有时间
+            return {
+                'page_load': random.uniform(5, 10),
+                'between_actions': random.uniform(3, 8),
+                'scroll_pause': random.uniform(4, 9),
+                'topic_switch': random.uniform(10, 25)
+            }
+
+    def handle_cloudflare(self, timeout=25):
+        """GitHub Actions 优化的Cloudflare处理"""
         start_time = time.time()
         logger.info("🛡️ 处理Cloudflare验证")
         
         while time.time() - start_time < timeout:
             try:
                 page_title = self.page.title
-                page_content = self.page.html
                 
-                # 如果页面标题不包含等待信息，并且没有验证码挑战，则认为通过
+                # 简化的验证逻辑，提高GitHub Actions效率
                 if page_title and page_title != "请稍候…" and "Checking" not in page_title and "Just a moment" not in page_title:
-                    # 检查是否有验证码挑战
                     if self.is_captcha_page():
-                        logger.info("🛡️ 检测到验证码挑战，尝试处理...")
+                        logger.info("🛡️ 检测到验证码挑战")
                         if self.handle_captcha_challenge():
-                            # 处理完验证码后，继续等待，因为提交验证码后可能还有挑战
-                            time.sleep(5)
+                            time.sleep(3)
                             continue
                         else:
                             logger.error("❌ 验证码处理失败")
@@ -385,84 +322,66 @@ class LinuxDoBrowser:
                         logger.success("✅ Cloudflare验证通过")
                         return True
                 
-                # 如果页面是验证码挑战，直接处理
                 if self.is_captcha_page():
-                    logger.info("🛡️ 检测到验证码挑战，尝试处理...")
+                    logger.info("🛡️ 检测到验证码挑战")
                     if self.handle_captcha_challenge():
-                        time.sleep(5)
+                        time.sleep(3)
                         continue
                     else:
-                        logger.error("❌ 验证码处理失败")
                         return False
                 
-                wait_time = random.uniform(2, 4)
-                logger.debug(f"⏳ 等待验证 {wait_time:.1f}秒")
+                wait_time = random.uniform(1, 3)  # 减少等待时间
                 time.sleep(wait_time)
                     
             except Exception as e:
                 logger.debug(f"Cloudflare检查异常: {str(e)}")
-                time.sleep(2)
+                time.sleep(1)
         
         logger.warning("⚠️ Cloudflare处理超时，继续执行")
         return True
 
     def is_captcha_page(self):
-        """检查当前页面是否是验证码挑战页面"""
-        # 检查是否有验证码图片和输入框
+        """检查验证码页面"""
         captcha_img = self.page.ele('img[src*="challenge"]') or self.page.ele('img[src*="captcha"]')
-        captcha_input = self.page.ele('input[name="cf_captcha_answer"]') or self.page.ele('input[type="text"]@@placeholder*=captcha', timeout=2)
-        
+        captcha_input = self.page.ele('input[name="cf_captcha_answer"]') or self.page.ele('input[type="text"]@@placeholder*=captcha', timeout=1)
         return captcha_img and captcha_input
 
     def handle_captcha_challenge(self):
         """处理验证码挑战"""
         try:
-            # 获取验证码图片
             captcha_img = self.page.ele('img[src*="challenge"]') or self.page.ele('img[src*="captcha"]')
             if not captcha_img:
-                logger.error("❌ 找不到验证码图片")
                 return False
 
-            # 获取图片的src属性
             img_src = captcha_img.attr('src')
 
-            # 如果src是base64数据，直接使用；如果是URL，则下载
             if img_src.startswith('data:image'):
                 base64_data = img_src
             else:
-                # 如果是相对路径，补全URL
                 if not img_src.startswith('http'):
                     img_src = self.site_config['base_url'] + img_src
-                # 下载图片并转换为base64
                 response = requests.get(img_src)
                 if response.status_code != 200:
-                    logger.error("❌ 下载验证码图片失败")
                     return False
                 base64_data = "data:image/png;base64," + base64.b64encode(response.content).decode('utf-8')
 
-            # 调用OCR.space API
             if not OCR_API_KEY:
-                logger.error("❌ 未设置OCR_API_KEY环境变量")
+                logger.error("❌ 未设置OCR_API_KEY")
                 return False
 
             ocr_result = self.call_ocr_space_api(base64_data, OCR_API_KEY)
             if not ocr_result:
-                logger.error("❌ OCR识别失败")
                 return False
 
-            # 填写验证码
             captcha_input = self.page.ele('input[name="cf_captcha_answer"]') or self.page.ele('input[type="text"]@@placeholder*=captcha')
             if not captcha_input:
-                logger.error("❌ 找不到验证码输入框")
                 return False
 
             captcha_input.input(ocr_result)
-            time.sleep(1)
+            time.sleep(0.5)
 
-            # 提交验证码
             submit_btn = self.page.ele('button[type="submit"]') or self.page.ele('input[type="submit"]')
             if not submit_btn:
-                logger.error("❌ 找不到提交按钮")
                 return False
 
             submit_btn.click()
@@ -470,13 +389,11 @@ class LinuxDoBrowser:
             return True
 
         except Exception as e:
-            logger.error(f"❌ 处理验证码挑战时出错: {str(e)}")
+            logger.error(f"❌ 验证码处理失败: {str(e)}")
             return False
 
-    def call_ocr_space_api(self, base64_image, api_key, retries=3):
-        """
-        调用OCR.Space API识别验证码
-        """
+    def call_ocr_space_api(self, base64_image, api_key, retries=2):
+        """OCR API调用（GitHub Actions优化）"""
         for attempt in range(retries):
             try:
                 url = "https://api.ocr.space/parse/image"
@@ -487,30 +404,24 @@ class LinuxDoBrowser:
                     "OCREngine": "2",
                 }
 
-                response = requests.post(url, data=payload, timeout=30)
+                response = requests.post(url, data=payload, timeout=20)  # 减少超时
                 result = response.json()
 
                 if result.get("IsErroredOnProcessing"):
-                    error_msg = result.get("ErrorMessage", "Unknown error")
-                    logger.warning(f"⚠️ OCR API 错误: {error_msg}")
                     continue
 
                 parsed_results = result.get("ParsedResults", [])
                 if parsed_results:
                     parsed_text = parsed_results[0].get("ParsedText", "").strip()
                     if parsed_text:
-                        logger.info(f"🔍 OCR 识别结果: {parsed_text}")
+                        logger.info(f"🔍 OCR识别: {parsed_text}")
                         return parsed_text
 
-                logger.warning(f"⚠️ 第 {attempt + 1} 次OCR尝试未识别出文本")
-
             except Exception as e:
-                logger.warning(f"⚠️ 第 {attempt + 1} 次OCR尝试失败: {str(e)}")
+                logger.warning(f"⚠️ OCR尝试{attempt+1}失败: {str(e)}")
 
             if attempt < retries - 1:
-                wait_time = (attempt + 1) * 5
-                logger.info(f"⏳ {wait_time}秒后重试OCR...")
-                time.sleep(wait_time)
+                time.sleep(3)  # 减少重试等待
 
         return None
 
@@ -520,13 +431,11 @@ class LinuxDoBrowser:
             return
             
         try:
-            # 保存cookies
             cookies = self.page.cookies()
             if cookies:
                 CacheManager.save_site_cache(cookies, self.site_name, 'cf_cookies')
                 logger.info(f"✅ 保存 {len(cookies)} 个Cookies")
             
-            # 保存会话数据
             session_data = {
                 'last_success': datetime.now().isoformat(),
                 'login_status': 'success',
@@ -544,21 +453,19 @@ class LinuxDoBrowser:
             logger.error(f"❌ 保存缓存失败: {str(e)}")
 
     def try_cache_login(self):
-        """尝试使用缓存登录"""
+        """尝试缓存登录"""
         if FORCE_LOGIN_EVERY_TIME:
-            logger.info("⚠️ 强制重新登录，跳过缓存")
+            logger.info("⚠️ 强制重新登录")
             return False
             
         cookies = CacheManager.load_site_cache(self.site_name, 'cf_cookies')
         if not cookies:
-            logger.warning("⚠️ 无有效缓存Cookies")
             return False
         
         try:
             logger.info("🎯 尝试缓存登录...")
-            
             self.page.get(self.site_config['base_url'])
-            time.sleep(2)
+            time.sleep(1)
             
             self.page.set.cookies(cookies)
             time.sleep(1)
@@ -578,32 +485,29 @@ class LinuxDoBrowser:
             return False
 
     def verify_login_status(self):
-        """验证登录状态 - 双重验证机制"""
+        """双重验证机制"""
         logger.info("🔍 验证登录状态...")
         
         try:
-            # 第一重验证：访问私有主题
             private_url = self.site_config['private_topic_url']
             logger.info(f"📍 访问私有主题: {private_url}")
             self.page.get(private_url)
-            time.sleep(3)
+            time.sleep(2)
             
             self.handle_cloudflare()
-            time.sleep(2)
+            time.sleep(1)
             
             page_content = self.page.html
             page_title = self.page.title
             
             logger.info(f"📄 页面标题: {page_title}")
             
-            # 检查是否有错误提示
             if "Page Not Found" in page_content or "页面不存在" in page_content:
                 logger.error("❌ 私有主题访问失败")
                 return False
             
             logger.success("✅ 私有主题访问成功")
             
-            # 第二重验证：验证用户名存在
             if self.username.lower() in page_content.lower():
                 logger.success(f"✅ 找到用户名: {self.username}")
                 logger.success("🎉 双重验证通过")
@@ -625,13 +529,11 @@ class LinuxDoBrowser:
         time.sleep(2)
         
         self.handle_cloudflare()
-        time.sleep(2)
+        time.sleep(1)
         
         try:
-            # 等待表单元素出现
-            time.sleep(2)
+            time.sleep(1)
             
-            # 查找并填写用户名
             username_field = self.page.ele("#login-account-name")
             if not username_field:
                 logger.error("❌ 找不到用户名字段")
@@ -639,9 +541,8 @@ class LinuxDoBrowser:
             
             logger.info("⌨️ 输入用户名...")
             username_field.input(self.username)
-            time.sleep(random.uniform(0.5, 1))
+            time.sleep(0.3)
             
-            # 查找并填写密码
             password_field = self.page.ele("#login-account-password")
             if not password_field:
                 logger.error("❌ 找不到密码字段")
@@ -649,9 +550,8 @@ class LinuxDoBrowser:
             
             logger.info("⌨️ 输入密码...")
             password_field.input(self.password)
-            time.sleep(random.uniform(0.5, 1))
+            time.sleep(0.3)
             
-            # 点击登录按钮
             login_button = self.page.ele("#login-button")
             if not login_button:
                 logger.error("❌ 找不到登录按钮")
@@ -659,10 +559,10 @@ class LinuxDoBrowser:
             
             logger.info("🔑 点击登录按钮...")
             login_button.click()
-            time.sleep(8)
+            time.sleep(5)
             
             self.handle_cloudflare()
-            time.sleep(3)
+            time.sleep(2)
             
             if self.verify_login_status():
                 logger.success("✅ 登录成功")
@@ -678,20 +578,17 @@ class LinuxDoBrowser:
 
     def ensure_logged_in(self):
         """确保用户已登录"""
-        # 尝试缓存登录
         if not FORCE_LOGIN_EVERY_TIME and self.try_cache_login():
             return True
         
-        # 执行手动登录
         login_success = self.login()
         if not login_success:
-            # 登录失败时清除缓存
             CacheManager.clear_site_cache_on_failure(self.site_name)
         
         return login_success
 
     def find_topic_elements(self):
-        """主题元素查找 - 使用href模式"""
+        """使用href模式获取主题列表"""
         logger.info("🎯 查找主题...")
         
         try:
@@ -704,13 +601,10 @@ class LinuxDoBrowser:
                 if not href:
                     continue
                 
-                # 使用href模式过滤主题链接
                 if '/t/' in href and not any(exclude in href for exclude in ['/tags/', '/c/', '/u/']):
-                    # 确保URL完整
                     if not href.startswith('http'):
                         href = self.site_config['base_url'] + href
                     
-                    # 去重：提取基础主题URL
                     base_url = re.sub(r'/t/topic/(\d+)(/\d+)?', r'/t/topic/\1', href)
                     
                     if base_url not in seen_urls:
@@ -724,29 +618,26 @@ class LinuxDoBrowser:
             logger.error(f"❌ 查找主题失败: {str(e)}")
             return []
 
-    def browse_topics_optimized(self):
-        """优化版主题浏览 - 多标签页策略 + 持久会话"""
+    def browse_topics_github_optimized(self):
+        """GitHub Actions 优化版主题浏览"""
         if not BROWSE_ENABLED:
             logger.info("⏭️ 浏览功能已禁用")
             return 0
         
-        # 浏览前验证登录状态
         if not self.verify_login_status():
             logger.error("❌ 浏览前验证失败")
             return 0
         
         try:
-            logger.info(f"🌐 开始优化浏览 {self.site_name} 主题...")
+            logger.info(f"🌐 开始浏览 {self.site_name} 主题...")
             
-            # 主标签页：保持最新页面作为会话锚点
-            self.main_tab = self.page
-            self.main_tab.get(self.site_config['latest_url'])
-            time.sleep(5)
-            
-            self.handle_cloudflare()
+            # 主标签页访问最新页面
+            self.page.get(self.site_config['latest_url'])
             time.sleep(3)
             
-            # 在主标签页查找主题（避免频繁跳转）
+            self.handle_cloudflare()
+            time.sleep(2)
+            
             topic_urls = self.find_topic_elements()
             if not topic_urls:
                 logger.error("❌ 无法找到主题")
@@ -754,64 +645,48 @@ class LinuxDoBrowser:
             
             logger.info(f"📚 发现 {len(topic_urls)} 个主题")
             
-            # 减少浏览数量，增加随机性
+            # GitHub Actions中浏览2-3个主题，平衡效率和安全
             browse_count = min(random.randint(2, 3), len(topic_urls))
             selected_urls = random.sample(topic_urls, browse_count)
             success_count = 0
             
             logger.info(f"📊 计划浏览 {browse_count} 个主题")
             
-            # 记录主标签页的cookies用于新标签页
-            main_cookies = self.main_tab.cookies()
-            
             for i, topic_url in enumerate(selected_urls):
                 try:
                     logger.info(f"📖 浏览主题 {i+1}/{browse_count}")
                     
-                    # 🔄 关键改进：在新标签页打开主题，保持主标签页会话
-                    new_tab = self.main_tab.new_tab()
-                    
-                    # 在新标签页设置相同的cookies
-                    new_tab.set.cookies(main_cookies)
-                    
-                    # 在新标签页访问主题
-                    new_tab.get(topic_url)
-                    time.sleep(5)
-                    
-                    # 在新标签页处理 Cloudflare
-                    original_page = self.page
-                    self.page = new_tab  # 临时切换到新标签页
-                    cloudflare_passed = self.handle_cloudflare(timeout=20)
-                    self.page = original_page  # 切换回主标签页
-                    
-                    if not cloudflare_passed:
-                        logger.warning(f"⚠️ 主题 {i+1} Cloudflare验证失败，跳过")
-                        new_tab.close()
-                        continue
-                    
+                    # 新标签页策略
+                    topic_tab = self.page.new_tab()
+                    topic_tab.get(topic_url)
                     time.sleep(3)
                     
-                    # 在新标签页进行深度浏览
-                    self.page = new_tab
-                    self.enhanced_deep_scroll()
+                    # 处理新标签页的Cloudflare
+                    original_page = self.page
+                    self.page = topic_tab
+                    self.handle_cloudflare()
+                    time.sleep(2)
+                    
+                    # 优化版深度滚动
+                    self.github_optimized_scroll()
+                    
+                    # 恢复主页面并关闭标签页
                     self.page = original_page
+                    topic_tab.close()
                     
                     success_count += 1
                     logger.info(f"✅ 成功浏览主题 {i+1}")
                     
-                    # 关闭主题标签页，回到主标签页
-                    new_tab.close()
-                    
-                    # 主题间等待（保持主标签页活跃）
+                    # 主题间等待（GitHub Actions优化）
                     if i < browse_count - 1:
-                        wait_time = random.uniform(30, 60)  # 更长的等待时间
-                        logger.info(f"⏳ 等待 {wait_time:.1f} 秒维持会话...")
-                        self.keep_main_tab_active(wait_time)
+                        wait_time = random.uniform(15, 25)
+                        logger.info(f"⏳ 等待 {wait_time:.1f} 秒...")
+                        time.sleep(wait_time)
                             
                 except Exception as e:
                     logger.error(f"❌ 浏览主题失败: {str(e)}")
-                    # 确保回到主标签页
-                    self.page = self.main_tab
+                    if 'original_page' in locals():
+                        self.page = original_page
                     continue
             
             logger.success(f"✅ 浏览完成: {success_count}/{browse_count} 个主题")
@@ -821,51 +696,15 @@ class LinuxDoBrowser:
             logger.error(f"❌ 浏览主题失败: {str(e)}")
             return 0
 
-    def keep_main_tab_active(self, total_wait_time):
-        """保持主标签页活跃状态"""
-        start_time = time.time()
-        
-        while time.time() - start_time < total_wait_time:
-            try:
-                # 随机轻微滚动
-                scroll_distance = random.randint(50, 200)
-                self.main_tab.run_js(f"""
-                    window.scrollBy({{
-                        top: {scroll_distance},
-                        behavior: 'smooth'
-                    }});
-                """)
-                
-                # 随机触发轻微交互
-                if random.random() < 0.3:
-                    self.main_tab.run_js("""
-                        document.dispatchEvent(new MouseEvent('mousemove', {
-                            bubbles: true,
-                            clientX: Math.random() * window.innerWidth,
-                            clientY: Math.random() * window.innerHeight
-                        }));
-                    """)
-                
-                # 等待一段时间
-                wait_chunk = random.uniform(5, 10)
-                time.sleep(min(wait_chunk, total_wait_time - (time.time() - start_time)))
-                
-            except Exception as e:
-                logger.debug(f"保持活跃状态异常: {str(e)}")
-                time.sleep(5)
-
-    def enhanced_deep_scroll(self):
-        """增强版深度滚动浏览 - 更真实的阅读行为"""
+    def github_optimized_scroll(self):
+        """GitHub Actions 优化版滚动"""
         try:
-            # 多次深度滚动
-            scroll_count = random.randint(6, 10)
-            logger.debug(f"📖 增强深度滚动浏览: {scroll_count} 次")
+            scroll_count = random.randint(4, 6)  # 减少滚动次数
+            logger.debug(f"📖 优化滚动: {scroll_count} 次")
             
             for i in range(scroll_count):
-                # 随机滚动距离和速度
-                scroll_distance = random.randint(500, 800)
+                scroll_distance = random.randint(400, 600)
                 
-                # 平滑滚动
                 self.page.run_js(f"""
                     window.scrollBy({{
                         top: {scroll_distance},
@@ -873,35 +712,22 @@ class LinuxDoBrowser:
                     }});
                 """)
                 
-                # 随机阅读时间
-                read_time = random.uniform(3, 7)
+                read_time = random.uniform(2, 4)  # 减少阅读时间
                 time.sleep(read_time)
                 
-                # 随机触发交互事件
-                if random.random() < 0.4:
+                if random.random() < 0.3:  # 减少交互频率
                     self.trigger_interaction_events()
             
-            # 最终触发完整的事件序列
             self.trigger_complete_interaction_sequence()
             
-            logger.debug("✅ 增强深度阅读完成")
-            
         except Exception as e:
-            logger.debug(f"增强深度阅读异常: {str(e)}")
+            logger.debug(f"滚动异常: {str(e)}")
 
     def trigger_interaction_events(self):
         """触发交互事件"""
         try:
             self.page.run_js("""
-                // 鼠标移动
                 document.dispatchEvent(new MouseEvent('mousemove', {
-                    bubbles: true,
-                    clientX: Math.random() * window.innerWidth,
-                    clientY: Math.random() * window.innerHeight
-                }));
-                
-                // 点击事件
-                document.dispatchEvent(new MouseEvent('click', {
                     bubbles: true,
                     clientX: Math.random() * window.innerWidth,
                     clientY: Math.random() * window.innerHeight
@@ -911,27 +737,11 @@ class LinuxDoBrowser:
             pass
 
     def trigger_complete_interaction_sequence(self):
-        """触发完整的交互事件序列"""
+        """触发完整交互序列"""
         try:
             self.page.run_js("""
-                // 滚动事件
                 window.dispatchEvent(new Event('scroll'));
-                
-                // 焦点事件
                 window.dispatchEvent(new Event('focus'));
-                document.dispatchEvent(new Event('focus'));
-                
-                // 鼠标悬停
-                const elements = document.querySelectorAll('a, button, .topic-body');
-                if (elements.length > 0) {
-                    const randomElement = elements[Math.floor(Math.random() * elements.length)];
-                    randomElement.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
-                    randomElement.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
-                }
-                
-                // 键盘事件
-                document.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
-                document.dispatchEvent(new KeyboardEvent('keyup', { key: ' ', bubbles: true }));
             """)
         except:
             pass
@@ -940,15 +750,13 @@ class LinuxDoBrowser:
         """连接信息获取"""
         logger.info("🔗 获取连接信息...")
         try:
-            # 在新标签页打开连接页面
             connect_tab = self.page.new_tab()
             connect_tab.get(self.site_config['connect_url'])
-            time.sleep(3)
-            
-            self.handle_cloudflare()
             time.sleep(2)
             
-            # 简化选择器：只使用tag:table
+            self.handle_cloudflare()
+            time.sleep(1)
+            
             table = connect_tab.ele("tag:table")
             
             if not table:
@@ -956,7 +764,6 @@ class LinuxDoBrowser:
                 connect_tab.close()
                 return
             
-            # 提取表格数据
             rows = table.eles("tag:tr")
             info = []
             
@@ -970,21 +777,18 @@ class LinuxDoBrowser:
                         info.append([project, current, requirement])
             
             if info:
-                # 使用 tabulate 美化表格显示
                 print("\n" + "="*60)
                 print(f"📊 {self.site_name.upper()} 连接信息")
                 print("="*60)
                 print(tabulate(info, headers=["项目", "当前", "要求"], tablefmt="pretty"))
                 print("="*60 + "\n")
                 
-                # 统计达标情况
                 passed = sum(1 for item in info if any(indicator in str(item[1]) for indicator in ['✅', '✔', '✓', '≥', '%']))
                 total = len(info)
                 logger.success(f"📈 统计: {passed}/{total} 项达标")
             else:
                 logger.warning("⚠️ 未找到连接信息数据")
             
-            # 关闭连接页面标签
             connect_tab.close()
             logger.info("✅ 连接信息获取完成")
             
@@ -992,19 +796,19 @@ class LinuxDoBrowser:
             logger.error(f"❌ 获取连接信息失败: {str(e)}")
 
     def run(self):
-        """执行完整自动化流程"""
+        """执行完整流程"""
         try:
             logger.info(f"🚀 开始处理 {self.site_name}")
             
-            # 1. 确保登录（双重验证）
+            # 1. 确保登录
             if not self.ensure_logged_in():
                 logger.error(f"❌ {self.site_name} 登录失败")
                 return False
             
-            # 2. 主题浏览（多标签页策略）
-            browse_count = self.browse_topics_optimized()
+            # 2. 主题浏览
+            browse_count = self.browse_topics_github_optimized()
             
-            # 3. 连接信息获取
+            # 3. 连接信息
             self.print_connect_info()
             
             # 4. 保存缓存
@@ -1026,21 +830,17 @@ class LinuxDoBrowser:
 
 # ======================== 主函数 ========================
 def main():
-    logger.info("🚀 Linux.Do 多站点自动化脚本启动 (多标签页优化版)")
+    logger.info("🚀 Linux.Do GitHub Actions 优化版启动")
     logger.info("=" * 80)
     
+    if GITHUB_ACTIONS:
+        logger.info("🎯 检测到GitHub Actions环境，应用优化配置")
+    
     # 检查扩展
-    if TURNSTILE_PATCH_ENABLED:
-        if os.path.exists(TURNSTILE_PATCH_PATH):
-            logger.info(f"✅ turnstilePatch扩展路径: {TURNSTILE_PATCH_PATH}")
-            ext_files = os.listdir(TURNSTILE_PATCH_PATH)
-            logger.info(f"📁 扩展文件: {ext_files}")
-            if 'manifest.json' in ext_files:
-                logger.info("✅ manifest.json 存在")
-            else:
-                logger.warning("⚠️ manifest.json 不存在，扩展可能无效")
-        else:
-            logger.warning(f"⚠️ turnstilePatch扩展目录不存在: {TURNSTILE_PATCH_PATH}")
+    if TURNSTILE_PATCH_ENABLED and os.path.exists(TURNSTILE_PATCH_PATH):
+        logger.info(f"✅ turnstilePatch扩展已配置")
+    else:
+        logger.warning("⚠️ turnstilePatch扩展未加载")
     
     logger.remove()
     logger.add(sys.stdout, format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{message}</cyan>", level="INFO")
@@ -1048,7 +848,7 @@ def main():
     success_sites = []
     failed_sites = []
 
-    # 检查凭证配置
+    # 检查凭证
     for site_name, creds in SITE_CREDENTIALS.items():
         if not creds.get('username') or not creds.get('password'):
             logger.warning(f"⏭️ {site_name} 凭证未配置")
@@ -1088,15 +888,15 @@ def main():
             logger.error(f"❌ {site_name} 执行异常: {str(e)}")
             failed_sites.append(site_name)
 
-        # 站点间等待
+        # 站点间等待（GitHub Actions优化）
         if site_config != target_sites[-1]:
-            wait_time = random.uniform(15, 30)
+            wait_time = random.uniform(8, 15)
             logger.info(f"⏳ 等待 {wait_time:.1f} 秒...")
             time.sleep(wait_time)
 
-    # 最终总结
+    # 总结
     logger.info("=" * 80)
-    logger.info("📊 执行总结:")
+    logger.info("📊 GitHub Actions 执行总结:")
     logger.info(f"✅ 成功站点: {', '.join(success_sites) if success_sites else '无'}")
     logger.info(f"❌ 失败站点: {', '.join(failed_sites) if failed_sites else '无'}")
     logger.info("=" * 80)
@@ -1109,11 +909,10 @@ def main():
         sys.exit(1)
 
 if __name__ == "__main__":
-    required_vars = ['LINUXDO_USERNAME', 'LINUXDO_PASSWORD', 'IDCFLARE_USERNAME', 'IDCFLARE_PASSWORD']
+    required_vars = ['LINUXDO_USERNAME', 'LINUXDO_PASSWORD']
     missing_vars = [var for var in required_vars if not os.getenv(var)]
     
     if missing_vars:
-        logger.warning(f"⚠️ 环境变量未设置: {', '.join(missing_vars)}")
+        logger.warning(f"⚠️ 必需环境变量未设置: {', '.join(missing_vars)}")
     
     main()
-
