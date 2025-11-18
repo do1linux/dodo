@@ -1,13 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-# 集成turnstilePatch扩展和反检测功能
-# 保持双重验证机制（私有主题访问+用户名确认）
-# 主题浏览: 单标签页,使用了href模式获取主题列表
-# 连接信息: 新标签页,使用 tabulate 库美化表格显示,使用选择器 'tag:table' 找到表格，,在idcflare上失败不影响                                
-# 登录成功时保存缓存，登录失败时清除对应站点缓存，避免盲目清除所有缓存                                         
-# 深度滚动浏览，交互事件触发，模拟真实的阅读行为，确保网站正确收集浏览记录     
 """
-优化版 - 集成指纹优化和反检测功能
+优化版 - 集成turnstilePatch扩展和反检测功能
+保持双重验证机制（私有主题访问+用户名确认）
 """
 
 import os
@@ -64,9 +59,12 @@ SITES = [
 BROWSE_ENABLED = os.environ.get("BROWSE_ENABLED", "true").strip().lower() not in ["false", "0", "off"]
 HEADLESS = os.environ.get("HEADLESS", "true").strip().lower() not in ["false", "0", "off"]
 FORCE_LOGIN_EVERY_TIME = os.environ.get("FORCE_LOGIN", "false").strip().lower() in ["true", "1", "on"]
+TURNSTILE_PATCH_ENABLED = os.environ.get("TURNSTILE_PATCH_ENABLED", "true").strip().lower() not in ["false", "0", "off"]
 OCR_API_KEY = os.getenv("OCR_API_KEY")
+
 # ======================== 扩展路径配置 ========================
 TURNSTILE_PATCH_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "turnstilePatch")
+
 # ======================== 缓存管理器 ========================
 class CacheManager:
     @staticmethod
@@ -146,7 +144,7 @@ class LinuxDoBrowser:
         self.initialize_browser()
 
     def initialize_browser(self):
-        """初始化浏览器 - 集成反检测和指纹优化"""
+        """初始化浏览器 - 集成反检测和指纹优化，加载turnstilePatch扩展"""
         try:
             co = ChromiumOptions()
             
@@ -176,6 +174,15 @@ class LinuxDoBrowser:
             co.set_argument("--window-size=1920,1080")
             co.set_argument("--lang=zh-CN,zh;q=0.9,en;q=0.8")
             
+            # 加载turnstilePatch扩展
+            if TURNSTILE_PATCH_ENABLED and os.path.exists(TURNSTILE_PATCH_PATH):
+                co.set_argument(f"--load-extension={TURNSTILE_PATCH_PATH}")
+                logger.info(f"✅ 加载turnstilePatch扩展，路径: {TURNSTILE_PATCH_PATH}")
+                # 调试信息
+                logger.info(f"扩展目录内容: {os.listdir(TURNSTILE_PATCH_PATH)}")
+            else:
+                logger.warning(f"⚠️ 未加载turnstilePatch扩展，路径存在: {os.path.exists(TURNSTILE_PATCH_PATH)}")
+        
             self.page = ChromiumPage(addr_or_opts=co)
             
             # 执行指纹优化和反检测脚本
@@ -185,17 +192,6 @@ class LinuxDoBrowser:
             self.session_data = CacheManager.load_site_cache(self.site_name, 'session_data') or {}
             
             logger.info(f"✅ {self.site_name} 浏览器初始化完成")
-
-            # 加载turnstilePatch扩展
-            if TURNSTILE_PATCH_ENABLED and os.path.exists(TURNSTILE_PATCH_PATH):
-                co.set_argument(f"--load-extension={TURNSTILE_PATCH_PATH}")
-                logger.info(f"✅ 加载turnstilePatch扩展，路径: {TURNSTILE_PATCH_PATH}")
-            # 调试信息
-                logger.info(f"扩展目录内容: {os.listdir(TURNSTILE_PATCH_PATH)}")
-            else:
-                logger.warning(f"⚠️ 未加载turnstilePatch扩展，路径存在: {os.path.exists(TURNSTILE_PATCH_PATH)}")
-        
-            self.page = ChromiumPage(addr_or_opts=co)
         
         except Exception as e:
             logger.error(f"❌ 浏览器初始化失败: {str(e)}")
@@ -840,7 +836,7 @@ class LinuxDoBrowser:
             connect_tab.get(self.site_config['connect_url'])
             time.sleep(3)
             
-            self.handle_cloudflare(connect_tab)
+            self.handle_cloudflare()
             time.sleep(2)
             
             # 简化选择器：只使用tag:table
@@ -998,6 +994,3 @@ if __name__ == "__main__":
         logger.warning(f"⚠️ 环境变量未设置: {', '.join(missing_vars)}")
     
     main()
-
-
-
