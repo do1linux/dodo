@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-#说明：保持双重验证机制（私有主题访问+用户名确认）
-#主题浏览: 单标签页,使用了Discourse专用选择器来获取主题列表
-#连接信息: 新标签页,使用 tabulate 库美化表格显示
+Discourse表格结构优化版 - 专门针对<table class="topic-list">结构
 """
 
 import os
@@ -57,7 +55,6 @@ SITES = [
 BROWSE_ENABLED = os.environ.get("BROWSE_ENABLED", "true").strip().lower() not in ["false", "0", "off"]
 HEADLESS = os.environ.get("HEADLESS", "true").strip().lower() not in ["false", "0", "off"]
 FORCE_LOGIN_EVERY_TIME = os.environ.get("FORCE_LOGIN", "false").strip().lower() in ["true", "1", "on"]
-DEBUG_SELECTORS = os.environ.get("DEBUG_SELECTORS", "true").strip().lower() in ["true", "1", "on"]
 
 # ======================== 缓存管理器 ========================
 class CacheManager:
@@ -373,181 +370,92 @@ class LinuxDoBrowser:
         
         return login_success
 
-    def debug_all_selectors(self):
-        """调试所有可能的选择器"""
-        logger.info("🔍 开始调试所有选择器...")
+    def find_topic_elements_from_table(self):
+        """从表格结构中查找主题元素"""
+        logger.info("🎯 从表格结构中查找主题元素...")
         
-        # 定义所有可能的选择器
-        selectors = [
-            # Discourse专用选择器
-            "a.raw-topic-link",
-            "a.title.raw-link", 
-            "a[data-topic-id]",
-            ".main-link a",
-            ".link-top-line a",
-            "tr.topic-list-item a",
-            ".topic-list-body a",
-            
-            # 通用选择器
-            "a[href*='/t/']",
-            ".title",
-            "a.title",
-            "@id=list-area a",
-            ".topic-list a",
-            
-            # 容器选择器
-            "@id=list-area",
-            ".topic-list",
-            ".topic-list-body",
-            "tbody"
-        ]
+        # 首先查找主题列表表格
+        topic_table = self.page.ele("table.topic-list")
+        if not topic_table:
+            logger.error("❌ 找不到主题列表表格 (table.topic-list)")
+            return []
         
-        results = {}
+        logger.info("✅ 找到主题列表表格")
         
-        for selector in selectors:
+        # 在表格中查找主题行
+        topic_rows = topic_table.eles("tr.topic-list-item")
+        if not topic_rows:
+            logger.error("❌ 在表格中找不到主题行 (tr.topic-list-item)")
+            return []
+        
+        logger.info(f"📊 找到 {len(topic_rows)} 个主题行")
+        
+        # 从每个主题行中提取主题链接
+        topic_links = []
+        for i, row in enumerate(topic_rows):
             try:
-                elements = self.page.eles(selector)
-                count = len(elements) if elements else 0
-                results[selector] = count
-                
-                if DEBUG_SELECTORS:
-                    logger.info(f"🔎 选择器 '{selector}': 找到 {count} 个元素")
+                # 在主链接列中查找主题链接
+                main_link_td = row.ele("td.main-link")
+                if main_link_td:
+                    # 在主链接列中查找主题链接
+                    topic_link = main_link_td.ele("a.raw-topic-link")
+                    if not topic_link:
+                        topic_link = main_link_td.ele("a.title")
                     
-                    # 对于找到的元素，显示详细信息
-                    if count > 0 and count <= 5:  # 只显示前5个元素的详细信息
-                        for i, elem in enumerate(elements[:5]):
-                            href = elem.attr('href') if hasattr(elem, 'attr') else 'N/A'
-                            text = elem.text[:50] + "..." if elem.text and len(elem.text) > 50 else elem.text
-                            logger.info(f"    {i+1}. href: {href}, text: {text}")
-                            
-            except Exception as e:
-                results[selector] = f"错误: {str(e)}"
-                if DEBUG_SELECTORS:
-                    logger.error(f"❌ 选择器 '{selector}' 执行错误: {str(e)}")
-        
-        # 输出总结
-        logger.info("📊 选择器调试总结:")
-        for selector, result in results.items():
-            logger.info(f"  {selector}: {result}")
-        
-        return results
-
-    def find_topic_elements_debug(self):
-        """带调试信息的主题元素查找"""
-        logger.info("🎯 开始查找主题元素 (调试模式)...")
-        
-        # 首先调试所有选择器
-        selector_results = self.debug_all_selectors()
-        
-        # 尝试各种策略
-        strategies = [
-            self._find_by_discourse_specific,
-            self._find_by_topic_rows,
-            self._find_by_href_pattern,
-            self._find_by_dom_structure
-        ]
-        
-        for strategy in strategies:
-            try:
-                elements = strategy()
-                if elements:
-                    logger.info(f"✅ 策略 {strategy.__name__} 找到 {len(elements)} 个主题")
-                    return elements
-            except Exception as e:
-                logger.debug(f"策略 {strategy.__name__} 失败: {str(e)}")
-                continue
-        
-        logger.error("❌ 所有策略都找不到主题元素")
-        return []
-
-    def _find_by_discourse_specific(self):
-        """Discourse专用选择器"""
-        selectors = [
-            "a.raw-topic-link",
-            "a.title.raw-link",
-            "a[data-topic-id]",
-            ".main-link a[href*='/t/']",
-            ".link-top-line a[href*='/t/']"
-        ]
-        
-        for selector in selectors:
-            try:
-                elements = self.page.eles(selector)
-                if elements:
-                    valid_elements = [e for e in elements if e.attr('href') and '/t/' in e.attr('href')]
-                    if valid_elements:
-                        logger.info(f"🎯 Discourse选择器 '{selector}' 找到 {len(valid_elements)} 个有效主题")
-                        return valid_elements
-            except:
-                continue
-        return []
-
-    def _find_by_topic_rows(self):
-        """通过主题行查找"""
-        try:
-            # 查找主题行
-            topic_rows = self.page.eles("tr.topic-list-item")
-            if not topic_rows:
-                return []
-            
-            topic_links = []
-            for row in topic_rows:
-                # 在每行中查找主题链接
-                links = row.eles('tag:a')
-                for link in links:
-                    href = link.attr('href')
+                    if topic_link:
+                        href = topic_link.attr("href")
+                        if href and '/t/' in href:
+                            topic_links.append(topic_link)
+                            continue
+                
+                # 如果主链接列没找到，尝试在行内查找任何包含/t/的链接
+                all_links_in_row = row.eles("tag:a")
+                for link in all_links_in_row:
+                    href = link.attr("href")
                     if href and '/t/' in href and not any(exclude in href for exclude in ['/tags/', '/c/', '/u/']):
                         topic_links.append(link)
-            
-            logger.info(f"📋 通过主题行找到 {len(topic_links)} 个主题")
-            return topic_links
-        except Exception as e:
-            logger.debug(f"主题行查找失败: {str(e)}")
-            return []
+                        break
+                        
+            except Exception as e:
+                logger.debug(f"处理第 {i+1} 行时出错: {str(e)}")
+                continue
+        
+        logger.info(f"🔗 从表格中提取到 {len(topic_links)} 个主题链接")
+        return topic_links
 
-    def _find_by_href_pattern(self):
-        """通过href模式查找"""
-        try:
-            all_links = self.page.eles('tag:a')
-            topic_links = []
-            
-            for link in all_links:
-                href = link.attr('href')
-                if href and '/t/' in href and not any(exclude in href for exclude in ['/tags/', '/c/', '/u/']):
+    def find_topic_elements_alternative(self):
+        """备用方法查找主题元素"""
+        logger.info("🔄 使用备用方法查找主题元素...")
+        
+        # 方法1: 直接查找所有包含/t/的链接
+        all_links = self.page.eles("tag:a")
+        topic_links = []
+        
+        for link in all_links:
+            href = link.attr("href")
+            if href and '/t/' in href and not any(exclude in href for exclude in ['/tags/', '/c/', '/u/']):
+                # 检查链接是否在主题列表区域内
+                parent_html = link.parent.html if link.parent else ""
+                if any(keyword in parent_html for keyword in ['topic-list', 'main-link', 'topic-list-item']):
                     topic_links.append(link)
-            
-            logger.info(f"🔗 通过href模式找到 {len(topic_links)} 个主题链接")
+        
+        if topic_links:
+            logger.info(f"🔗 备用方法找到 {len(topic_links)} 个主题链接")
             return topic_links
-        except Exception as e:
-            logger.debug(f"href模式查找失败: {str(e)}")
-            return []
-
-    def _find_by_dom_structure(self):
-        """通过DOM结构查找"""
+        
+        # 方法2: 通过数据属性查找
         try:
-            # 查找可能的列表容器
-            containers = [
-                self.page.ele("@id=list-area"),
-                self.page.ele(".topic-list"),
-                self.page.ele(".topic-list-body"),
-                self.page.ele("tbody")
-            ]
-            
-            for container in containers:
-                if container:
-                    links = container.eles('tag:a')
-                    topic_links = [link for link in links if link.attr('href') and '/t/' in link.attr('href')]
-                    if topic_links:
-                        logger.info(f"📦 在容器中找到 {len(topic_links)} 个主题")
-                        return topic_links
-            
-            return []
-        except Exception as e:
-            logger.debug(f"DOM结构查找失败: {str(e)}")
-            return []
+            topic_links_by_data = self.page.eles("a[data-topic-id]")
+            if topic_links_by_data:
+                logger.info(f"📊 通过data-topic-id找到 {len(topic_links_by_data)} 个主题")
+                return topic_links_by_data
+        except:
+            pass
+        
+        return []
 
-    def browse_topics_with_debug(self):
-        """带调试的主题浏览"""
+    def browse_topics_single_tab_table(self):
+        """单标签页表格结构主题浏览"""
         if not BROWSE_ENABLED:
             logger.info("⏭️ 浏览功能已禁用")
             return 0
@@ -558,7 +466,7 @@ class LinuxDoBrowser:
             return 0
         
         try:
-            logger.info(f"🌐 开始浏览 {self.site_name} 主题 (调试模式)...")
+            logger.info(f"🌐 开始单标签页浏览 {self.site_name} 主题 (表格结构优化)...")
             
             # 访问最新页面
             self.page.get(self.site_config['latest_url'])
@@ -567,8 +475,14 @@ class LinuxDoBrowser:
             CloudflareHandler.handle_cloudflare(self.page)
             time.sleep(3)
             
-            # 使用带调试的查找方法
-            topic_elements = self.find_topic_elements_debug()
+            # 首先尝试从表格结构查找
+            topic_elements = self.find_topic_elements_from_table()
+            
+            # 如果表格方法失败，使用备用方法
+            if not topic_elements:
+                logger.warning("⚠️ 表格方法失败，尝试备用方法")
+                topic_elements = self.find_topic_elements_alternative()
+            
             if not topic_elements:
                 logger.error("❌ 无法找到任何主题元素")
                 return 0
@@ -588,14 +502,12 @@ class LinuxDoBrowser:
                 
                 topic_urls.append(href)
             
-            # 显示前几个主题URL
-            if DEBUG_SELECTORS and topic_urls:
-                logger.info("🔗 前5个主题URL:")
-                for i, url in enumerate(topic_urls[:5]):
-                    logger.info(f"  {i+1}. {url}")
+            # 去重
+            topic_urls = list(set(topic_urls))
+            logger.info(f"🔗 去重后有效主题URL: {len(topic_urls)} 个")
             
-            # 随机选择主题（2-4个，避免太多）
-            browse_count = min(random.randint(2, 4), len(topic_urls))
+            # 随机选择主题（3-6个）
+            browse_count = min(random.randint(3, 6), len(topic_urls))
             selected_urls = random.sample(topic_urls, browse_count)
             success_count = 0
             
@@ -604,22 +516,21 @@ class LinuxDoBrowser:
             for i, topic_url in enumerate(selected_urls):
                 try:
                     logger.info(f"📖 浏览主题 {i+1}/{browse_count}")
-                    logger.info(f"🔗 主题URL: {topic_url}")
+                    logger.debug(f"🔗 主题URL: {topic_url}")
                     
-                    # 在当前标签页打开主题
+                    # 在当前标签页打开主题（单标签页）
                     self.page.get(topic_url)
                     time.sleep(3)
                     
                     CloudflareHandler.handle_cloudflare(self.page)
                     time.sleep(2)
                     
-                    # 模拟阅读行为
+                    # 模拟阅读行为，确保浏览记录被收集
                     self.simulate_reading_behavior()
                     
                     success_count += 1
-                    logger.info(f"✅ 成功浏览主题 {i+1}")
                     
-                    # 如果不是最后一个主题，返回列表页面
+                    # 返回主题列表页面（如果不是最后一个主题）
                     if i < browse_count - 1:
                         logger.info("🔄 返回主题列表页面...")
                         self.page.get(self.site_config['latest_url'])
@@ -648,31 +559,39 @@ class LinuxDoBrowser:
         """模拟阅读行为"""
         try:
             # 随机滚动次数
-            scroll_count = random.randint(4, 7)
+            scroll_count = random.randint(5, 8)
             logger.debug(f"📖 模拟阅读行为: {scroll_count} 次滚动")
             
             for i in range(scroll_count):
                 # 随机滚动距离
-                scroll_distance = random.randint(300, 600)
+                scroll_distance = random.randint(400, 700)
                 self.page.run_js(f"window.scrollBy(0, {scroll_distance})")
                 
                 # 随机阅读时间
-                read_time = random.uniform(2, 5)
+                read_time = random.uniform(2, 4)
                 time.sleep(read_time)
                 
-                # 随机触发一些交互
-                if random.random() < 0.3:
-                    self.page.run_js("""
-                        document.dispatchEvent(new MouseEvent('mousemove', {
-                            bubbles: true,
-                            clientX: Math.random() * window.innerWidth,
-                            clientY: Math.random() * window.innerHeight
-                        }));
-                    """)
+                # 检查是否到达页面底部
+                at_bottom = self.page.run_js(
+                    "return window.innerHeight + window.pageYOffset >= document.body.scrollHeight - 10"
+                )
+                if at_bottom:
+                    logger.debug("📄 已到达页面底部")
+                    break
             
-            # 最终触发一些事件
+            # 触发一些交互事件
             self.page.run_js("""
+                // 触发鼠标移动事件
+                document.dispatchEvent(new MouseEvent('mousemove', {
+                    bubbles: true,
+                    clientX: Math.random() * window.innerWidth,
+                    clientY: Math.random() * window.innerHeight
+                }));
+                
+                // 触发滚动事件
                 window.dispatchEvent(new Event('scroll'));
+                
+                // 触发焦点事件
                 window.dispatchEvent(new Event('focus'));
             """)
             
@@ -745,8 +664,8 @@ class LinuxDoBrowser:
                 logger.error(f"❌ {self.site_name} 登录失败")
                 return False
             
-            # 2. 带调试的主题浏览
-            browse_count = self.browse_topics_with_debug()
+            # 2. 单标签页表格结构主题浏览
+            browse_count = self.browse_topics_single_tab_table()
             
             # 3. 新标签页获取连接信息
             self.print_connect_info_new_tab()
@@ -770,7 +689,7 @@ class LinuxDoBrowser:
 
 # ======================== 主函数 ========================
 def main():
-    logger.info("🚀 Linux.Do 多站点自动化脚本启动 (调试版)")
+    logger.info("🚀 Linux.Do 多站点自动化脚本启动 (表格结构优化版)")
     logger.info("=" * 80)
     
     logger.remove()
