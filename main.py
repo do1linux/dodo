@@ -185,7 +185,18 @@ class LinuxDoBrowser:
             self.session_data = CacheManager.load_site_cache(self.site_name, 'session_data') or {}
             
             logger.info(f"✅ {self.site_name} 浏览器初始化完成")
-            
+
+            # 加载turnstilePatch扩展
+            if TURNSTILE_PATCH_ENABLED and os.path.exists(TURNSTILE_PATCH_PATH):
+                co.set_argument(f"--load-extension={TURNSTILE_PATCH_PATH}")
+                logger.info(f"✅ 加载turnstilePatch扩展，路径: {TURNSTILE_PATCH_PATH}")
+            # 调试信息
+                logger.info(f"扩展目录内容: {os.listdir(TURNSTILE_PATCH_PATH)}")
+            else:
+                logger.warning(f"⚠️ 未加载turnstilePatch扩展，路径存在: {os.path.exists(TURNSTILE_PATCH_PATH)}")
+        
+            self.page = ChromiumPage(addr_or_opts=co)
+        
         except Exception as e:
             logger.error(f"❌ 浏览器初始化失败: {str(e)}")
             raise
@@ -987,5 +998,6 @@ if __name__ == "__main__":
         logger.warning(f"⚠️ 环境变量未设置: {', '.join(missing_vars)}")
     
     main()
+
 
 
