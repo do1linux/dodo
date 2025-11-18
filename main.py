@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-优化版 - 集成turnstilePatch扩展和反检测功能
-保持双重验证机制（私有主题访问+用户名确认）
-主题浏览：多标签页策略，保持主标签页会话
-连接信息：新标签页显示，使用tabulate美化表格
+# 集成turnstilePatch扩展和反检测功能
+# 保持双重验证机制（私有主题访问+用户名确认）
+# 使用浏览器上下文保持更持久的会话,
+# 主题浏览: 在主标签页打开最新页面，并保持这个标签页不动，循环中：新开标签页打开主题URL -> 在新标签页中浏览 -> 关闭新标签页,使用了href模式获取主题列表
+# 连接信息: 新标签页,使用 tabulate 库美化表格显示,使用选择器 'tag:table' 找到表格，,在idcflare上失败不影响                                
+# 登录成功时保存缓存，登录失败时清除对应站点缓存，避免盲目清除所有缓存                                         
+# 深度滚动浏览，交互事件触发，模拟真实的阅读行为，确保网站正确收集浏览记录    
 """
 
 import os
@@ -142,11 +145,12 @@ class LinuxDoBrowser:
         self.username = credentials['username']
         self.password = credentials['password']
         self.page = None
+        self.main_tab = None
         self.cache_saved = False
         self.initialize_browser()
 
     def initialize_browser(self):
-        """优化版浏览器初始化 - 集成turnstilePatch扩展和反检测功能"""
+        """初始化浏览器 - 集成反检测和指纹优化，加载turnstilePatch扩展"""
         try:
             co = ChromiumOptions()
             
@@ -160,7 +164,7 @@ class LinuxDoBrowser:
             co.set_argument("--no-sandbox")
             co.set_argument("--disable-dev-shm-usage")
             
-            # 增强反检测配置
+            # 反检测配置
             co.set_argument("--disable-blink-features=AutomationControlled")
             co.set_argument("--disable-features=VizDisplayCompositor")
             co.set_argument("--disable-background-timer-throttling")
@@ -226,8 +230,8 @@ class LinuxDoBrowser:
                     language: { get: () => 'zh-CN' },
                     languages: { get: () => ['zh-CN', 'zh', 'en'] },
                     platform: { get: () => 'Win32' },
-                    hardwareConcurrency: { get: () => 8 },  // 增加核心数
-                    deviceMemory: { get: () => 16 },        // 增加内存
+                    hardwareConcurrency: { get: () => 8 },
+                    deviceMemory: { get: () => 16 },
                     
                     // 修改插件信息 - 更真实的插件列表
                     plugins: {
@@ -282,10 +286,10 @@ class LinuxDoBrowser:
                 // WebGL 指纹伪装
                 const originalGetParameter = WebGLRenderingContext.prototype.getParameter;
                 WebGLRenderingContext.prototype.getParameter = function(parameter) {
-                    if (parameter === 37445) { // UNMASKED_VENDOR_WEBGL
+                    if (parameter === 37445) {
                         return 'Google Inc. (Intel)';
                     }
-                    if (parameter === 37446) { // UNMASKED_RENDERER_WEBGL
+                    if (parameter === 37446) {
                         return 'Intel Iris OpenGL Engine';
                     }
                     return originalGetParameter.call(this, parameter);
@@ -330,7 +334,7 @@ class LinuxDoBrowser:
                                 clientY: Math.random() * window.innerHeight
                             }));
                         });
-                    }, 5000 + Math.random() * 10000); // 5-15秒间隔
+                    }, 5000 + Math.random() * 10000);
                     
                     // 随机键盘事件
                     setInterval(() => {
@@ -480,7 +484,7 @@ class LinuxDoBrowser:
                     "apikey": api_key,
                     "base64Image": base64_image,
                     "language": "eng",
-                    "OCREngine": "2",  # 使用引擎2
+                    "OCREngine": "2",
                 }
 
                 response = requests.post(url, data=payload, timeout=30)
@@ -720,8 +724,8 @@ class LinuxDoBrowser:
             logger.error(f"❌ 查找主题失败: {str(e)}")
             return []
 
-    def browse_topics(self):
-        """优化版主题浏览 - 多标签页策略，保持主标签页会话"""
+    def browse_topics_optimized(self):
+        """优化版主题浏览 - 多标签页策略 + 持久会话"""
         if not BROWSE_ENABLED:
             logger.info("⏭️ 浏览功能已禁用")
             return 0
@@ -732,16 +736,17 @@ class LinuxDoBrowser:
             return 0
         
         try:
-            logger.info(f"🌐 开始浏览 {self.site_name} 主题...")
+            logger.info(f"🌐 开始优化浏览 {self.site_name} 主题...")
             
-            # 主标签页：访问最新页面并保持不动
-            self.page.get(self.site_config['latest_url'])
-            time.sleep(5)  # 增加等待时间
+            # 主标签页：保持最新页面作为会话锚点
+            self.main_tab = self.page
+            self.main_tab.get(self.site_config['latest_url'])
+            time.sleep(5)
             
             self.handle_cloudflare()
             time.sleep(3)
             
-            # 查找主题
+            # 在主标签页查找主题（避免频繁跳转）
             topic_urls = self.find_topic_elements()
             if not topic_urls:
                 logger.error("❌ 无法找到主题")
@@ -750,50 +755,63 @@ class LinuxDoBrowser:
             logger.info(f"📚 发现 {len(topic_urls)} 个主题")
             
             # 减少浏览数量，增加随机性
-            browse_count = min(random.randint(2, 4), len(topic_urls))  # 2-4个主题
+            browse_count = min(random.randint(2, 3), len(topic_urls))
             selected_urls = random.sample(topic_urls, browse_count)
             success_count = 0
             
             logger.info(f"📊 计划浏览 {browse_count} 个主题")
             
+            # 记录主标签页的cookies用于新标签页
+            main_cookies = self.main_tab.cookies()
+            
             for i, topic_url in enumerate(selected_urls):
                 try:
                     logger.info(f"📖 浏览主题 {i+1}/{browse_count}")
                     
-                    # 新开标签页打开主题URL
-                    topic_tab = self.page.new_tab()
-                    topic_tab.get(topic_url)
-                    time.sleep(5)  # 增加页面加载等待时间
+                    # 🔄 关键改进：在新标签页打开主题，保持主标签页会话
+                    new_tab = self.main_tab.new_tab()
                     
-                    # 在新标签页中处理Cloudflare验证
+                    # 在新标签页设置相同的cookies
+                    new_tab.set.cookies(main_cookies)
+                    
+                    # 在新标签页访问主题
+                    new_tab.get(topic_url)
+                    time.sleep(5)
+                    
+                    # 在新标签页处理 Cloudflare
                     original_page = self.page
-                    self.page = topic_tab
-                    self.handle_cloudflare()
+                    self.page = new_tab  # 临时切换到新标签页
+                    cloudflare_passed = self.handle_cloudflare(timeout=20)
+                    self.page = original_page  # 切换回主标签页
+                    
+                    if not cloudflare_passed:
+                        logger.warning(f"⚠️ 主题 {i+1} Cloudflare验证失败，跳过")
+                        new_tab.close()
+                        continue
+                    
                     time.sleep(3)
                     
-                    # 在新标签页中深度滚动浏览
-                    self.deep_scroll_reading()
-                    
-                    # 恢复主页面引用
+                    # 在新标签页进行深度浏览
+                    self.page = new_tab
+                    self.enhanced_deep_scroll()
                     self.page = original_page
-                    
-                    # 关闭新标签页
-                    topic_tab.close()
                     
                     success_count += 1
                     logger.info(f"✅ 成功浏览主题 {i+1}")
                     
-                    # 如果不是最后一个主题，增加更长的等待时间
+                    # 关闭主题标签页，回到主标签页
+                    new_tab.close()
+                    
+                    # 主题间等待（保持主标签页活跃）
                     if i < browse_count - 1:
-                        wait_time = random.uniform(20, 40)  # 20-40秒等待
-                        logger.info(f"⏳ 等待 {wait_time:.1f} 秒...")
-                        time.sleep(wait_time)
+                        wait_time = random.uniform(30, 60)  # 更长的等待时间
+                        logger.info(f"⏳ 等待 {wait_time:.1f} 秒维持会话...")
+                        self.keep_main_tab_active(wait_time)
                             
                 except Exception as e:
                     logger.error(f"❌ 浏览主题失败: {str(e)}")
-                    # 确保在异常情况下恢复主页面引用
-                    if hasattr(self, 'original_page'):
-                        self.page = self.original_page
+                    # 确保回到主标签页
+                    self.page = self.main_tab
                     continue
             
             logger.success(f"✅ 浏览完成: {success_count}/{browse_count} 个主题")
@@ -803,17 +821,49 @@ class LinuxDoBrowser:
             logger.error(f"❌ 浏览主题失败: {str(e)}")
             return 0
 
-    def deep_scroll_reading(self):
-        """深度滚动浏览 - 模拟真实阅读行为"""
+    def keep_main_tab_active(self, total_wait_time):
+        """保持主标签页活跃状态"""
+        start_time = time.time()
+        
+        while time.time() - start_time < total_wait_time:
+            try:
+                # 随机轻微滚动
+                scroll_distance = random.randint(50, 200)
+                self.main_tab.run_js(f"""
+                    window.scrollBy({{
+                        top: {scroll_distance},
+                        behavior: 'smooth'
+                    }});
+                """)
+                
+                # 随机触发轻微交互
+                if random.random() < 0.3:
+                    self.main_tab.run_js("""
+                        document.dispatchEvent(new MouseEvent('mousemove', {
+                            bubbles: true,
+                            clientX: Math.random() * window.innerWidth,
+                            clientY: Math.random() * window.innerHeight
+                        }));
+                    """)
+                
+                # 等待一段时间
+                wait_chunk = random.uniform(5, 10)
+                time.sleep(min(wait_chunk, total_wait_time - (time.time() - start_time)))
+                
+            except Exception as e:
+                logger.debug(f"保持活跃状态异常: {str(e)}")
+                time.sleep(5)
+
+    def enhanced_deep_scroll(self):
+        """增强版深度滚动浏览 - 更真实的阅读行为"""
         try:
             # 多次深度滚动
             scroll_count = random.randint(6, 10)
-            logger.debug(f"📖 深度滚动浏览: {scroll_count} 次")
+            logger.debug(f"📖 增强深度滚动浏览: {scroll_count} 次")
             
             for i in range(scroll_count):
                 # 随机滚动距离和速度
                 scroll_distance = random.randint(500, 800)
-                scroll_speed = random.uniform(0.1, 0.3)
                 
                 # 平滑滚动
                 self.page.run_js(f"""
@@ -834,10 +884,10 @@ class LinuxDoBrowser:
             # 最终触发完整的事件序列
             self.trigger_complete_interaction_sequence()
             
-            logger.debug("✅ 深度阅读完成")
+            logger.debug("✅ 增强深度阅读完成")
             
         except Exception as e:
-            logger.debug(f"深度阅读异常: {str(e)}")
+            logger.debug(f"增强深度阅读异常: {str(e)}")
 
     def trigger_interaction_events(self):
         """触发交互事件"""
@@ -895,9 +945,6 @@ class LinuxDoBrowser:
             connect_tab.get(self.site_config['connect_url'])
             time.sleep(3)
             
-            # 处理连接页面的Cloudflare验证
-            original_page = self.page
-            self.page = connect_tab
             self.handle_cloudflare()
             time.sleep(2)
             
@@ -907,7 +954,6 @@ class LinuxDoBrowser:
             if not table:
                 logger.warning("⚠️ 未找到连接信息表格")
                 connect_tab.close()
-                self.page = original_page
                 return
             
             # 提取表格数据
@@ -938,16 +984,12 @@ class LinuxDoBrowser:
             else:
                 logger.warning("⚠️ 未找到连接信息数据")
             
-            # 关闭连接页面标签并恢复主页面引用
+            # 关闭连接页面标签
             connect_tab.close()
-            self.page = original_page
             logger.info("✅ 连接信息获取完成")
             
         except Exception as e:
             logger.error(f"❌ 获取连接信息失败: {str(e)}")
-            # 确保在异常情况下恢复主页面引用
-            if 'original_page' in locals():
-                self.page = original_page
 
     def run(self):
         """执行完整自动化流程"""
@@ -960,7 +1002,7 @@ class LinuxDoBrowser:
                 return False
             
             # 2. 主题浏览（多标签页策略）
-            browse_count = self.browse_topics()
+            browse_count = self.browse_topics_optimized()
             
             # 3. 连接信息获取
             self.print_connect_info()
@@ -984,8 +1026,21 @@ class LinuxDoBrowser:
 
 # ======================== 主函数 ========================
 def main():
-    logger.info("🚀 Linux.Do 多站点自动化脚本启动 (优化版)")
+    logger.info("🚀 Linux.Do 多站点自动化脚本启动 (多标签页优化版)")
     logger.info("=" * 80)
+    
+    # 检查扩展
+    if TURNSTILE_PATCH_ENABLED:
+        if os.path.exists(TURNSTILE_PATCH_PATH):
+            logger.info(f"✅ turnstilePatch扩展路径: {TURNSTILE_PATCH_PATH}")
+            ext_files = os.listdir(TURNSTILE_PATCH_PATH)
+            logger.info(f"📁 扩展文件: {ext_files}")
+            if 'manifest.json' in ext_files:
+                logger.info("✅ manifest.json 存在")
+            else:
+                logger.warning("⚠️ manifest.json 不存在，扩展可能无效")
+        else:
+            logger.warning(f"⚠️ turnstilePatch扩展目录不存在: {TURNSTILE_PATCH_PATH}")
     
     logger.remove()
     logger.add(sys.stdout, format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{message}</cyan>", level="INFO")
@@ -1035,7 +1090,7 @@ def main():
 
         # 站点间等待
         if site_config != target_sites[-1]:
-            wait_time = random.uniform(10, 20)
+            wait_time = random.uniform(15, 30)
             logger.info(f"⏳ 等待 {wait_time:.1f} 秒...")
             time.sleep(wait_time)
 
