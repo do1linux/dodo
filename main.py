@@ -65,7 +65,8 @@ BROWSE_ENABLED = os.environ.get("BROWSE_ENABLED", "true").strip().lower() not in
 HEADLESS = os.environ.get("HEADLESS", "true").strip().lower() not in ["false", "0", "off"]
 FORCE_LOGIN_EVERY_TIME = os.environ.get("FORCE_LOGIN", "false").strip().lower() in ["true", "1", "on"]
 OCR_API_KEY = os.getenv("OCR_API_KEY")
-
+# ======================== 扩展路径配置 ========================
+TURNSTILE_PATCH_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "turnstilePatch")
 # ======================== 缓存管理器 ========================
 class CacheManager:
     @staticmethod
@@ -986,4 +987,5 @@ if __name__ == "__main__":
         logger.warning(f"⚠️ 环境变量未设置: {', '.join(missing_vars)}")
     
     main()
+
 
