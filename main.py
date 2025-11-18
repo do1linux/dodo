@@ -3,6 +3,8 @@
 """
 优化版 - 集成turnstilePatch扩展和反检测功能
 保持双重验证机制（私有主题访问+用户名确认）
+主题浏览：多标签页策略，保持主标签页会话
+连接信息：新标签页显示，使用tabulate美化表格
 """
 
 import os
@@ -144,7 +146,7 @@ class LinuxDoBrowser:
         self.initialize_browser()
 
     def initialize_browser(self):
-        """初始化浏览器 - 集成反检测和指纹优化，加载turnstilePatch扩展"""
+        """优化版浏览器初始化 - 集成turnstilePatch扩展和反检测功能"""
         try:
             co = ChromiumOptions()
             
@@ -158,7 +160,7 @@ class LinuxDoBrowser:
             co.set_argument("--no-sandbox")
             co.set_argument("--disable-dev-shm-usage")
             
-            # 反检测配置
+            # 增强反检测配置
             co.set_argument("--disable-blink-features=AutomationControlled")
             co.set_argument("--disable-features=VizDisplayCompositor")
             co.set_argument("--disable-background-timer-throttling")
@@ -167,6 +169,20 @@ class LinuxDoBrowser:
             co.set_argument("--disable-web-security")
             co.set_argument("--disable-features=TranslateUI")
             co.set_argument("--disable-ipc-flooding-protection")
+            co.set_argument("--no-default-browser-check")
+            co.set_argument("--disable-component-extensions-with-background-pages")
+            co.set_argument("--disable-default-apps")
+            co.set_argument("--disable-extensions")
+            co.set_argument("--disable-popup-blocking")
+            co.set_argument("--disable-prompt-on-repost")
+            co.set_argument("--disable-background-networking")
+            co.set_argument("--disable-sync")
+            co.set_argument("--disable-translate")
+            co.set_argument("--metrics-recording-only")
+            co.set_argument("--safebrowsing-disable-auto-update")
+            co.set_argument("--disable-client-side-phishing-detection")
+            co.set_argument("--disable-hang-monitor")
+            co.set_argument("--disable-crash-reporter")
             
             # 用户代理和窗口设置
             user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -178,14 +194,17 @@ class LinuxDoBrowser:
             if TURNSTILE_PATCH_ENABLED and os.path.exists(TURNSTILE_PATCH_PATH):
                 co.set_argument(f"--load-extension={TURNSTILE_PATCH_PATH}")
                 logger.info(f"✅ 加载turnstilePatch扩展，路径: {TURNSTILE_PATCH_PATH}")
-                # 调试信息
-                logger.info(f"扩展目录内容: {os.listdir(TURNSTILE_PATCH_PATH)}")
+                # 检查扩展是否有效
+                if os.path.exists(os.path.join(TURNSTILE_PATCH_PATH, "manifest.json")):
+                    logger.info("✅ turnstilePatch扩展完整")
+                else:
+                    logger.warning("⚠️ turnstilePatch扩展可能不完整")
             else:
                 logger.warning(f"⚠️ 未加载turnstilePatch扩展，路径存在: {os.path.exists(TURNSTILE_PATCH_PATH)}")
         
             self.page = ChromiumPage(addr_or_opts=co)
             
-            # 执行指纹优化和反检测脚本
+            # 执行增强版指纹优化
             self.enhance_github_actions_fingerprint()
             
             # 加载会话数据
@@ -198,7 +217,7 @@ class LinuxDoBrowser:
             raise
 
     def enhance_github_actions_fingerprint(self):
-        """针对 GitHub Actions 环境的指纹优化"""
+        """增强版指纹优化"""
         try:
             self.page.run_js("""
                 // 深度修改 navigator 属性
@@ -207,16 +226,33 @@ class LinuxDoBrowser:
                     language: { get: () => 'zh-CN' },
                     languages: { get: () => ['zh-CN', 'zh', 'en'] },
                     platform: { get: () => 'Win32' },
-                    hardwareConcurrency: { get: () => 4 },
-                    deviceMemory: { get: () => 8 },
+                    hardwareConcurrency: { get: () => 8 },  // 增加核心数
+                    deviceMemory: { get: () => 16 },        // 增加内存
                     
-                    // 修改插件信息
+                    // 修改插件信息 - 更真实的插件列表
                     plugins: {
                         get: () => [
-                            { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer' },
-                            { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai' },
-                            { name: 'Native Client', filename: 'internal-nacl-plugin' }
+                            { 
+                                name: 'Chrome PDF Plugin', 
+                                filename: 'internal-pdf-viewer',
+                                description: 'Portable Document Format'
+                            },
+                            { 
+                                name: 'Chrome PDF Viewer', 
+                                filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai',
+                                description: 'Portable Document Format'
+                            },
+                            { 
+                                name: 'Native Client', 
+                                filename: 'internal-nacl-plugin',
+                                description: 'Native Client Executable'
+                            }
                         ]
+                    },
+                    
+                    // 添加更多属性
+                    userAgent: {
+                        get: () => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
                     }
                 });
 
@@ -224,11 +260,44 @@ class LinuxDoBrowser:
                 Object.defineProperty(screen, 'width', { get: () => 1920 });
                 Object.defineProperty(screen, 'height', { get: () => 1080 });
                 Object.defineProperty(screen, 'colorDepth', { get: () => 24 });
+                Object.defineProperty(screen, 'pixelDepth', { get: () => 24 });
                 
+                // Canvas 指纹伪装
+                const originalGetContext = HTMLCanvasElement.prototype.getContext;
+                HTMLCanvasElement.prototype.getContext = function(contextType, ...args) {
+                    const context = originalGetContext.call(this, contextType, ...args);
+                    if (contextType === '2d') {
+                        const originalFillText = context.fillText;
+                        context.fillText = function(...fillTextArgs) {
+                            // 微调文本渲染，增加随机性
+                            if (fillTextArgs.length > 3) {
+                                fillTextArgs[3] = fillTextArgs[3] + Math.random() * 0.1 - 0.05;
+                            }
+                            return originalFillText.apply(this, fillTextArgs);
+                        };
+                    }
+                    return context;
+                };
+
+                // WebGL 指纹伪装
+                const originalGetParameter = WebGLRenderingContext.prototype.getParameter;
+                WebGLRenderingContext.prototype.getParameter = function(parameter) {
+                    if (parameter === 37445) { // UNMASKED_VENDOR_WEBGL
+                        return 'Google Inc. (Intel)';
+                    }
+                    if (parameter === 37446) { // UNMASKED_RENDERER_WEBGL
+                        return 'Intel Iris OpenGL Engine';
+                    }
+                    return originalGetParameter.call(this, parameter);
+                };
+
                 // 移除自动化特征
                 Object.defineProperty(window, 'chrome', {
                     value: {
                         runtime: {},
+                        loadTimes: () => {},
+                        csi: () => {},
+                        app: {}
                     },
                 });
                 
@@ -239,68 +308,52 @@ class LinuxDoBrowser:
                         Promise.resolve({ state: Notification.permission }) :
                         originalQuery(parameters)
                 );
-                
-                // 添加随机鼠标移动
+
+                // 覆盖时区和语言
+                Object.defineProperty(Intl, 'DateTimeFormat', {
+                    value: class extends Intl.DateTimeFormat {
+                        constructor(locales, options) {
+                            super(locales || ['zh-CN', 'zh', 'en-US'], options);
+                        }
+                    }
+                });
+
+                // 添加更频繁的随机交互
                 document.addEventListener('DOMContentLoaded', function() {
+                    // 更频繁的鼠标移动
                     setInterval(() => {
-                        document.dispatchEvent(new MouseEvent('mousemove', {
-                            bubbles: true,
-                            clientX: Math.random() * window.innerWidth,
-                            clientY: Math.random() * window.innerHeight
+                        ['mousemove', 'mouseover', 'mousedown', 'mouseup'].forEach(eventType => {
+                            document.dispatchEvent(new MouseEvent(eventType, {
+                                bubbles: true,
+                                cancelable: true,
+                                clientX: Math.random() * window.innerWidth,
+                                clientY: Math.random() * window.innerHeight
+                            }));
+                        });
+                    }, 5000 + Math.random() * 10000); // 5-15秒间隔
+                    
+                    // 随机键盘事件
+                    setInterval(() => {
+                        document.dispatchEvent(new KeyboardEvent('keydown', { 
+                            key: ' ', 
+                            bubbles: true 
                         }));
-                    }, 30000 + Math.random() * 20000);
+                    }, 8000 + Math.random() * 12000);
+                });
+
+                // 覆盖连接属性
+                Object.defineProperty(navigator, 'connection', {
+                    value: {
+                        downlink: 10,
+                        effectiveType: "4g",
+                        rtt: 50,
+                        saveData: false
+                    }
                 });
             """)
-            logger.debug("✅ 指纹优化脚本已应用")
+            logger.debug("✅ 增强版指纹优化脚本已应用")
         except Exception as e:
             logger.debug(f"指纹优化异常: {str(e)}")
-
-    def github_optimized_timing(self):
-        """GitHub Actions 环境的时间行为优化"""
-        # 更长的随机延迟，避免 GitHub IP 被标记
-        delays = {
-            'page_load': random.uniform(5, 10),
-            'between_actions': random.uniform(3, 8),
-            'scroll_pause': random.uniform(4, 9),
-            'topic_switch': random.uniform(10, 25)
-        }
-        return delays
-
-    def human_like_scroll_github(self):
-        """GitHub 环境特制的滚动行为"""
-        scroll_patterns = [
-            # 快速滚动到中部
-            {'distance': 800, 'speed': 'fast', 'pause': 2},
-            # 慢速详细阅读
-            {'distance': 300, 'speed': 'slow', 'pause': 5},
-            # 小幅回滚
-            {'distance': -150, 'speed': 'medium', 'pause': 3},
-            # 继续阅读
-            {'distance': 400, 'speed': 'slow', 'pause': 4},
-            # 快速到底部
-            {'distance': 1000, 'speed': 'fast', 'pause': 2},
-            # 回滚到感兴趣内容
-            {'distance': -600, 'speed': 'medium', 'pause': 6}
-        ]
-        
-        for pattern in scroll_patterns:
-            self.page.scroll.to(y=pattern['distance'])
-            time.sleep(pattern['pause'])
-            self.trigger_random_interaction()
-
-    def trigger_random_interaction(self):
-        """触发随机交互"""
-        try:
-            self.page.run_js("""
-                // 随机鼠标移动
-                document.dispatchEvent(new MouseEvent('mousemove', {
-                    bubbles: true,
-                    clientX: Math.random() * window.innerWidth,
-                    clientY: Math.random() * window.innerHeight
-                }));
-            """)
-        except:
-            pass
 
     def handle_cloudflare(self, timeout=30):
         """处理Cloudflare验证，包括验证码挑战"""
@@ -668,7 +721,7 @@ class LinuxDoBrowser:
             return []
 
     def browse_topics(self):
-        """主题浏览 - 深度滚动和交互"""
+        """优化版主题浏览 - 多标签页策略，保持主标签页会话"""
         if not BROWSE_ENABLED:
             logger.info("⏭️ 浏览功能已禁用")
             return 0
@@ -681,12 +734,12 @@ class LinuxDoBrowser:
         try:
             logger.info(f"🌐 开始浏览 {self.site_name} 主题...")
             
-            # 访问最新页面
+            # 主标签页：访问最新页面并保持不动
             self.page.get(self.site_config['latest_url'])
-            time.sleep(3)
+            time.sleep(5)  # 增加等待时间
             
             self.handle_cloudflare()
-            time.sleep(2)
+            time.sleep(3)
             
             # 查找主题
             topic_urls = self.find_topic_elements()
@@ -696,8 +749,8 @@ class LinuxDoBrowser:
             
             logger.info(f"📚 发现 {len(topic_urls)} 个主题")
             
-            # 随机选择主题（3-5个）
-            browse_count = min(random.randint(3, 5), len(topic_urls))
+            # 减少浏览数量，增加随机性
+            browse_count = min(random.randint(2, 4), len(topic_urls))  # 2-4个主题
             selected_urls = random.sample(topic_urls, browse_count)
             success_count = 0
             
@@ -707,34 +760,40 @@ class LinuxDoBrowser:
                 try:
                     logger.info(f"📖 浏览主题 {i+1}/{browse_count}")
                     
-                    # 在当前标签页打开主题
-                    self.page.get(topic_url)
+                    # 新开标签页打开主题URL
+                    topic_tab = self.page.new_tab()
+                    topic_tab.get(topic_url)
+                    time.sleep(5)  # 增加页面加载等待时间
+                    
+                    # 在新标签页中处理Cloudflare验证
+                    original_page = self.page
+                    self.page = topic_tab
+                    self.handle_cloudflare()
                     time.sleep(3)
                     
-                    self.handle_cloudflare()
-                    time.sleep(2)
-                    
-                    # 深度滚动浏览
+                    # 在新标签页中深度滚动浏览
                     self.deep_scroll_reading()
+                    
+                    # 恢复主页面引用
+                    self.page = original_page
+                    
+                    # 关闭新标签页
+                    topic_tab.close()
                     
                     success_count += 1
                     logger.info(f"✅ 成功浏览主题 {i+1}")
                     
-                    # 如果不是最后一个主题，返回列表页面
+                    # 如果不是最后一个主题，增加更长的等待时间
                     if i < browse_count - 1:
-                        self.page.get(self.site_config['latest_url'])
-                        time.sleep(3)
-                        self.handle_cloudflare()
-                        time.sleep(2)
-                    
-                    # 主题间等待
-                    if i < browse_count - 1:
-                        wait_time = random.uniform(8, 15)
+                        wait_time = random.uniform(20, 40)  # 20-40秒等待
                         logger.info(f"⏳ 等待 {wait_time:.1f} 秒...")
                         time.sleep(wait_time)
-                        
+                            
                 except Exception as e:
                     logger.error(f"❌ 浏览主题失败: {str(e)}")
+                    # 确保在异常情况下恢复主页面引用
+                    if hasattr(self, 'original_page'):
+                        self.page = self.original_page
                     continue
             
             logger.success(f"✅ 浏览完成: {success_count}/{browse_count} 个主题")
@@ -836,6 +895,9 @@ class LinuxDoBrowser:
             connect_tab.get(self.site_config['connect_url'])
             time.sleep(3)
             
+            # 处理连接页面的Cloudflare验证
+            original_page = self.page
+            self.page = connect_tab
             self.handle_cloudflare()
             time.sleep(2)
             
@@ -845,6 +907,7 @@ class LinuxDoBrowser:
             if not table:
                 logger.warning("⚠️ 未找到连接信息表格")
                 connect_tab.close()
+                self.page = original_page
                 return
             
             # 提取表格数据
@@ -875,12 +938,16 @@ class LinuxDoBrowser:
             else:
                 logger.warning("⚠️ 未找到连接信息数据")
             
-            # 关闭连接页面标签
+            # 关闭连接页面标签并恢复主页面引用
             connect_tab.close()
+            self.page = original_page
             logger.info("✅ 连接信息获取完成")
             
         except Exception as e:
             logger.error(f"❌ 获取连接信息失败: {str(e)}")
+            # 确保在异常情况下恢复主页面引用
+            if 'original_page' in locals():
+                self.page = original_page
 
     def run(self):
         """执行完整自动化流程"""
@@ -892,7 +959,7 @@ class LinuxDoBrowser:
                 logger.error(f"❌ {self.site_name} 登录失败")
                 return False
             
-            # 2. 主题浏览（深度滚动）
+            # 2. 主题浏览（多标签页策略）
             browse_count = self.browse_topics()
             
             # 3. 连接信息获取
