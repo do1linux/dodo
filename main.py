@@ -1,15 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-完整集成版本（最终优化版）：
-- turnstilePatch扩展 + 反检测功能
-- 双重验证机制（私有主题访问+用户名确认）
-- 浏览器上下文持久会话 + 验证规避策略
-- 单标签页主题浏览（href模式获取主题列表）+ 微导航优化
-- 单标签页连接信息（tabulate美化表格，tag:table选择器）
-- 智能缓存管理（登录成功保存，失败清除对应缓存）
-- 深度滚动浏览 + 交互事件触发 + 真实阅读行为模拟 + 页面可见性事件
-"""
 
 import os
 import random
@@ -219,7 +209,7 @@ class LinuxDoBrowser:
             # 加载会话数据
             self.session_data = CacheManager.load_site_cache(self.site_name, 'session_data') or {}
             
-            logger.info(f"✅ {self.site_name} 浏览器初始化完成")
+            # logger.info(f"✅ {self.site_name} 浏览器初始化完成")
         
         except Exception as e:
             logger.error(f"❌ 浏览器初始化失败: {str(e)}")
@@ -644,7 +634,7 @@ class LinuxDoBrowser:
             return False
 
     def verify_login_status(self):
-        """双重验证机制 - 私有主题访问 + 用户名确认"""
+        # """双重验证机制 - 私有主题访问 + 用户名确认"""
         logger.info("🔍 验证登录状态...")
         
         try:
@@ -659,7 +649,7 @@ class LinuxDoBrowser:
             page_content = self.page.html
             page_title = self.page.title
             
-            logger.info(f"📄 页面标题: {page_title}")
+            # logger.info(f"📄 页面标题: {page_title}")
             
             if "Page Not Found" in page_content or "页面不存在" in page_content:
                 logger.error("❌ 私有主题访问失败")
@@ -771,7 +761,7 @@ class LinuxDoBrowser:
         return login_success
 
     def find_topic_elements(self):
-        """使用href模式获取主题列表"""
+        # """使用href模式获取主题列表"""
         logger.info("🎯 查找主题...")
         
         try:
@@ -802,7 +792,7 @@ class LinuxDoBrowser:
             return []
 
     def browse_topics_single_tab(self):
-        """单标签页主题浏览 + 微导航优化"""
+      #   """单标签页主题浏览 + 微导航优化"""
         if not BROWSE_ENABLED:
             logger.info("⏭️ 浏览功能已禁用")
             return 0
@@ -836,7 +826,7 @@ class LinuxDoBrowser:
                     
                     # ======== 微导航优化：偶尔点击内部链接 ========
                     if random.random() < 0.15:  # 15%概率触发
-                        logger.info("🔍 执行微导航 - 点击内部链接")
+                        # logger.info("🔍 执行微导航 - 点击内部链接")
                         internal_links = self.page.eles('a[href*="/t/"]')
                         if internal_links:
                             random_link = random.choice(internal_links)
@@ -845,9 +835,9 @@ class LinuxDoBrowser:
                                 time.sleep(random.uniform(5, 10))
                                 self.page.back()
                                 time.sleep(2)
-                                logger.info("✅ 微导航完成")
+                                # logger.info("✅ 微导航完成")
                             except:
-                                logger.debug("微导航链接点击失败，跳过")
+                                # logger.debug("微导航链接点击失败，跳过")
                   
                     # ======== 添加随机点赞（3%概率） ========
                     if random.random() < 0.03:  
@@ -860,7 +850,7 @@ class LinuxDoBrowser:
                     # 主题间等待
                     if i < browse_count - 1:
                         wait_time = random.uniform(20, 35)
-                        logger.info(f"⏳ 等待 {wait_time:.1f} 秒...")
+                        # logger.info(f"⏳ 等待 {wait_time:.1f} 秒...")
                         
                         self.page.get(self.site_config['latest_url'])
                         time.sleep(3)
@@ -883,7 +873,7 @@ class LinuxDoBrowser:
             return 0
 
     def deep_scroll_browsing(self):
-        """深度滚动浏览 + 交互事件触发 + 页面可见性优化 + 底部检测"""
+        # """深度滚动浏览 + 交互事件触发 + 页面可见性优化 + 底部检测"""
         # 随机浏览深度
         browse_depth = random.choice(["shallow", "medium", "deep"])
         
@@ -901,7 +891,7 @@ class LinuxDoBrowser:
             
             # 随机退出逻辑（5%概率模拟用户提前离开）
             if random.random() < 0.05:
-                logger.info("🎲 随机中断浏览（模拟用户离开）")
+             #    logger.info("🎲 随机中断浏览（模拟用户离开）")
                 break
             
             # 滚动间随机交互事件
@@ -928,7 +918,7 @@ class LinuxDoBrowser:
                      pass
     
         # ======== 已读状态优化：强制滚动到底部 ========
-        logger.debug("📜 强制滚动到页面底部，触发已读标记")
+        # logger.debug("📜 强制滚动到页面底部，触发已读标记")
         try:
             # 主动检测底部，最多尝试5次
             for attempt in range(5):
@@ -952,7 +942,7 @@ class LinuxDoBrowser:
         # ========================================
 
     def keep_session_active(self):
-        """保持会话活跃"""
+       #  """保持会话活跃"""
         try:
             self.page.run_js("window.scrollBy(0, 10);")
             if random.random() < 0.3:
@@ -961,7 +951,7 @@ class LinuxDoBrowser:
             pass
 
     def get_connect_info_single_tab(self):
-        """单标签页获取连接信息 - 使用tabulate美化表格"""
+       #  """单标签页获取连接信息 - 使用tabulate美化表格"""
         logger.info("🔗 单标签页获取连接信息...")
         
         try:
@@ -1071,23 +1061,23 @@ class LinuxDoBrowser:
 # ======================== 主函数 ========================
 def main():
     logger.info("🚀 Linux.Do 完整集成版启动")
-    logger.info("=" * 80)
-    logger.info("📋 功能清单:")
-    logger.info("✅ turnstilePatch扩展 + 反检测功能")
-    logger.info("✅ 双重验证机制（私有主题访问+用户名确认）")
-    logger.info("✅ 浏览器上下文持久会话 + 验证规避策略")
-    logger.info("✅ 单标签页主题浏览（href模式+微导航优化）")
-    logger.info("✅ 单标签页连接信息（tabulate美化表格）")
-    logger.info("✅ 智能缓存管理（成功保存/失败清除）")
-    logger.info("✅ 深度滚动浏览 + 页面可见性事件 + 真实阅读行为模拟")
-    logger.info("=" * 80)
+    #logger.info("=" * 80)
+    #logger.info("📋 功能清单:")
+    #logger.info("✅ turnstilePatch扩展 + 反检测功能")
+    #logger.info("✅ 双重验证机制（私有主题访问+用户名确认）")
+    #logger.info("✅ 浏览器上下文持久会话 + 验证规避策略")
+    #logger.info("✅ 单标签页主题浏览（href模式+微导航优化）")
+    #logger.info("✅ 单标签页连接信息（tabulate美化表格）")
+    #logger.info("✅ 智能缓存管理（成功保存/失败清除）")
+    #logger.info("✅ 深度滚动浏览 + 页面可见性事件 + 真实阅读行为模拟")
+    #logger.info("=" * 80)
     
     if GITHUB_ACTIONS:
-        logger.info("🎯 GitHub Actions 环境检测")
+        #logger.info("🎯 GitHub Actions 环境检测")
     
     # 检查扩展
     if TURNSTILE_PATCH_ENABLED and os.path.exists(TURNSTILE_PATCH_PATH):
-        logger.info(f"✅ turnstilePatch扩展已加载")
+        #logger.info(f"✅ turnstilePatch扩展已加载")
     else:
         logger.warning("⚠️ turnstilePatch扩展未加载")
     
@@ -1118,7 +1108,7 @@ def main():
             failed_sites.append(site_name)
             continue
 
-        logger.info("-" * 80)
+        #logger.info("-" * 80)
         logger.info(f"🔧 处理站点: {site_name}")
         
         try:
@@ -1165,6 +1155,7 @@ if __name__ == "__main__":
         logger.warning("⚠️ 未配置OCR_API_KEY，验证码处理将不可用")
     
     main()
+
 
 
 
