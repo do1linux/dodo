@@ -679,7 +679,7 @@ class LinuxDoBrowser:
             logger.error(f"❌ 登录验证异常: {str(e)}")
             return False
     
-	def click_like_if_available(self):
+    def click_like_if_available(self):
         """在当前页面寻找未点赞的按钮并点击基于Discourse论坛的点赞按钮结构"""
         try:
             # 查找未点赞的按钮（排除已点赞的.has-reacted类）
@@ -1165,5 +1165,6 @@ if __name__ == "__main__":
         logger.warning("⚠️ 未配置OCR_API_KEY，验证码处理将不可用")
     
     main()
+
 
 
