@@ -855,7 +855,7 @@ class LinuxDoBrowser:
             return 0
 
     def deep_scroll_browsing(self):
-        """深度滚动浏览 + 交互事件触发 + 页面可见性优化"""
+        """深度滚动浏览 + 交互事件触发 + 页面可见性优化 + 底部检测"""
         # 随机浏览深度
         browse_depth = random.choice(["shallow", "medium", "deep"])
         
@@ -866,26 +866,63 @@ class LinuxDoBrowser:
         else:  # deep
             scroll_count = random.randint(6, 8)
         
+        prev_url = None  # URL变化检测
+     
         for i in range(scroll_count):
             self.varied_scrolling_behavior()
+            
+            # 随机退出逻辑（5%概率模拟用户提前离开）
+            if random.random() < 0.05:
+                logger.info("🎲 随机中断浏览（模拟用户离开）")
+                break
             
             # 滚动间随机交互事件
             if random.random() < 0.4:
                 self.human_behavior_simulation()
-            
-            # ======== 页面可见性事件优化 ========
-            if random.random() < 0.3:  # 30%概率触发
-               
+        
+            # URL变化检测（防止页面内跳转导致判断失效）
+            current_url = self.page.url
+            if current_url != prev_url and prev_url is not None:
+                logger.info(f"🔗 检测到页面跳转: {prev_url} → {current_url}")
+                prev_url = current_url
+            elif prev_url is None:
+                prev_url = current_url
+        
+            # 页面可见性事件优化（每3次滚动触发一次）
+            if i % 3 == 0:
+                logger.debug("📄 触发页面可见性事件")
                 try:
                     self.page.run_js("""
-                        // 告诉网站页面正在被真实查看
                         document.dispatchEvent(new Event('visibilitychange'));
                         window.dispatchEvent(new Event('focus'));
                         document.dispatchEvent(new Event('scroll'));
                     """)
                 except:
-                    pass
-            # ========================================
+                     pass
+    
+        # ======== 已读状态优化：强制滚动到底部 ========
+        logger.debug("📜 强制滚动到页面底部，触发已读标记")
+        try:
+            # 主动检测底部，最多尝试5次
+            for attempt in range(5):
+                self.page.run_js("window.scrollTo({top: document.body.scrollHeight, behavior: 'smooth'});")
+                time.sleep(random.uniform(1, 2))
+            
+                # 检测是否真正到达底部（预留100px误差）
+                at_bottom = self.page.run_js("return window.scrollY + window.innerHeight >= document.body.scrollHeight - 100;")
+                if at_bottom:
+                    logger.success("✅ 已到达页面底部")
+                    break
+        
+            # 在底部停留3-5秒（关键！证明内容被完整查看）
+            time.sleep(random.uniform(3, 5))
+        
+            # 模拟回读（向上滚动200px）
+            self.page.run_js("window.scrollBy(0, -200);")
+            time.sleep(random.uniform(1, 2))
+        except Exception as e:
+            logger.debug(f"强制滚动到底部失败: {e}")
+        # ========================================
 
     def keep_session_active(self):
         """保持会话活跃"""
@@ -1101,5 +1138,6 @@ if __name__ == "__main__":
         logger.warning("⚠️ 未配置OCR_API_KEY，验证码处理将不可用")
     
     main()
+
 
 
