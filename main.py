@@ -29,23 +29,23 @@ SITE_CREDENTIALS = {
 SITES = [
     {
         'name': 'linux_do',
-        'base_url': 'https://linux.do ',
-        'login_url': 'https://linux.do/login ',
-        'private_topic_url': 'https://linux.do/t/topic/2362 ',
-        'latest_url': 'https://linux.do/latest ',
-        'connect_url': 'https://connect.linux.do ',
-        'user_url': 'https://linux.do/u ',
+        'base_url': 'https://linux.do',
+        'login_url': 'https://linux.do/login',
+        'private_topic_url': 'https://linux.do/t/topic/2362',
+        'latest_url': 'https://linux.do/latest',
+        'connect_url': 'https://connect.linux.do',
+        'user_url': 'https://linux.do/u',
         'cf_cookies_file': "cf_cookies_linux_do.json",
         'session_file': "session_data_linux_do.json"
     },
     {
         'name': 'idcflare',
-        'base_url': 'https://idcflare.com ',
-        'login_url': 'https://idcflare.com/login ',
-        'private_topic_url': 'https://idcflare.com/t/topic/24 ',
-        'latest_url': 'https://idcflare.com/latest ',
-        'connect_url': 'https://connect.idcflare.com ',
-        'user_url': 'https://idcflare.com/u ',
+        'base_url': 'https://idcflare.com',
+        'login_url': 'https://idcflare.com/login',
+        'private_topic_url': 'https://idcflare.com/t/topic/24',
+        'latest_url': 'https://idcflare.com/latest',
+        'connect_url': 'https://connect.idcflare.com',
+        'user_url': 'https://idcflare.com/u',
         'cf_cookies_file': "cf_cookies_idcflare.json",
         'session_file': "session_data_idcflare.json"
     }
@@ -168,7 +168,7 @@ class LinuxDoBrowser:
             co.set_argument("--no-sandbox")
             co.set_argument("--disable-dev-shm-usage")
             
-            # 反检测配置
+            # 基础反检测配置
             co.set_argument("--disable-blink-features=AutomationControlled")
             co.set_argument("--disable-features=VizDisplayCompositor")
             co.set_argument("--disable-web-security")
@@ -203,31 +203,35 @@ class LinuxDoBrowser:
         
             self.page = ChromiumPage(addr_or_opts=co)
             
-            # 执行指纹优化
+            # 执行指纹优化（简化版）
             self.enhance_browser_fingerprint()
             
             # 加载会话数据
             self.session_data = CacheManager.load_site_cache(self.site_name, 'session_data') or {}
-            
-            # logger.info(f"✅ {self.site_name} 浏览器初始化完成")
         
         except Exception as e:
             logger.error(f"❌ 浏览器初始化失败: {str(e)}")
             raise
 
     def enhance_browser_fingerprint(self):
-        """修复后的浏览器指纹优化"""
+        """简化但有效的指纹优化"""
         try:
             self.page.run_js("""
-                // 反检测指纹优化 - 一次性定义所有属性
+                // 核心指纹伪造 - 只保留最有效的
                 Object.defineProperties(navigator, {
-                    webdriver: { get: () => false },  // 只保留一次，改为false更真实
+                    webdriver: { get: () => false },
                     language: { get: () => 'zh-CN' },
                     languages: { get: () => ['zh-CN', 'zh', 'en'] },
                     platform: { get: () => 'Win32' },
                     hardwareConcurrency: { get: () => 4 },
                     deviceMemory: { get: () => 8 },
+                    maxTouchPoints: { get: () => 0 },  // 桌面设备
+                    cookieEnabled: { get: () => true },
+                    doNotTrack: { get: () => null },
+                    vendor: { get: () => 'Google Inc.' },
+                    productSub: { get: () => '20030107' },
                     
+                    // 简化插件伪装
                     plugins: {
                         get: () => [
                             { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer' },
@@ -237,28 +241,28 @@ class LinuxDoBrowser:
                     }
                 });
     
-                // 修改屏幕属性
+                // 屏幕属性
                 Object.defineProperty(screen, 'width', { get: () => 1920 });
                 Object.defineProperty(screen, 'height', { get: () => 1080 });
                 Object.defineProperty(screen, 'colorDepth', { get: () => 24 });
                 
-                // 移除自动化特征
+                // 移除Chrome自动化特征
                 Object.defineProperty(window, 'chrome', {
                     value: {
                         runtime: {},
                         loadTimes: () => {},
                         csi: () => {},
                         app: {}
-                    },
+                    }
                 });
  
-                // 覆盖权限相关
+                // 权限API覆盖
                 const originalQuery = Permissions.prototype.query;
                 Permissions.prototype.query = function(parameters) {
                     return Promise.resolve({ state: 'granted' });
                 };
 
-                // 随机交互保持活跃
+                // 随机鼠标移动保持活跃
                 setInterval(() => {
                     document.dispatchEvent(new MouseEvent('mousemove', {
                         bubbles: true,
@@ -268,16 +272,15 @@ class LinuxDoBrowser:
                 }, 30000 + Math.random() * 20000);
             """)
             
-            # 调用随机指纹方法
+            # 动态硬件参数
             self.randomize_fingerprint()
             
-            # Canvas/WebGL 指纹噪声
+            # Canvas噪声
             self.page.run_js("""
                 const getContext = HTMLCanvasElement.prototype.getContext;
                 HTMLCanvasElement.prototype.getContext = function(type) {
                     const ctx = getContext.apply(this, arguments);
                     if (type === '2d') {
-                        // 添加轻微噪声
                         const origFill = ctx.fillText;
                         ctx.fillText = function(text, x, y) {
                             return origFill.call(this, text, x + Math.random() * 0.5, y);
@@ -314,28 +317,32 @@ class LinuxDoBrowser:
 
     def apply_evasion_strategy(self):
         """应用验证规避策略"""
-                
-        # 智能延迟系统
+        # 智能延迟
         self.smart_delay_system()
         
-        # 多样化滚动模式
+        # 多样化滚动
         self.varied_scrolling_behavior()
         
         # 人类行为模拟
         self.human_behavior_simulation()
         
-        # 会话健康监控
+        # 会话监控
         self.session_health_monitoring()
 
     def smart_delay_system(self):
         """智能延迟系统"""
         base_delay = random.uniform(2, 5)
         
-        # 根据请求频率调整延迟
+        # 请求频率控制
         request_density = self.request_count / (time.time() - self.session_start_time + 1)
         if request_density > 0.5:
             base_delay *= random.uniform(1.5, 3.0)
             logger.debug("📊 检测到密集请求，增加延迟")
+        
+        # 随机长暂停
+        if random.random() < 0.1:
+            base_delay = random.uniform(30, 90)
+            logger.info("🛌 模拟长时间阅读")
         
         final_delay = base_delay * random.uniform(0.8, 1.2)
         time.sleep(final_delay)
@@ -344,7 +351,7 @@ class LinuxDoBrowser:
     def varied_scrolling_behavior(self):
         """多样化滚动行为"""
         scroll_patterns = [
-            # 平滑滚动到底部
+            # 平滑滚动
             lambda: self.page.run_js("window.scrollTo({top: document.body.scrollHeight, behavior: 'smooth'});"),
             
             # 分段滚动
@@ -438,38 +445,46 @@ class LinuxDoBrowser:
             pass
 
     def mouse_movement_emulation(self):
-        """鼠标移动模拟"""
+        """增强版鼠标移动模拟"""
         try:
             self.page.run_js("""
-                function generateMousePath(startX, startY, endX, endY, steps) {
+                function generateMousePath(startX, startY, endX, endY, steps = 15) {
+                    // 生成简单曲线
+                    const cp1x = startX + (endX - startX) * 0.3;
+                    const cp1y = startY + (endY - startY) * 0.7;
+                    
                     const path = [];
                     for (let i = 0; i <= steps; i++) {
                         const t = i / steps;
-                        const x = startX + (endX - startX) * t + Math.sin(t * Math.PI * 4) * 10;
-                        const y = startY + (endY - startY) * t + Math.cos(t * Math.PI * 3) * 8;
+                        const x = Math.pow(1-t, 2) * startX + 
+                                 2 * (1-t) * t * cp1x + 
+                                 Math.pow(t, 2) * endX;
+                        const y = Math.pow(1-t, 2) * startY + 
+                                 2 * (1-t) * t * cp1y + 
+                                 Math.pow(t, 2) * endY;
                         path.push({x, y});
                     }
                     return path;
                 }
                 
-                const path = generateMousePath(
-                    Math.random() * window.innerWidth,
-                    Math.random() * window.innerHeight,
-                    Math.random() * window.innerWidth,
-                    Math.random() * window.innerHeight,
-                    10
-                );
+                const startX = Math.random() * window.innerWidth;
+                const startY = Math.random() * window.innerHeight;
+                const endX = Math.random() * window.innerWidth;
+                const endY = Math.random() * window.innerHeight;
+                const path = generateMousePath(startX, startY, endX, endY);
                 
                 path.forEach((point, index) => {
                     setTimeout(() => {
                         document.dispatchEvent(new MouseEvent('mousemove', {
-                            bubbles: true, clientX: point.x, clientY: point.y
+                            bubbles: true,
+                            clientX: point.x,
+                            clientY: point.y
                         }));
-                    }, index * 50);
+                    }, index * 40);
                 });
             """)
-        except:
-            pass
+        except Exception as e:
+            logger.debug(f"鼠标轨迹模拟失败: {e}")
 
     def session_health_monitoring(self):
         """会话健康监控"""
@@ -511,7 +526,7 @@ class LinuxDoBrowser:
             try:
                 page_title = self.page.title
                 
-                if page_title and page_title != "请稍候…" and "Checking" not in page_title and "Just a moment" not in page_title:
+                if page_title and "Checking" not in page_title and "Just a moment" not in page_title:
                     if self.is_captcha_page():
                         logger.info("🛡️ 检测到验证码挑战")
                         if self.handle_captcha_challenge():
@@ -594,7 +609,7 @@ class LinuxDoBrowser:
         """OCR API调用"""
         for attempt in range(retries):
             try:
-                url = "https://api.ocr.space/parse/image "
+                url = "https://api.ocr.space/parse/image"
                 payload = {"apikey": api_key, "base64Image": base64_image, "language": "eng", "OCREngine": "2"}
                 response = requests.post(url, data=payload, timeout=20)
                 result = response.json()
@@ -675,7 +690,7 @@ class LinuxDoBrowser:
             return False
 
     def verify_login_status(self):
-        # """双重验证机制 - 私有主题访问 + 用户名确认"""
+        """双重验证机制 - 私有主题访问 + 用户名确认"""
         logger.info("🔍 验证登录状态...")
         
         try:
@@ -689,8 +704,6 @@ class LinuxDoBrowser:
             
             page_content = self.page.html
             page_title = self.page.title
-            
-            # logger.info(f"📄 页面标题: {page_title}")
             
             if "Page Not Found" in page_content or "页面不存在" in page_content:
                 logger.error("❌ 私有主题访问失败")
@@ -802,7 +815,7 @@ class LinuxDoBrowser:
         return login_success
 
     def find_topic_elements(self):
-        # """使用href模式获取主题列表"""
+        """使用href模式获取主题列表"""
         logger.info("🎯 查找主题...")
         
         try:
@@ -833,7 +846,7 @@ class LinuxDoBrowser:
             return []
 
     def browse_topics_single_tab(self):
-      #   """单标签页主题浏览 + 微导航优化"""
+        """单标签页主题浏览 + 微导航优化"""
         if not BROWSE_ENABLED:
             logger.info("⏭️ 浏览功能已禁用")
             return 0
@@ -862,12 +875,11 @@ class LinuxDoBrowser:
                     self.page.get(topic_url)
                     self.apply_evasion_strategy()
                     
-                    # 深度滚动浏览 + 交互事件触发
+                    # 深度滚动浏览
                     self.deep_scroll_browsing()
                     
-                    # ======== 微导航优化：偶尔点击内部链接 ========
-                    if random.random() < 0.15:  # 15%概率触发
-                        # logger.info("🔍 执行微导航 - 点击内部链接")
+                    # 微导航优化：偶尔点击内部链接
+                    if random.random() < 0.15:
                         internal_links = self.page.eles('a[href*="/t/"]')
                         if internal_links:
                             random_link = random.choice(internal_links)
@@ -880,7 +892,7 @@ class LinuxDoBrowser:
                             except:
                                 logger.debug("微导航链接点击失败，跳过")
                   
-                    # ======== 添加随机点赞（3%概率） ========
+                    # 随机点赞（3%概率）
                     if random.random() < 0.03:  
                         logger.info("🎲 尝试随机点赞...")
                         self.click_like_if_available()
@@ -891,7 +903,6 @@ class LinuxDoBrowser:
                     # 主题间等待
                     if i < browse_count - 1:
                         wait_time = random.uniform(20, 35)
-                        # logger.info(f"⏳ 等待 {wait_time:.1f} 秒...")
                         
                         self.page.get(self.site_config['latest_url'])
                         time.sleep(3)
@@ -903,7 +914,7 @@ class LinuxDoBrowser:
                             time.sleep(chunk)
                             remaining_wait -= chunk
                             
-                        # 添加随机休眠
+                        # 随机休眠
                         self.random_sleep()
                             
                 except Exception as e:
@@ -917,7 +928,7 @@ class LinuxDoBrowser:
             return 0
 
     def deep_scroll_browsing(self):
-        # """深度滚动浏览 + 交互事件触发 + 页面可见性优化 + 底部检测"""
+        """深度滚动浏览 + 交互事件触发"""
         # 随机浏览深度
         browse_depth = random.choice(["shallow", "medium", "deep"])
         
@@ -925,33 +936,22 @@ class LinuxDoBrowser:
             scroll_count = random.randint(2, 4)
         elif browse_depth == "medium":
             scroll_count = random.randint(4, 6)
-        else:  # deep
+        else:
             scroll_count = random.randint(6, 8)
         
-        prev_url = None  # URL变化检测
-     
         for i in range(scroll_count):
             self.varied_scrolling_behavior()
             
             # 随机退出逻辑（5%概率模拟用户提前离开）
             if random.random() < 0.05:
-             #    logger.info("🎲 随机中断浏览（模拟用户离开）")
                 break
             
             # 滚动间随机交互事件
             if random.random() < 0.4:
                 self.human_behavior_simulation()
         
-            # URL变化检测（防止页面内跳转导致判断失效）
-            current_url = self.page.url
-            if current_url != prev_url and prev_url is not None:
-                prev_url = current_url
-            elif prev_url is None:
-                prev_url = current_url
-        
             # 页面可见性事件优化（每3次滚动触发一次）
             if i % 3 == 0:
-                
                 try:
                     self.page.run_js("""
                         document.dispatchEvent(new Event('visibilitychange'));
@@ -961,21 +961,19 @@ class LinuxDoBrowser:
                 except:
                      pass
     
-        # ======== 已读状态优化：强制滚动到底部 ========
-        # logger.debug("📜 强制滚动到页面底部，触发已读标记")
+        # 已读状态优化：强制滚动到底部
         try:
-            # 主动检测底部，最多尝试5次
             for attempt in range(5):
                 self.page.run_js("window.scrollTo({top: document.body.scrollHeight, behavior: 'smooth'});")
                 time.sleep(random.uniform(1, 2))
             
-                # 检测是否真正到达底部（预留100px误差）
+                # 检测是否真正到达底部
                 at_bottom = self.page.run_js("return window.scrollY + window.innerHeight >= document.body.scrollHeight - 100;")
                 if at_bottom:
                     logger.success("✅ 已到达页面底部")
                     break
         
-            # 在底部停留3-5秒（关键！证明内容被完整查看）
+            # 在底部停留3-5秒
             time.sleep(random.uniform(3, 5))
         
             # 模拟回读（向上滚动200px）
@@ -983,10 +981,9 @@ class LinuxDoBrowser:
             time.sleep(random.uniform(1, 2))
         except Exception as e:
             logger.debug(f"强制滚动到底部失败: {e}")
-        # ========================================
 
     def keep_session_active(self):
-       #  """保持会话活跃"""
+        """保持会话活跃"""
         try:
             self.page.run_js("window.scrollBy(0, 10);")
             if random.random() < 0.3:
@@ -995,25 +992,21 @@ class LinuxDoBrowser:
             pass
 
     def get_connect_info_single_tab(self):
-       #  """单标签页获取连接信息 - 使用tabulate美化表格"""
+        """单标签页获取连接信息"""
         logger.info("🔗 单标签页获取连接信息...")
         
         try:
-            # 保存当前URL
             current_url = self.page.url
             
-            # 访问连接信息页面
             self.page.get(self.site_config['connect_url'])
             time.sleep(3)
             
             self.apply_evasion_strategy()
             
-            # 使用tag:table选择器查找表格
             table = self.page.ele("tag:table")
             
             if not table:
                 logger.warning("⚠️ 未找到连接信息表格")
-                # idcflare失败不影响 - 继续执行
                 if self.site_name == 'idcflare':
                     logger.info("ℹ️ idcflare连接信息获取失败，但不影响继续执行")
                 self.page.get(current_url)
@@ -1045,7 +1038,6 @@ class LinuxDoBrowser:
             else:
                 logger.warning("⚠️ 未找到连接信息数据")
             
-            # 返回原页面
             self.page.get(current_url)
             time.sleep(2)
             
@@ -1054,11 +1046,9 @@ class LinuxDoBrowser:
             
         except Exception as e:
             logger.error(f"❌ 获取连接信息失败: {str(e)}")
-            # idcflare失败不影响
             if self.site_name == 'idcflare':
                 logger.info("ℹ️ idcflare连接信息异常，但不影响继续执行")
                 return True
-            # 尝试恢复会话
             try:
                 self.page.get(self.site_config['latest_url'])
                 time.sleep(2)
@@ -1071,20 +1061,20 @@ class LinuxDoBrowser:
         try:
             logger.info(f"🚀 开始完整处理 {self.site_name}")
             
-            # 1. 确保登录（双重验证）
+            # 1. 确保登录
             if not self.ensure_logged_in():
                 logger.error(f"❌ {self.site_name} 登录失败")
                 return False
             
-            # 2. 单标签页主题浏览（含微导航）
+            # 2. 单标签页主题浏览
             browse_count = self.browse_topics_single_tab()
             
-            # 3. 单标签页连接信息（idcflare失败不影响）
+            # 3. 单标签页连接信息
             connect_success = self.get_connect_info_single_tab()
             if not connect_success and self.site_name != 'idcflare':
                 logger.warning(f"⚠️ {self.site_name} 连接信息获取失败")
             
-            # 4. 保存缓存（登录成功时）
+            # 4. 保存缓存
             self.save_caches()
             
             logger.success(f"✅ {self.site_name} 处理完成 - 浏览 {browse_count} 个主题")
@@ -1142,7 +1132,6 @@ def main():
             failed_sites.append(site_name)
             continue
 
-        #logger.info("-" * 80)
         logger.info(f"🔧 处理站点: {site_name}")
         
         try:
