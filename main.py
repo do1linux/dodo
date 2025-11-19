@@ -117,6 +117,7 @@ class HybridBrowser:
             
             page_content = self.page.html
             page_title = self.page.title
+            logger.info(f"📄 页面标题: {page_title}")
             
             if "Page Not Found" in page_content or "页面不存在" in page_content:
                 logger.error("❌ 私有主题访问失败")
@@ -445,3 +446,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
