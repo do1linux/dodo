@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-完整版：集成验证规避策略 + 单标签页连接信息 + 反检测功能
-双重验证机制 + 智能会话管理 + 深度行为模拟
+优化版本：减少新标签页使用 + 会话保持活跃
+双重验证机制 + 单标签浏览策略 + 会话活跃保持
 """
 
 import os
@@ -60,6 +60,7 @@ BROWSE_ENABLED = os.environ.get("BROWSE_ENABLED", "true").strip().lower() not in
 HEADLESS = os.environ.get("HEADLESS", "true").strip().lower() not in ["false", "0", "off"]
 FORCE_LOGIN_EVERY_TIME = os.environ.get("FORCE_LOGIN", "false").strip().lower() in ["true", "1", "on"]
 TURNSTILE_PATCH_ENABLED = os.environ.get("TURNSTILE_PATCH_ENABLED", "true").strip().lower() not in ["false", "0", "off"]
+SINGLE_TAB_BROWSE = os.environ.get("SINGLE_TAB_BROWSE", "true").strip().lower() in ["true", "1", "on"]  # 单标签浏览
 OCR_API_KEY = os.getenv("OCR_API_KEY")
 
 # GitHub Actions 特定优化
@@ -144,9 +145,7 @@ class LinuxDoBrowser:
         self.password = credentials['password']
         self.page = None
         self.cache_saved = False
-        self.session_start_time = time.time()
-        self.request_count = 0
-        self.browsing_active = True
+        self.session_active = False
         self.initialize_browser()
 
     def initialize_browser(self):
@@ -263,9 +262,9 @@ class LinuxDoBrowser:
                     },
                 });
                 
-                // 简化的随机交互
+                // 简化的随机交互 - 减少GitHub Actions负载
                 let interactionCount = 0;
-                const maxInteractions = 8; // 限制交互次数
+                const maxInteractions = 10; // 限制交互次数
                 
                 document.addEventListener('DOMContentLoaded', function() {
                     setInterval(() => {
@@ -277,253 +276,87 @@ class LinuxDoBrowser:
                             }));
                             interactionCount++;
                         }
-                    }, 25000 + Math.random() * 15000); // 增加间隔时间
+                    }, 20000 + Math.random() * 20000); // 增加间隔时间
                 });
             """)
             logger.debug("✅ GitHub Actions指纹优化已应用")
         except Exception as e:
             logger.debug(f"指纹优化异常: {str(e)}")
 
-    def enhanced_cloudflare_evasion(self):
-        """增强的Cloudflare规避策略"""
-        logger.debug("🛡️ 应用Cloudflare规避策略")
+    def keep_session_alive(self, wait_time):
+        """在等待期间保持主会话活跃"""
+        logger.info(f"🔋 保持会话活跃 ({wait_time:.1f}秒)")
         
-        # 1. 智能延迟系统
-        self.smart_delay_system()
+        intervals = max(3, int(wait_time / 8))  # 减少间隔次数
+        interval_duration = wait_time / intervals
         
-        # 2. 多样化滚动模式
-        self.varied_scrolling_behavior()
-        
-        # 3. 人类行为模拟
-        self.human_behavior_simulation()
-        
-        # 4. 会话健康监控
-        self.session_health_monitoring()
-
-    def smart_delay_system(self):
-        """智能延迟系统"""
-        base_delay = random.uniform(2, 5)
-        
-        # 根据请求频率调整延迟
-        request_density = self.request_count / (time.time() - self.session_start_time + 1)
-        if request_density > 0.5:  # 请求过于密集
-            base_delay *= random.uniform(1.5, 3.0)
-            logger.debug("📊 检测到密集请求，增加延迟")
-        
-        # 添加随机扰动
-        jitter = random.uniform(0.8, 1.2)
-        final_delay = base_delay * jitter
-        
-        time.sleep(final_delay)
-        self.request_count += 1
-
-    def varied_scrolling_behavior(self):
-        """多样化滚动行为"""
-        scroll_patterns = [
-            # 模式1: 平滑滚动到底部
-            lambda: self.page.run_js("""
-                window.scrollTo({
-                    top: document.body.scrollHeight,
-                    behavior: 'smooth'
-                });
-            """),
-            
-            # 模式2: 分段滚动
-            lambda: self.page.run_js("""
-                let currentPosition = 0;
-                const scrollHeight = document.body.scrollHeight;
-                const scrollStep = scrollHeight / 5;
+        for i in range(intervals):
+            try:
+                # 轻微滚动保持活跃
+                self.page.run_js("window.scrollBy({top: 30, behavior: 'smooth'});")
+                time.sleep(interval_duration * 0.3)
                 
-                function scrollStepByStep() {
-                    if (currentPosition < scrollHeight) {
-                        currentPosition += scrollStep;
-                        window.scrollTo(0, currentPosition);
-                        setTimeout(scrollStepByStep, 800 + Math.random() * 500);
-                    }
-                }
-                scrollStepByStep();
-            """),
-            
-            # 模式3: 随机探索式滚动
-            lambda: self.page.run_js("""
-                const scrollPositions = [
-                    window.innerHeight * 0.3,
-                    window.innerHeight * 1.2, 
-                    window.innerHeight * 2.5,
-                    document.body.scrollHeight * 0.6
-                ];
-                
-                scrollPositions.forEach((pos, index) => {
-                    setTimeout(() => {
-                        window.scrollTo({
-                            top: pos,
-                            behavior: 'smooth'
-                        });
-                    }, index * 1200 + Math.random() * 800);
-                });
-            """)
-        ]
-        
-        # 随机选择滚动模式
-        chosen_pattern = random.choice(scroll_patterns)
-        chosen_pattern()
-        
-        # 滚动后等待时间也随机化
-        post_scroll_wait = random.uniform(3, 8)
-        time.sleep(post_scroll_wait)
-
-    def human_behavior_simulation(self):
-        """人类行为模拟"""
-        behaviors = [
-            self.micro_interactions,
-            self.focus_switching,
-            self.reading_pattern_simulation,
-            self.mouse_movement_emulation
-        ]
-        
-        # 每次执行1-2个随机行为
-        num_behaviors = random.randint(1, 2)
-        selected_behaviors = random.sample(behaviors, num_behaviors)
-        
-        for behavior in selected_behaviors:
-            behavior()
-
-    def micro_interactions(self):
-        """微交互"""
-        try:
-            self.page.run_js("""
-                // 随机点击非交互元素
-                const nonInteractiveElements = document.querySelectorAll('p, div, span');
-                if (nonInteractiveElements.length > 0) {
-                    const randomElement = nonInteractiveElements[Math.floor(Math.random() * nonInteractiveElements.length)];
-                    randomElement.click();
-                }
-                
-                // 轻微鼠标移动
-                document.dispatchEvent(new MouseEvent('mousemove', {
-                    bubbles: true,
-                    clientX: Math.random() * window.innerWidth,
-                    clientY: Math.random() * window.innerHeight
-                }));
-            """)
-            time.sleep(random.uniform(0.5, 1.5))
-        except:
-            pass
-
-    def focus_switching(self):
-        """焦点切换模拟"""
-        try:
-            self.page.run_js("""
-                // 切换焦点
-                if (document.activeElement) {
-                    document.activeElement.blur();
-                }
-                
-                // 随机Tab键导航
-                document.dispatchEvent(new KeyboardEvent('keydown', {
-                    key: 'Tab',
-                    keyCode: 9,
-                    which: 9,
-                    bubbles: true
-                }));
-            """)
-            time.sleep(random.uniform(0.3, 1.0))
-        except:
-            pass
-
-    def reading_pattern_simulation(self):
-        """阅读模式模拟"""
-        try:
-            # 模拟阅读时的暂停和继续
-            read_pauses = random.randint(2, 4)
-            for _ in range(read_pauses):
-                pause_duration = random.uniform(2, 5)
-                time.sleep(pause_duration)
-                
-                # 轻微滚动表示继续阅读
-                self.page.run_js("window.scrollBy(0, 100);")
-        except:
-            pass
-
-    def mouse_movement_emulation(self):
-        """鼠标移动模拟"""
-        try:
-            self.page.run_js("""
-                // 生成人类般的鼠标移动轨迹
-                function generateHumanMousePath(startX, startY, endX, endY, steps) {
-                    const path = [];
-                    for (let i = 0; i <= steps; i++) {
-                        const t = i / steps;
-                        // 贝塞尔曲线添加自然抖动
-                        const x = startX + (endX - startX) * t + Math.sin(t * Math.PI * 4) * 10;
-                        const y = startY + (endY - startY) * t + Math.cos(t * Math.PI * 3) * 8;
-                        path.push({x, y});
-                    }
-                    return path;
-                }
-                
-                const startX = Math.random() * window.innerWidth;
-                const startY = Math.random() * window.innerHeight;
-                const endX = Math.random() * window.innerWidth;
-                const endY = Math.random() * window.innerHeight;
-                
-                const mousePath = generateHumanMousePath(startX, startY, endX, endY, 10);
-                
-                mousePath.forEach((point, index) => {
-                    setTimeout(() => {
+                # 随机触发轻微交互
+                if random.random() < 0.15:  # 降低交互频率
+                    self.page.run_js("""
                         document.dispatchEvent(new MouseEvent('mousemove', {
                             bubbles: true,
-                            clientX: point.x,
-                            clientY: point.y
+                            clientX: Math.random() * window.innerWidth * 0.1,
+                            clientY: Math.random() * window.innerHeight * 0.1
                         }));
-                    }, index * 50);
-                });
-            """)
-        except:
-            pass
-
-    def session_health_monitoring(self):
-        """会话健康监控"""
-        try:
-            current_time = time.time()
-            session_duration = current_time - self.session_start_time
-            
-            # 长时间运行后主动刷新
-            if session_duration > 1800:  # 30分钟
-                logger.info("🔄 长时间运行，主动刷新会话")
-                self.page.refresh()
-                time.sleep(5)
-                self.session_start_time = current_time
-                self.request_count = 0
+                    """)
+                    time.sleep(interval_duration * 0.2)
                 
-            # 检测可能的验证页面
-            page_title = self.page.title.lower()
-            suspicious_indicators = ["checking", "verifying", "just a moment", "please wait"]
-            
-            if any(indicator in page_title for indicator in suspicious_indicators):
-                logger.warning("⚠️ 检测到可能验证页面，执行规避")
-                self.evasive_maneuvers()
+                # 页面标题检查，确保会话正常
+                current_title = self.page.title
+                if "Just a moment" in current_title or "Checking" in current_title:
+                    logger.warning("⚠️ 检测到验证页面，尝试刷新")
+                    self.page.refresh()
+                    time.sleep(5)
+                    
+                time.sleep(interval_duration * 0.5)
                 
-        except Exception as e:
-            logger.debug(f"会话监控异常: {e}")
+            except Exception as e:
+                logger.debug(f"会话保持操作异常: {str(e)}")
+                time.sleep(interval_duration)
+        
+        logger.info("✅ 会话保持完成")
 
-    def evasive_maneuvers(self):
-        """规避操作"""
-        try:
-            # 策略1: 后退并等待
-            self.page.back()
-            time.sleep(random.uniform(8, 15))
-            
-            # 策略2: 刷新页面
-            self.page.refresh()
-            time.sleep(random.uniform(5, 10))
-            
-            # 策略3: 访问其他页面
-            self.page.get(self.site_config['latest_url'])
-            time.sleep(random.uniform(3, 7))
-            
-        except Exception as e:
-            logger.warning(f"规避操作失败: {e}")
+    def handle_cloudflare_quick_check(self, timeout=10):
+        """快速Cloudflare检查（单标签浏览专用）"""
+        start_time = time.time()
+        
+        while time.time() - start_time < timeout:
+            try:
+                page_title = self.page.title
+                
+                if page_title and page_title != "请稍候…" and "Checking" not in page_title and "Just a moment" not in page_title:
+                    if self.is_captcha_page():
+                        logger.info("🛡️ 检测到验证码挑战")
+                        if self.handle_captcha_challenge():
+                            time.sleep(2)
+                            continue
+                        else:
+                            return False
+                    else:
+                        return True
+                
+                if self.is_captcha_page():
+                    logger.info("🛡️ 检测到验证码挑战")
+                    if self.handle_captcha_challenge():
+                        time.sleep(2)
+                        continue
+                    else:
+                        return False
+                
+                time.sleep(1)
+                    
+            except Exception as e:
+                logger.debug(f"快速Cloudflare检查异常: {str(e)}")
+                time.sleep(1)
+        
+        logger.warning("⚠️ 快速Cloudflare检查超时，继续执行")
+        return True
 
     def is_captcha_page(self):
         """检查验证码页面"""
@@ -609,42 +442,6 @@ class LinuxDoBrowser:
                 time.sleep(3)
 
         return None
-
-    def handle_cloudflare_quick_check(self, timeout=10):
-        """快速Cloudflare检查"""
-        start_time = time.time()
-        
-        while time.time() - start_time < timeout:
-            try:
-                page_title = self.page.title
-                
-                if page_title and page_title != "请稍候…" and "Checking" not in page_title and "Just a moment" not in page_title:
-                    if self.is_captcha_page():
-                        logger.info("🛡️ 检测到验证码挑战")
-                        if self.handle_captcha_challenge():
-                            time.sleep(2)
-                            continue
-                        else:
-                            return False
-                    else:
-                        return True
-                
-                if self.is_captcha_page():
-                    logger.info("🛡️ 检测到验证码挑战")
-                    if self.handle_captcha_challenge():
-                        time.sleep(2)
-                        continue
-                    else:
-                        return False
-                
-                time.sleep(1)
-                    
-            except Exception as e:
-                logger.debug(f"快速Cloudflare检查异常: {str(e)}")
-                time.sleep(1)
-        
-        logger.warning("⚠️ 快速Cloudflare检查超时，继续执行")
-        return True
 
     def save_caches(self):
         """保存缓存"""
@@ -839,22 +636,34 @@ class LinuxDoBrowser:
             logger.error(f"❌ 查找主题失败: {str(e)}")
             return []
 
-    def browse_topics_enhanced(self):
-        """增强的主题浏览"""
+    def browse_topics_single_tab(self):
+        """单标签页浏览策略（减少验证）"""
         if not BROWSE_ENABLED:
             logger.info("⏭️ 浏览功能已禁用")
             return 0
-
+        
+        if not self.verify_login_status():
+            logger.error("❌ 浏览前验证失败")
+            return 0
+        
         try:
-            logger.info(f"🌐 开始增强浏览 {self.site_name} 主题...")
+            logger.info(f"🌐 开始单标签页浏览 {self.site_name} 主题...")
             
+            # 访问最新页面
             self.page.get(self.site_config['latest_url'])
-            self.enhanced_cloudflare_evasion()  # 应用规避策略
+            time.sleep(3)
+            
+            self.handle_cloudflare_quick_check()
+            time.sleep(2)
             
             topic_urls = self.find_topic_elements()
             if not topic_urls:
+                logger.error("❌ 无法找到主题")
                 return 0
             
+            logger.info(f"📚 发现 {len(topic_urls)} 个主题")
+            
+            # GitHub Actions中浏览2-3个主题，平衡效率和安全
             browse_count = min(random.randint(2, 3), len(topic_urls))
             selected_urls = random.sample(topic_urls, browse_count)
             success_count = 0
@@ -865,95 +674,117 @@ class LinuxDoBrowser:
                 try:
                     logger.info(f"📖 浏览主题 {i+1}/{browse_count}")
                     
+                    # 单标签页直接访问主题
                     self.page.get(topic_url)
-                    self.enhanced_cloudflare_evasion()  # 每次页面跳转都应用
+                    time.sleep(3)
                     
-                    # 增强的浏览行为
-                    self.enhanced_browsing_behavior()
+                    # 快速Cloudflare检查
+                    if not self.handle_cloudflare_quick_check():
+                        logger.warning("⚠️ Cloudflare检查失败，跳过该主题")
+                        continue
+                    
+                    # 优化版深度滚动
+                    self.github_optimized_scroll()
                     
                     success_count += 1
                     logger.info(f"✅ 成功浏览主题 {i+1}")
                     
-                    # 主题间等待 + 规避策略
+                    # 主题间等待，返回最新页面并保持会话活跃
                     if i < browse_count - 1:
-                        wait_time = random.uniform(25, 40)
-                        logger.info(f"⏳ 等待 {wait_time:.1f} 秒...")
+                        wait_time = random.uniform(20, 35)  # 增加等待时间
+                        logger.info(f"⏳ 等待 {wait_time:.1f} 秒并保持会话...")
                         
+                        # 返回最新页面
                         self.page.get(self.site_config['latest_url'])
-                        time.sleep(3)
+                        time.sleep(2)
                         
-                        # 在等待期间执行轻度规避行为
-                        remaining_wait = wait_time - 3
-                        while remaining_wait > 0:
-                            chunk = min(remaining_wait, random.uniform(5, 10))
-                            self.light_evasion_behavior()
-                            time.sleep(chunk)
-                            remaining_wait -= chunk
+                        # 在等待期间保持会话活跃
+                        self.keep_session_alive(wait_time - 2)
                             
                 except Exception as e:
                     logger.error(f"❌ 浏览主题失败: {str(e)}")
+                    # 尝试恢复会话
+                    try:
+                        self.page.get(self.site_config['latest_url'])
+                        time.sleep(2)
+                    except:
+                        pass
                     continue
             
+            logger.success(f"✅ 浏览完成: {success_count}/{browse_count} 个主题")
             return success_count
             
         except Exception as e:
-            logger.error(f"❌ 增强浏览失败: {str(e)}")
+            logger.error(f"❌ 浏览主题失败: {str(e)}")
             return 0
 
-    def enhanced_browsing_behavior(self):
-        """增强的浏览行为"""
-        # 随机浏览深度
-        browse_depth = random.choice(["shallow", "medium", "deep"])
-        
-        if browse_depth == "shallow":
-            scroll_count = random.randint(2, 4)
-        elif browse_depth == "medium":
-            scroll_count = random.randint(4, 6)
-        else:  # deep
-            scroll_count = random.randint(6, 8)
-        
-        for i in range(scroll_count):
-            self.varied_scrolling_behavior()
-            
-            # 滚动间随机行为
-            if random.random() < 0.4:
-                self.human_behavior_simulation()
-
-    def light_evasion_behavior(self):
-        """轻度规避行为"""
+    def github_optimized_scroll(self):
+        """GitHub Actions 优化版滚动"""
         try:
-            # 轻微活动保持会话
-            self.page.run_js("window.scrollBy(0, 10);")
+            scroll_count = random.randint(4, 6)
+            logger.debug(f"📖 优化滚动: {scroll_count} 次")
             
-            if random.random() < 0.3:
-                self.micro_interactions()
+            for i in range(scroll_count):
+                scroll_distance = random.randint(400, 600)
                 
+                self.page.run_js(f"""
+                    window.scrollBy({{
+                        top: {scroll_distance},
+                        behavior: 'smooth'
+                    }});
+                """)
+                
+                read_time = random.uniform(2, 4)
+                time.sleep(read_time)
+                
+                if random.random() < 0.3:
+                    self.trigger_interaction_events()
+            
+            self.trigger_complete_interaction_sequence()
+            
+        except Exception as e:
+            logger.debug(f"滚动异常: {str(e)}")
+
+    def trigger_interaction_events(self):
+        """触发交互事件"""
+        try:
+            self.page.run_js("""
+                document.dispatchEvent(new MouseEvent('mousemove', {
+                    bubbles: true,
+                    clientX: Math.random() * window.innerWidth,
+                    clientY: Math.random() * window.innerHeight
+                }));
+            """)
         except:
             pass
 
-    def print_connect_info_single_tab(self):
-        """单标签页获取连接信息"""
-        logger.info("🔗 单标签页获取连接信息...")
-        
+    def trigger_complete_interaction_sequence(self):
+        """触发完整交互序列"""
         try:
-            # 保存当前URL以便返回
-            current_url = self.page.url
+            self.page.run_js("""
+                window.dispatchEvent(new Event('scroll'));
+                window.dispatchEvent(new Event('focus'));
+            """)
+        except:
+            pass
+
+    def print_connect_info(self):
+        """连接信息获取"""
+        logger.info("🔗 获取连接信息...")
+        try:
+            # 使用新标签页获取连接信息（避免干扰主会话）
+            connect_tab = self.page.new_tab()
+            connect_tab.get(self.site_config['connect_url'])
+            time.sleep(2)
             
-            # 访问连接信息页面
-            self.page.get(self.site_config['connect_url'])
-            time.sleep(3)
+            self.handle_cloudflare_quick_check()
+            time.sleep(1)
             
-            # 应用规避策略
-            self.enhanced_cloudflare_evasion()
-            
-            # 查找表格
-            table = self.page.ele("tag:table")
+            table = connect_tab.ele("tag:table")
             
             if not table:
                 logger.warning("⚠️ 未找到连接信息表格")
-                # 返回原页面
-                self.page.get(current_url)
-                time.sleep(2)
+                connect_tab.close()
                 return
             
             rows = table.eles("tag:tr")
@@ -981,41 +812,32 @@ class LinuxDoBrowser:
             else:
                 logger.warning("⚠️ 未找到连接信息数据")
             
-            # 返回原页面
-            self.page.get(current_url)
-            time.sleep(2)
-            
+            connect_tab.close()
             logger.info("✅ 连接信息获取完成")
             
         except Exception as e:
             logger.error(f"❌ 获取连接信息失败: {str(e)}")
-            # 尝试恢复会话
-            try:
-                self.page.get(self.site_config['latest_url'])
-                time.sleep(2)
-            except:
-                pass
 
-    def run_enhanced(self):
-        """增强的执行流程"""
+    def run(self):
+        """执行完整流程"""
         try:
-            logger.info(f"🚀 开始增强处理 {self.site_name}")
+            logger.info(f"🚀 开始处理 {self.site_name}")
             
             # 1. 确保登录
             if not self.ensure_logged_in():
                 logger.error(f"❌ {self.site_name} 登录失败")
                 return False
             
-            # 2. 增强主题浏览
-            browse_count = self.browse_topics_enhanced()
+            # 2. 主题浏览（使用单标签策略）
+            browse_count = self.browse_topics_single_tab()
             
-            # 3. 单标签页连接信息
-            self.print_connect_info_single_tab()
+            # 3. 连接信息
+            self.print_connect_info()
             
             # 4. 保存缓存
             self.save_caches()
             
-            logger.success(f"✅ {self.site_name} 增强处理完成 - 浏览 {browse_count} 个主题")
+            logger.success(f"✅ {self.site_name} 处理完成 - 浏览 {browse_count} 个主题")
             return True
             
         except Exception as e:
@@ -1023,7 +845,6 @@ class LinuxDoBrowser:
             return False
             
         finally:
-            self.browsing_active = False
             try:
                 if self.page:
                     self.page.quit()
@@ -1032,7 +853,7 @@ class LinuxDoBrowser:
 
 # ======================== 主函数 ========================
 def main():
-    logger.info("🚀 Linux.Do 增强规避策略版启动")
+    logger.info("🚀 Linux.Do 单标签浏览优化版启动")
     logger.info("=" * 80)
     
     if GITHUB_ACTIONS:
@@ -1044,8 +865,8 @@ def main():
     else:
         logger.warning("⚠️ turnstilePatch扩展未加载")
     
-    logger.info("🛡️ 启用增强Cloudflare规避策略")
-    logger.info("🔗 使用单标签页获取连接信息")
+    if SINGLE_TAB_BROWSE:
+        logger.info("🎯 启用单标签页浏览策略（减少Cloudflare验证）")
     
     logger.remove()
     logger.add(sys.stdout, format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{message}</cyan>", level="INFO")
@@ -1082,7 +903,7 @@ def main():
         
         try:
             browser = LinuxDoBrowser(site_config, credentials)
-            success = browser.run_enhanced()
+            success = browser.run()
 
             if success:
                 success_sites.append(site_name)
@@ -1093,7 +914,7 @@ def main():
             logger.error(f"❌ {site_name} 执行异常: {str(e)}")
             failed_sites.append(site_name)
 
-        # 站点间等待
+        # 站点间等待（使用会话保持）
         if site_config != target_sites[-1]:
             wait_time = random.uniform(10, 20)
             logger.info(f"⏳ 站点间等待 {wait_time:.1f} 秒...")
@@ -1101,7 +922,7 @@ def main():
 
     # 总结
     logger.info("=" * 80)
-    logger.info("📊 增强规避策略执行总结:")
+    logger.info("📊 单标签浏览执行总结:")
     logger.info(f"✅ 成功站点: {', '.join(success_sites) if success_sites else '无'}")
     logger.info(f"❌ 失败站点: {', '.join(failed_sites) if failed_sites else '无'}")
     logger.info("=" * 80)
