@@ -1073,11 +1073,11 @@ def main():
     #logger.info("=" * 80)
     
     if GITHUB_ACTIONS:
-        #logger.info("🎯 GitHub Actions 环境检测")
+        logger.info("🎯 GitHub Actions 环境检测")
     
     # 检查扩展
     if TURNSTILE_PATCH_ENABLED and os.path.exists(TURNSTILE_PATCH_PATH):
-        #logger.info(f"✅ turnstilePatch扩展已加载")
+        logger.info(f"✅ turnstilePatch扩展已加载")
     else:
         logger.warning("⚠️ turnstilePatch扩展未加载")
     
@@ -1155,6 +1155,7 @@ if __name__ == "__main__":
         logger.warning("⚠️ 未配置OCR_API_KEY，验证码处理将不可用")
     
     main()
+
 
 
 
