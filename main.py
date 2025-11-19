@@ -678,7 +678,31 @@ class LinuxDoBrowser:
         except Exception as e:
             logger.error(f"❌ 登录验证异常: {str(e)}")
             return False
-
+    
+	def click_like_if_available(self):
+        """在当前页面寻找未点赞的按钮并点击基于Discourse论坛的点赞按钮结构"""
+        try:
+            # 查找未点赞的按钮（排除已点赞的.has-reacted类）
+            like_button = self.page.ele('.discourse-reactions-reaction-button:not(.has-reacted)')
+            
+            if like_button:
+                # 额外检查是否可点击（有些按钮是禁用状态）
+                if not like_button.attr('disabled'):
+                    logger.info("👍 找到未点赞的帖子，准备点赞...")
+                    like_button.click()
+                    time.sleep(random.uniform(1, 3))  # 等待点赞动画和请求
+                    logger.success("✅ 点赞成功")
+                    return True
+                else:
+                    logger.debug("点赞按钮被禁用，跳过")
+            else:
+                logger.debug("未找到可点赞的帖子或已点赞过")
+            
+        except Exception as e:
+            logger.debug(f"点赞操作异常（可能无点赞权限）: {str(e)}")
+    
+        return False
+	
     def login(self):
         """执行登录流程"""
         self.page.set.cookies([])
@@ -824,8 +848,12 @@ class LinuxDoBrowser:
                                 logger.info("✅ 微导航完成")
                             except:
                                 logger.debug("微导航链接点击失败，跳过")
-                    # ============================================
-                    
+                  
+                    # ======== 添加随机点赞（3%概率） ========
+                    if random.random() < 0.03:  
+                        logger.info("🎲 尝试随机点赞...")
+                        self.click_like_if_available()
+# ========================================
                     success_count += 1
                     logger.info(f"✅ 成功浏览主题 {i+1}")
                     
@@ -883,14 +911,13 @@ class LinuxDoBrowser:
             # URL变化检测（防止页面内跳转导致判断失效）
             current_url = self.page.url
             if current_url != prev_url and prev_url is not None:
-                logger.info(f"🔗 检测到页面跳转: {prev_url} → {current_url}")
                 prev_url = current_url
             elif prev_url is None:
                 prev_url = current_url
         
             # 页面可见性事件优化（每3次滚动触发一次）
             if i % 3 == 0:
-                logger.debug("📄 触发页面可见性事件")
+                
                 try:
                     self.page.run_js("""
                         document.dispatchEvent(new Event('visibilitychange'));
@@ -1138,6 +1165,5 @@ if __name__ == "__main__":
         logger.warning("⚠️ 未配置OCR_API_KEY，验证码处理将不可用")
     
     main()
-
 
 
