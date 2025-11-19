@@ -1061,17 +1061,7 @@ class LinuxDoBrowser:
 # ======================== 主函数 ========================
 def main():
     logger.info("🚀 Linux.Do 完整集成版启动")
-    #logger.info("=" * 80)
-    #logger.info("📋 功能清单:")
-    #logger.info("✅ turnstilePatch扩展 + 反检测功能")
-    #logger.info("✅ 双重验证机制（私有主题访问+用户名确认）")
-    #logger.info("✅ 浏览器上下文持久会话 + 验证规避策略")
-    #logger.info("✅ 单标签页主题浏览（href模式+微导航优化）")
-    #logger.info("✅ 单标签页连接信息（tabulate美化表格）")
-    #logger.info("✅ 智能缓存管理（成功保存/失败清除）")
-    #logger.info("✅ 深度滚动浏览 + 页面可见性事件 + 真实阅读行为模拟")
-    #logger.info("=" * 80)
-    
+  
     if GITHUB_ACTIONS:
         logger.info("🎯 GitHub Actions 环境检测")
     
@@ -1155,6 +1145,7 @@ if __name__ == "__main__":
         logger.warning("⚠️ 未配置OCR_API_KEY，验证码处理将不可用")
     
     main()
+
 
 
 
