@@ -226,12 +226,12 @@ class LinuxDoBrowser:
             raise
 
     def enhance_browser_fingerprint(self):
-        """浏览器指纹优化 - 反检测核心"""
+        """修复后的浏览器指纹优化"""
         try:
             self.page.run_js("""
-                // 反检测指纹优化
+                // 反检测指纹优化 - 一次性定义所有属性
                 Object.defineProperties(navigator, {
-                    webdriver: { get: () => undefined },
+                    webdriver: { get: () => false },  // 只保留一次，改为false更真实
                     language: { get: () => 'zh-CN' },
                     languages: { get: () => ['zh-CN', 'zh', 'en'] },
                     platform: { get: () => 'Win32' },
@@ -246,7 +246,7 @@ class LinuxDoBrowser:
                         ]
                     }
                 });
-
+    
                 // 修改屏幕属性
                 Object.defineProperty(screen, 'width', { get: () => 1920 });
                 Object.defineProperty(screen, 'height', { get: () => 1080 });
@@ -261,17 +261,12 @@ class LinuxDoBrowser:
                         app: {}
                     },
                 });
-
+ 
                 // 覆盖权限相关
                 const originalQuery = Permissions.prototype.query;
                 Permissions.prototype.query = function(parameters) {
                     return Promise.resolve({ state: 'granted' });
                 };
-
-                // 覆盖WebDriver属性
-                Object.defineProperty(navigator, 'webdriver', {
-                    get: () => false,
-                });
 
                 // 随机交互保持活跃
                 setInterval(() => {
@@ -288,8 +283,7 @@ class LinuxDoBrowser:
 
     def apply_evasion_strategy(self):
         """应用验证规避策略"""
-        logger.debug("🛡️ 应用Cloudflare规避策略")
-        
+                
         # 智能延迟系统
         self.smart_delay_system()
         
@@ -1107,3 +1101,4 @@ if __name__ == "__main__":
         logger.warning("⚠️ 未配置OCR_API_KEY，验证码处理将不可用")
     
     main()
+
