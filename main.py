@@ -970,7 +970,7 @@ class LinuxDoBrowser:
                                 logger.debug("微导航链接点击失败，跳过")
                   
                     # 随机点赞（3%概率）
-                    if random.random() < 0.03:  
+                    if random.random() < 0.05:  
                         logger.info("🎲 尝试随机点赞...")
                         self.click_like_if_available()
 
@@ -1255,6 +1255,7 @@ if __name__ == "__main__":
         logger.warning("⚠️ 未配置OCR_API_KEY，验证码处理将不可用")
     
     main()
+
 
 
 
