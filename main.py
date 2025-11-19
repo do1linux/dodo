@@ -289,82 +289,84 @@ class LinuxDoBrowser:
             raise
 
     def enhance_browser_fingerprint(self):
-        """简化但有效的指纹优化"""
+        """修复后的浏览器指纹优化 - 一次性定义避免重定义错误"""
         try:
-            self.page.run_js("""
-                // 核心指纹伪造 - 只保留最有效的
-                Object.defineProperties(navigator, {
-                    webdriver: { get: () => false },
-                    language: { get: () => 'zh-CN' },
-                    languages: { get: () => ['zh-CN', 'zh', 'en'] },
-                    platform: { get: () => 'Win32' },
-                    hardwareConcurrency: { get: () => 4 },
-                    deviceMemory: { get: () => 8 },
-                    maxTouchPoints: { get: () => 0 },  // 桌面设备
-                    cookieEnabled: { get: () => true },
-                    doNotTrack: { get: () => null },
-                    vendor: { get: () => 'Google Inc.' },
-                    productSub: { get: () => '20030107' },
-                    
-                    // 简化插件伪装
-                    plugins: {
-                        get: () => [
-                            { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer' },
-                            { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai' },
-                            { name: 'Native Client', filename: 'internal-nacl-plugin' }
-                        ]
-                    }
-                });
-    
-                // 屏幕属性
-                Object.defineProperty(screen, 'width', { get: () => 1920 });
-                Object.defineProperty(screen, 'height', { get: () => 1080 });
-                Object.defineProperty(screen, 'colorDepth', { get: () => 24 });
+            # 生成随机值（在Python层完成，避免JS重定义）
+            resolutions = [(1920,1080), (1366,768), (2560,1440)]
+            cores = [4, 8, 12, 16]
+            mem = [4, 8, 16]
+            width, height = random.choice(resolutions)
+            core_count = random.choice(cores)
+            mem_size = random.choice(mem)
+        
+            js_code = f"""
+                // 反检测指纹优化 - 一次性定义所有属性（含随机值）
+                Object.defineProperties(navigator, {{
+                    webdriver: {{ get: () => false }},
+                    language: {{ get: () => 'zh-CN' }},
+                    languages: {{ get: () => ['zh-CN', 'zh', 'en'] }},
+                    platform: {{ get: () => 'Win32' }},
+                    hardwareConcurrency: {{ get: () => {core_count} }},
+                    deviceMemory: {{ get: () => {mem_size} }},
+                    maxTouchPoints: {{ get: () => 0 }},
+                    cookieEnabled: {{ get: () => true }},
+                    doNotTrack: {{ get: () => null }},
+                    vendor: {{ get: () => 'Google Inc.' }},
+                    productSub: {{ get: () => '20030107' }},
                 
-                // 移除Chrome自动化特征
-                Object.defineProperty(window, 'chrome', {
-                    value: {
-                        runtime: {},
-                        loadTimes: () => {},
-                        csi: () => {},
-                        app: {}
-                    }
-                });
- 
-                // 权限API覆盖
-                const originalQuery = Permissions.prototype.query;
-                Permissions.prototype.query = function(parameters) {
-                    return Promise.resolve({ state: 'granted' });
-                };
+                    plugins: {{
+                        get: () => [
+                            {{ name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer' }},
+                            {{ name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai' }},
+                            {{ name: 'Native Client', filename: 'internal-nacl-plugin' }}
+                        ]
+                    }}
+                }});
 
-                // 随机鼠标移动保持活跃
-                setInterval(() => {
-                    document.dispatchEvent(new MouseEvent('mousemove', {
+                // 修改屏幕属性 - 只定义一次
+                Object.defineProperty(screen, 'width', {{get: () => {width}}});
+                Object.defineProperty(screen, 'height', {{get: () => {height}}});
+                Object.defineProperty(screen, 'colorDepth', {{get: () => 24}});
+            
+                // 移除自动化特征
+                Object.defineProperty(window, 'chrome', {{
+                    value: {{
+                        runtime: {{}},
+                        loadTimes: () => {{}},
+                        csi: () => {{}},
+                        app: {{}}
+                    }},
+                }});
+
+                // 覆盖权限相关
+                const originalQuery = Permissions.prototype.query;
+                Permissions.prototype.query = function(parameters) {{
+                    return Promise.resolve({{ state: 'granted' }});
+                }};
+
+                // Canvas/WebGL 指纹噪声
+                const getContext = HTMLCanvasElement.prototype.getContext;
+                HTMLCanvasElement.prototype.getContext = function(type) {{
+                    const ctx = getContext.apply(this, arguments);
+                    if (type === '2d') {{
+                        const origFill = ctx.fillText;
+                        ctx.fillText = function(text, x, y) {{
+                            return origFill.call(this, text, x + Math.random() * 0.5, y);
+                        }};
+                    }}
+                    return ctx;
+                }};
+
+                // 随机交互保持活跃
+                setInterval(() => {{
+                    document.dispatchEvent(new MouseEvent('mousemove', {{
                         bubbles: true,
                         clientX: Math.random() * window.innerWidth,
                         clientY: Math.random() * window.innerHeight
-                    }));
-                }, 30000 + Math.random() * 20000);
-            """)
-            
-            # 动态硬件参数
-            self.randomize_fingerprint()
-            
-            # Canvas噪声
-            self.page.run_js("""
-                const getContext = HTMLCanvasElement.prototype.getContext;
-                HTMLCanvasElement.prototype.getContext = function(type) {
-                    const ctx = getContext.apply(this, arguments);
-                    if (type === '2d') {
-                        const origFill = ctx.fillText;
-                        ctx.fillText = function(text, x, y) {
-                            return origFill.call(this, text, x + Math.random() * 0.5, y);
-                        };
-                    }
-                    return ctx;
-                };
-            """)
-            
+                    }}));
+                }}, 30000 + Math.random() * 20000);
+            """
+            self.page.run_js(js_code)
             logger.debug("✅ 浏览器指纹优化已应用")
         except Exception as e:
             logger.debug(f"指纹优化异常: {str(e)}")
@@ -1253,4 +1255,5 @@ if __name__ == "__main__":
         logger.warning("⚠️ 未配置OCR_API_KEY，验证码处理将不可用")
     
     main()
+
 
