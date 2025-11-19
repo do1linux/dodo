@@ -938,7 +938,7 @@ class LinuxDoBrowser:
             if not topic_urls:
                 return 0
             
-            browse_count = min(random.randint(5, 18), len(topic_urls))
+            browse_count = min(random.randint(5, 8), len(topic_urls))
             selected_urls = random.sample(topic_urls, browse_count)
             success_count = 0
             
@@ -1255,6 +1255,7 @@ if __name__ == "__main__":
         logger.warning("⚠️ 未配置OCR_API_KEY，验证码处理将不可用")
     
     main()
+
 
 
 
