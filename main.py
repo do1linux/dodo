@@ -1107,7 +1107,7 @@ class LinuxDoBrowser:
                 print(f"📊 {self.site_name.upper()} 连接信息")
                 print("="*60)
                 print(tabulate(info, headers=["项目", "当前", "要求"], tablefmt="pretty"))
-                print("="*60 + "\n")
+                print("="*60 + "\n", flush=True)
                 
                 passed = sum(1 for item in info if any(indicator in str(item[1]) for indicator in ['✅', '✔', '✓', '≥', '%']))
                 total = len(info)
@@ -1142,15 +1142,15 @@ class LinuxDoBrowser:
             if not self.ensure_logged_in():
                 logger.error(f"❌ {self.site_name} 登录失败")
                 return False
-            
-            # 2. 单标签页主题浏览
-            browse_count = self.browse_topics_single_tab()
-            
-            # 3. 单标签页连接信息
+                                    
+            # 2. 单标签页连接信息
             connect_success = self.get_connect_info_single_tab()
             if not connect_success and self.site_name != 'idcflare':
                 logger.warning(f"⚠️ {self.site_name} 连接信息获取失败")
-            
+
+			# 3. 单标签页主题浏览
+            browse_count = self.browse_topics_single_tab()
+			
             # 4. 保存缓存
             self.save_caches()
             
@@ -1255,5 +1255,6 @@ if __name__ == "__main__":
         logger.warning("⚠️ 未配置OCR_API_KEY，验证码处理将不可用")
     
     main()
+
 
 
