@@ -1,13 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-集成turnstilePatch扩展和反检测功能
-保持双重验证机制（私有主题访问+用户名确认）
-使用浏览器上下文保持更持久的会话,
-主题浏览: 在主标签页打开最新页面，并保持这个标签页不动，循环中：新开标签页打开主题URL -> 在新标签页中浏览 -> 关闭新标签页,使用了href模式获取主题列表
-连接信息: 新标签页,使用 tabulate 库美化表格显示,使用选择器 'tag:table' 找到表格，,在idcflare上失败不影响                                
-登录成功时保存缓存，登录失败时清除对应站点缓存，避免盲目清除所有缓存                                         
-深度滚动浏览，交互事件触发，模拟真实的阅读行为，确保网站正确收集浏览记录    
+优化版本：减少新标签页使用 + 会话保持活跃
+双重验证机制 + 单标签浏览策略 + 会话活跃保持
 """
 
 import os
@@ -65,6 +60,7 @@ BROWSE_ENABLED = os.environ.get("BROWSE_ENABLED", "true").strip().lower() not in
 HEADLESS = os.environ.get("HEADLESS", "true").strip().lower() not in ["false", "0", "off"]
 FORCE_LOGIN_EVERY_TIME = os.environ.get("FORCE_LOGIN", "false").strip().lower() in ["true", "1", "on"]
 TURNSTILE_PATCH_ENABLED = os.environ.get("TURNSTILE_PATCH_ENABLED", "true").strip().lower() not in ["false", "0", "off"]
+SINGLE_TAB_BROWSE = os.environ.get("SINGLE_TAB_BROWSE", "true").strip().lower() in ["true", "1", "on"]  # 单标签浏览
 OCR_API_KEY = os.getenv("OCR_API_KEY")
 
 # GitHub Actions 特定优化
@@ -149,6 +145,7 @@ class LinuxDoBrowser:
         self.password = credentials['password']
         self.page = None
         self.cache_saved = False
+        self.session_active = False
         self.initialize_browser()
 
     def initialize_browser(self):
@@ -266,78 +263,99 @@ class LinuxDoBrowser:
                 });
                 
                 // 简化的随机交互 - 减少GitHub Actions负载
+                let interactionCount = 0;
+                const maxInteractions = 10; // 限制交互次数
+                
                 document.addEventListener('DOMContentLoaded', function() {
                     setInterval(() => {
-                        document.dispatchEvent(new MouseEvent('mousemove', {
-                            bubbles: true,
-                            clientX: Math.random() * window.innerWidth,
-                            clientY: Math.random() * window.innerHeight
-                        }));
-                    }, 15000 + Math.random() * 15000); // 减少交互频率
+                        if (interactionCount < maxInteractions) {
+                            document.dispatchEvent(new MouseEvent('mousemove', {
+                                bubbles: true,
+                                clientX: Math.random() * window.innerWidth,
+                                clientY: Math.random() * window.innerHeight
+                            }));
+                            interactionCount++;
+                        }
+                    }, 20000 + Math.random() * 20000); // 增加间隔时间
                 });
             """)
             logger.debug("✅ GitHub Actions指纹优化已应用")
         except Exception as e:
             logger.debug(f"指纹优化异常: {str(e)}")
 
-    def github_actions_timing(self):
-        """GitHub Actions 环境时间优化"""
-        if GITHUB_ACTIONS:
-            # GitHub Actions中减少等待时间，提高效率
-            return {
-                'page_load': random.uniform(3, 6),
-                'between_actions': random.uniform(2, 5),
-                'scroll_pause': random.uniform(2, 4),
-                'topic_switch': random.uniform(8, 15)
-            }
-        else:
-            # 本地环境保持原有时间
-            return {
-                'page_load': random.uniform(5, 10),
-                'between_actions': random.uniform(3, 8),
-                'scroll_pause': random.uniform(4, 9),
-                'topic_switch': random.uniform(10, 25)
-            }
+    def keep_session_alive(self, wait_time):
+        """在等待期间保持主会话活跃"""
+        logger.info(f"🔋 保持会话活跃 ({wait_time:.1f}秒)")
+        
+        intervals = max(3, int(wait_time / 8))  # 减少间隔次数
+        interval_duration = wait_time / intervals
+        
+        for i in range(intervals):
+            try:
+                # 轻微滚动保持活跃
+                self.page.run_js("window.scrollBy({top: 30, behavior: 'smooth'});")
+                time.sleep(interval_duration * 0.3)
+                
+                # 随机触发轻微交互
+                if random.random() < 0.15:  # 降低交互频率
+                    self.page.run_js("""
+                        document.dispatchEvent(new MouseEvent('mousemove', {
+                            bubbles: true,
+                            clientX: Math.random() * window.innerWidth * 0.1,
+                            clientY: Math.random() * window.innerHeight * 0.1
+                        }));
+                    """)
+                    time.sleep(interval_duration * 0.2)
+                
+                # 页面标题检查，确保会话正常
+                current_title = self.page.title
+                if "Just a moment" in current_title or "Checking" in current_title:
+                    logger.warning("⚠️ 检测到验证页面，尝试刷新")
+                    self.page.refresh()
+                    time.sleep(5)
+                    
+                time.sleep(interval_duration * 0.5)
+                
+            except Exception as e:
+                logger.debug(f"会话保持操作异常: {str(e)}")
+                time.sleep(interval_duration)
+        
+        logger.info("✅ 会话保持完成")
 
-    def handle_cloudflare(self, timeout=25):
-        """GitHub Actions 优化的Cloudflare处理"""
+    def handle_cloudflare_quick_check(self, timeout=10):
+        """快速Cloudflare检查（单标签浏览专用）"""
         start_time = time.time()
-        logger.info("🛡️ 处理Cloudflare验证")
         
         while time.time() - start_time < timeout:
             try:
                 page_title = self.page.title
                 
-                # 简化的验证逻辑，提高GitHub Actions效率
                 if page_title and page_title != "请稍候…" and "Checking" not in page_title and "Just a moment" not in page_title:
                     if self.is_captcha_page():
                         logger.info("🛡️ 检测到验证码挑战")
                         if self.handle_captcha_challenge():
-                            time.sleep(3)
+                            time.sleep(2)
                             continue
                         else:
-                            logger.error("❌ 验证码处理失败")
                             return False
                     else:
-                        logger.success("✅ Cloudflare验证通过")
                         return True
                 
                 if self.is_captcha_page():
                     logger.info("🛡️ 检测到验证码挑战")
                     if self.handle_captcha_challenge():
-                        time.sleep(3)
+                        time.sleep(2)
                         continue
                     else:
                         return False
                 
-                wait_time = random.uniform(1, 3)  # 减少等待时间
-                time.sleep(wait_time)
+                time.sleep(1)
                     
             except Exception as e:
-                logger.debug(f"Cloudflare检查异常: {str(e)}")
+                logger.debug(f"快速Cloudflare检查异常: {str(e)}")
                 time.sleep(1)
         
-        logger.warning("⚠️ Cloudflare处理超时，继续执行")
+        logger.warning("⚠️ 快速Cloudflare检查超时，继续执行")
         return True
 
     def is_captcha_page(self):
@@ -404,7 +422,7 @@ class LinuxDoBrowser:
                     "OCREngine": "2",
                 }
 
-                response = requests.post(url, data=payload, timeout=20)  # 减少超时
+                response = requests.post(url, data=payload, timeout=20)
                 result = response.json()
 
                 if result.get("IsErroredOnProcessing"):
@@ -421,7 +439,7 @@ class LinuxDoBrowser:
                 logger.warning(f"⚠️ OCR尝试{attempt+1}失败: {str(e)}")
 
             if attempt < retries - 1:
-                time.sleep(3)  # 减少重试等待
+                time.sleep(3)
 
         return None
 
@@ -473,7 +491,7 @@ class LinuxDoBrowser:
             self.page.refresh()
             time.sleep(2)
             
-            self.handle_cloudflare()
+            self.handle_cloudflare_quick_check()
             
             if self.verify_login_status():
                 logger.success("✅ 缓存登录成功")
@@ -494,7 +512,7 @@ class LinuxDoBrowser:
             self.page.get(private_url)
             time.sleep(2)
             
-            self.handle_cloudflare()
+            self.handle_cloudflare_quick_check()
             time.sleep(1)
             
             page_content = self.page.html
@@ -528,7 +546,7 @@ class LinuxDoBrowser:
         self.page.get(self.site_config['login_url'])
         time.sleep(2)
         
-        self.handle_cloudflare()
+        self.handle_cloudflare_quick_check()
         time.sleep(1)
         
         try:
@@ -561,7 +579,7 @@ class LinuxDoBrowser:
             login_button.click()
             time.sleep(5)
             
-            self.handle_cloudflare()
+            self.handle_cloudflare_quick_check()
             time.sleep(2)
             
             if self.verify_login_status():
@@ -618,8 +636,8 @@ class LinuxDoBrowser:
             logger.error(f"❌ 查找主题失败: {str(e)}")
             return []
 
-    def browse_topics_github_optimized(self):
-        """GitHub Actions 优化版主题浏览"""
+    def browse_topics_single_tab(self):
+        """单标签页浏览策略（减少验证）"""
         if not BROWSE_ENABLED:
             logger.info("⏭️ 浏览功能已禁用")
             return 0
@@ -629,13 +647,13 @@ class LinuxDoBrowser:
             return 0
         
         try:
-            logger.info(f"🌐 开始浏览 {self.site_name} 主题...")
+            logger.info(f"🌐 开始单标签页浏览 {self.site_name} 主题...")
             
-            # 主标签页访问最新页面
+            # 访问最新页面
             self.page.get(self.site_config['latest_url'])
             time.sleep(3)
             
-            self.handle_cloudflare()
+            self.handle_cloudflare_quick_check()
             time.sleep(2)
             
             topic_urls = self.find_topic_elements()
@@ -656,37 +674,41 @@ class LinuxDoBrowser:
                 try:
                     logger.info(f"📖 浏览主题 {i+1}/{browse_count}")
                     
-                    # 新标签页策略
-                    topic_tab = self.page.new_tab()
-                    topic_tab.get(topic_url)
+                    # 单标签页直接访问主题
+                    self.page.get(topic_url)
                     time.sleep(3)
                     
-                    # 处理新标签页的Cloudflare
-                    original_page = self.page
-                    self.page = topic_tab
-                    self.handle_cloudflare()
-                    time.sleep(2)
+                    # 快速Cloudflare检查
+                    if not self.handle_cloudflare_quick_check():
+                        logger.warning("⚠️ Cloudflare检查失败，跳过该主题")
+                        continue
                     
                     # 优化版深度滚动
                     self.github_optimized_scroll()
                     
-                    # 恢复主页面并关闭标签页
-                    self.page = original_page
-                    topic_tab.close()
-                    
                     success_count += 1
                     logger.info(f"✅ 成功浏览主题 {i+1}")
                     
-                    # 主题间等待（GitHub Actions优化）
+                    # 主题间等待，返回最新页面并保持会话活跃
                     if i < browse_count - 1:
-                        wait_time = random.uniform(15, 25)
-                        logger.info(f"⏳ 等待 {wait_time:.1f} 秒...")
-                        time.sleep(wait_time)
+                        wait_time = random.uniform(20, 35)  # 增加等待时间
+                        logger.info(f"⏳ 等待 {wait_time:.1f} 秒并保持会话...")
+                        
+                        # 返回最新页面
+                        self.page.get(self.site_config['latest_url'])
+                        time.sleep(2)
+                        
+                        # 在等待期间保持会话活跃
+                        self.keep_session_alive(wait_time - 2)
                             
                 except Exception as e:
                     logger.error(f"❌ 浏览主题失败: {str(e)}")
-                    if 'original_page' in locals():
-                        self.page = original_page
+                    # 尝试恢复会话
+                    try:
+                        self.page.get(self.site_config['latest_url'])
+                        time.sleep(2)
+                    except:
+                        pass
                     continue
             
             logger.success(f"✅ 浏览完成: {success_count}/{browse_count} 个主题")
@@ -699,7 +721,7 @@ class LinuxDoBrowser:
     def github_optimized_scroll(self):
         """GitHub Actions 优化版滚动"""
         try:
-            scroll_count = random.randint(4, 6)  # 减少滚动次数
+            scroll_count = random.randint(4, 6)
             logger.debug(f"📖 优化滚动: {scroll_count} 次")
             
             for i in range(scroll_count):
@@ -712,10 +734,10 @@ class LinuxDoBrowser:
                     }});
                 """)
                 
-                read_time = random.uniform(2, 4)  # 减少阅读时间
+                read_time = random.uniform(2, 4)
                 time.sleep(read_time)
                 
-                if random.random() < 0.3:  # 减少交互频率
+                if random.random() < 0.3:
                     self.trigger_interaction_events()
             
             self.trigger_complete_interaction_sequence()
@@ -750,11 +772,12 @@ class LinuxDoBrowser:
         """连接信息获取"""
         logger.info("🔗 获取连接信息...")
         try:
+            # 使用新标签页获取连接信息（避免干扰主会话）
             connect_tab = self.page.new_tab()
             connect_tab.get(self.site_config['connect_url'])
             time.sleep(2)
             
-            self.handle_cloudflare()
+            self.handle_cloudflare_quick_check()
             time.sleep(1)
             
             table = connect_tab.ele("tag:table")
@@ -805,8 +828,8 @@ class LinuxDoBrowser:
                 logger.error(f"❌ {self.site_name} 登录失败")
                 return False
             
-            # 2. 主题浏览
-            browse_count = self.browse_topics_github_optimized()
+            # 2. 主题浏览（使用单标签策略）
+            browse_count = self.browse_topics_single_tab()
             
             # 3. 连接信息
             self.print_connect_info()
@@ -830,7 +853,7 @@ class LinuxDoBrowser:
 
 # ======================== 主函数 ========================
 def main():
-    logger.info("🚀 Linux.Do GitHub Actions 优化版启动")
+    logger.info("🚀 Linux.Do 单标签浏览优化版启动")
     logger.info("=" * 80)
     
     if GITHUB_ACTIONS:
@@ -841,6 +864,9 @@ def main():
         logger.info(f"✅ turnstilePatch扩展已配置")
     else:
         logger.warning("⚠️ turnstilePatch扩展未加载")
+    
+    if SINGLE_TAB_BROWSE:
+        logger.info("🎯 启用单标签页浏览策略（减少Cloudflare验证）")
     
     logger.remove()
     logger.add(sys.stdout, format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{message}</cyan>", level="INFO")
@@ -888,15 +914,15 @@ def main():
             logger.error(f"❌ {site_name} 执行异常: {str(e)}")
             failed_sites.append(site_name)
 
-        # 站点间等待（GitHub Actions优化）
+        # 站点间等待（使用会话保持）
         if site_config != target_sites[-1]:
-            wait_time = random.uniform(8, 15)
-            logger.info(f"⏳ 等待 {wait_time:.1f} 秒...")
+            wait_time = random.uniform(10, 20)
+            logger.info(f"⏳ 站点间等待 {wait_time:.1f} 秒...")
             time.sleep(wait_time)
 
     # 总结
     logger.info("=" * 80)
-    logger.info("📊 GitHub Actions 执行总结:")
+    logger.info("📊 单标签浏览执行总结:")
     logger.info(f"✅ 成功站点: {', '.join(success_sites) if success_sites else '无'}")
     logger.info(f"❌ 失败站点: {', '.join(failed_sites) if failed_sites else '无'}")
     logger.info("=" * 80)
