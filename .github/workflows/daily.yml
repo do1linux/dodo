@@ -13,8 +13,7 @@ on:
           - linux_do
           - idcflare
   schedule:
-    - cron: '0 * * * *'  # 每小时运行一次，增加频率以收集更多浏览记录
-
+    - cron: '0 0-15 * * *' 
 env:
   PYTHON_VERSION: '3.11'
   CACHE_PRIMARY_KEY: ${{ github.ref }}-linuxdo-smart-cache-v7
