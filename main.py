@@ -29,23 +29,23 @@ SITE_CREDENTIALS = {
 SITES = [
     {
         'name': 'linux_do',
-        'base_url': 'https://linux.do',
-        'login_url': 'https://linux.do/login',
-        'private_topic_url': 'https://linux.do/t/topic/2362',
-        'latest_url': 'https://linux.do/latest',
-        'connect_url': 'https://connect.linux.do',
-        'user_url': 'https://linux.do/u',
+        'base_url': 'https://linux.do ',
+        'login_url': 'https://linux.do/login ',
+        'private_topic_url': 'https://linux.do/t/topic/2362 ',
+        'latest_url': 'https://linux.do/latest ',
+        'connect_url': 'https://connect.linux.do ',
+        'user_url': 'https://linux.do/u ',
         'cf_cookies_file': "cf_cookies_linux_do.json",
         'session_file': "session_data_linux_do.json"
     },
     {
         'name': 'idcflare',
-        'base_url': 'https://idcflare.com',
-        'login_url': 'https://idcflare.com/login',
-        'private_topic_url': 'https://idcflare.com/t/topic/24',
-        'latest_url': 'https://idcflare.com/latest',
-        'connect_url': 'https://connect.idcflare.com',
-        'user_url': 'https://idcflare.com/u',
+        'base_url': 'https://idcflare.com ',
+        'login_url': 'https://idcflare.com/login ',
+        'private_topic_url': 'https://idcflare.com/t/topic/24 ',
+        'latest_url': 'https://idcflare.com/latest ',
+        'connect_url': 'https://connect.idcflare.com ',
+        'user_url': 'https://idcflare.com/u ',
         'cf_cookies_file': "cf_cookies_idcflare.json",
         'session_file': "session_data_idcflare.json"
     }
@@ -267,9 +267,50 @@ class LinuxDoBrowser:
                     }));
                 }, 30000 + Math.random() * 20000);
             """)
+            
+            # 调用随机指纹方法
+            self.randomize_fingerprint()
+            
+            # Canvas/WebGL 指纹噪声
+            self.page.run_js("""
+                const getContext = HTMLCanvasElement.prototype.getContext;
+                HTMLCanvasElement.prototype.getContext = function(type) {
+                    const ctx = getContext.apply(this, arguments);
+                    if (type === '2d') {
+                        // 添加轻微噪声
+                        const origFill = ctx.fillText;
+                        ctx.fillText = function(text, x, y) {
+                            return origFill.call(this, text, x + Math.random() * 0.5, y);
+                        };
+                    }
+                    return ctx;
+                };
+            """)
+            
             logger.debug("✅ 浏览器指纹优化已应用")
         except Exception as e:
             logger.debug(f"指纹优化异常: {str(e)}")
+
+    def randomize_fingerprint(self):
+        """指纹动态化（防静态检测）"""
+        resolutions = [(1920,1080), (1366,768), (2560,1440)]
+        cores = [4, 8, 12, 16]
+        mem = [4, 8, 16]
+        
+        width, height = random.choice(resolutions)
+        self.page.run_js(f"""
+            Object.defineProperty(screen, 'width', {{get: () => {width}}});
+            Object.defineProperty(screen, 'height', {{get: () => {height}}});
+            Object.defineProperty(navigator, 'hardwareConcurrency', {{get: () => {random.choice(cores)}}});
+            Object.defineProperty(navigator, 'deviceMemory', {{get: () => {random.choice(mem)}}});
+        """)
+
+    def random_sleep(self):
+        """增加随机休眠"""
+        if random.random() < 0.3:  # 30%概率增加长暂停
+            sleep_time = random.uniform(60, 180)  # 1-3分钟
+            time.sleep(sleep_time)
+            logger.info("🛌 随机休眠模拟")
 
     def apply_evasion_strategy(self):
         """应用验证规避策略"""
@@ -553,7 +594,7 @@ class LinuxDoBrowser:
         """OCR API调用"""
         for attempt in range(retries):
             try:
-                url = "https://api.ocr.space/parse/image"
+                url = "https://api.ocr.space/parse/image "
                 payload = {"apikey": api_key, "base64Image": base64_image, "language": "eng", "OCREngine": "2"}
                 response = requests.post(url, data=payload, timeout=20)
                 result = response.json()
@@ -862,6 +903,9 @@ class LinuxDoBrowser:
                             time.sleep(chunk)
                             remaining_wait -= chunk
                             
+                        # 添加随机休眠
+                        self.random_sleep()
+                            
                 except Exception as e:
                     logger.error(f"❌ 浏览主题失败: {str(e)}")
                     continue
@@ -1145,4 +1189,3 @@ if __name__ == "__main__":
         logger.warning("⚠️ 未配置OCR_API_KEY，验证码处理将不可用")
     
     main()
-
