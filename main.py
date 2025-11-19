@@ -836,14 +836,14 @@ class LinuxDoBrowser:
                                 self.page.back()
                                 time.sleep(2)
                                 # logger.info("✅ 微导航完成")
-                        except:
+                         except:
                                 # logger.debug("微导航链接点击失败，跳过")
                   
                     # ======== 添加随机点赞（3%概率） ========
                     if random.random() < 0.03:  
                         logger.info("🎲 尝试随机点赞...")
                         self.click_like_if_available()
-# ========================================
+
                     success_count += 1
                     logger.info(f"✅ 成功浏览主题 {i+1}")
                     
@@ -1155,6 +1155,7 @@ if __name__ == "__main__":
         logger.warning("⚠️ 未配置OCR_API_KEY，验证码处理将不可用")
     
     main()
+
 
 
 
