@@ -1145,17 +1145,3 @@ if __name__ == "__main__":
         logger.warning("⚠️ 未配置OCR_API_KEY，验证码处理将不可用")
     
     main()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
