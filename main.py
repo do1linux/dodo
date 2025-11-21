@@ -8,6 +8,7 @@ Linux.do 自动化浏览工具 - 完整集成版 v2.1
 - 增强登录验证机制，支持多种检测方式
 - 增加重试逻辑，提高稳定性
 - 优化等待时间，适应慢速网络
+- 修复 run_complete_process 方法中缺失的 browse_topics_hybrid 调用
 """
 
 import os
@@ -961,7 +962,267 @@ class LinuxDoBrowser:
             logger.error(f"❌ 主题浏览失败: {str(e)}")
             return 0
 
-    # ... [其他方法保持不变] ...
+    def apply_evasion_strategy_to_page(self, page):
+        """为指定页面应用规避策略"""
+        try:
+            # 智能延迟
+            base_delay = random.uniform(2, 5)
+            time.sleep(base_delay)
+            
+            # 多样化滚动
+            self.varied_scrolling_behavior_in_page(page)
+            
+            # 人类行为模拟
+            self.human_behavior_simulation_in_page(page)
+            
+        except Exception as e:
+            logger.debug(f"规避策略应用异常: {e}")
+
+    def varied_scrolling_behavior_in_page(self, page):
+        """在指定页面执行多样化滚动"""
+        scroll_patterns = [
+            lambda p: p.run_js("window.scrollTo({top: document.body.scrollHeight, behavior: 'smooth'});"),
+            lambda p: p.run_js("""
+                let currentPosition = 0;
+                const scrollHeight = document.body.scrollHeight;
+                const scrollStep = scrollHeight / 5;
+                
+                function scrollStepByStep() {
+                    if (currentPosition < scrollHeight) {
+                        currentPosition += scrollStep;
+                        window.scrollTo(0, currentPosition);
+                        setTimeout(scrollStepByStep, 800 + Math.random() * 500);
+                    }
+                }
+                scrollStepByStep();
+            """),
+        ]
+        
+        chosen_pattern = random.choice(scroll_patterns)
+        chosen_pattern(page)
+        time.sleep(random.uniform(3, 6))
+
+    def deep_scroll_browsing_v2(self, page):
+        """优化的深度滚动浏览 - 更贴近真实用户"""
+        # 随机决定滚动次数（3-7次）
+        scroll_count = random.randint(3, 7)
+        logger.info(f"📜 计划滚动 {scroll_count} 次")
+        
+        for i in range(scroll_count):
+            # 随机滚动距离（300-800px）
+            scroll_distance = random.randint(300, 800)
+            page.run_js(f"window.scrollBy(0, {scroll_distance});")
+            logger.info(f"⬇️ 第{i+1}次滚动: {scroll_distance}px")
+            
+            # 随机等待（2-5秒）
+            wait_time = random.uniform(2, 5)
+            logger.info(f"⏳ 等待 {wait_time:.1f} 秒...")
+            time.sleep(wait_time)
+            
+            # 检查是否到达底部
+            at_bottom = page.run_js(
+                "window.scrollY + window.innerHeight >= document.body.scrollHeight - 100"
+            )
+            if at_bottom:
+                logger.success("✅ 已到达页面底部")
+                
+                # 在底部停留5-8秒（确保已读计数）
+                bottom_wait = random.uniform(5, 8)
+                logger.info(f"⏳ 在底部停留 {bottom_wait:.1f} 秒...")
+                time.sleep(bottom_wait)
+                break
+            
+            # 偶尔触发微交互
+            if random.random() < 0.3:
+                self.micro_interactions_in_page(page)
+
+    def click_like_if_available_in_page(self, page):
+        """在指定页面点赞"""
+        try:
+            like_button = page.ele('.discourse-reactions-reaction-button:not(.has-reacted)')
+            if like_button and like_button.states.is_visible:
+                logger.info("👍 找到未点赞的帖子...")
+                like_button.scroll.to_see()
+                time.sleep(0.5)
+                like_button.click()
+                time.sleep(1)
+                logger.success("✅ 点赞成功")
+                return True
+        except Exception as e:
+            logger.debug(f"点赞失败: {e}")
+        return False
+
+    def micronavigation_in_page(self, page):
+        """在指定页面执行微导航"""
+        try:
+            internal_links = page.eles('a[href*="/t/"]')
+            if internal_links:
+                random_link = random.choice(internal_links)
+                link_url = random_link.attr('href')
+                if link_url and '/t/' in link_url:
+                    logger.info(f"🔗 微导航到: {link_url}")
+                    random_link.click()
+                    time.sleep(random.uniform(4, 8))
+                    page.back()
+                    time.sleep(2)
+                    logger.info("✅ 微导航完成")
+        except Exception as e:
+            logger.debug(f"微导航失败: {e}")
+
+    def human_behavior_simulation_in_page(self, page):
+        """在指定页面模拟人类行为"""
+        try:
+            # 随机鼠标移动
+            if random.random() < 0.5:
+                page.run_js("""
+                    document.dispatchEvent(new MouseEvent('mousemove', {
+                        bubbles: true,
+                        clientX: Math.random() * window.innerWidth,
+                        clientY: Math.random() * window.innerHeight
+                    }));
+                """)
+            
+            # 随机点击空白处
+            if random.random() < 0.3:
+                page.run_js("""
+                    const elements = document.querySelectorAll('p, div, span');
+                    if (elements.length > 0) {
+                        elements[Math.floor(Math.random() * elements.length)].click();
+                    }
+                """)
+            
+            time.sleep(random.uniform(0.5, 1.5))
+        except:
+            pass
+
+    def micro_interactions_in_page(self, page):
+        """在指定页面的微交互"""
+        try:
+            page.run_js("""
+                document.dispatchEvent(new MouseEvent('mousemove', {
+                    bubbles: true,
+                    clientX: Math.random() * window.innerWidth,
+                    clientY: Math.random() * window.innerHeight
+                }));
+                
+                const elements = document.querySelectorAll('p, div, span');
+                if (elements.length > 0) {
+                    elements[Math.floor(Math.random() * elements.length)].click();
+                }
+            """)
+            time.sleep(random.uniform(0.5, 1.5))
+        except:
+            pass
+
+    def keep_session_active(self):
+        """保持会话活跃"""
+        try:
+            self.page.run_js("window.scrollBy(0, 10);")
+            if random.random() < 0.3:
+                self.micro_interactions()
+        except:
+            pass
+
+    def get_connect_info_single_tab(self):
+        """单标签页获取连接信息"""
+        logger.info("🔗 单标签页获取连接信息...")
+        
+        try:
+            current_url = self.page.url
+            
+            self.page.get(self.site_config['connect_url'])
+            time.sleep(3)
+            
+            self.apply_evasion_strategy()
+            
+            table = self.page.ele("tag:table")
+            
+            if not table:
+                logger.warning("⚠️ 未找到连接信息表格")
+                if self.site_name == 'idcflare':
+                    logger.info("ℹ️ idcflare连接信息获取失败，但不影响继续执行")
+                self.page.get(current_url)
+                time.sleep(2)
+                return True
+            
+            rows = table.eles("tag:tr")
+            info = []
+            
+            for row in rows:
+                cells = row.eles("tag:td")
+                if len(cells) >= 3:
+                    project = cells[0].text.strip()
+                    current = cells[1].text.strip()
+                    requirement = cells[2].text.strip()
+                    if project and current and requirement:
+                        info.append([project, current, requirement])
+            
+            if info:
+                print("\n" + "="*60)
+                print(f"📊 {self.site_name.upper()} 连接信息")
+                print("="*60)
+                print(tabulate(info, headers=["项目", "当前", "要求"], tablefmt="pretty"))
+                print("="*60 + "\n", flush=True)
+                
+                passed = sum(1 for item in info if any(indicator in str(item[1]) for indicator in ['✅', '✔', '✓', '≥', '%']))
+                total = len(info)
+                logger.success(f"📈 统计: {passed}/{total} 项达标")
+            else:
+                logger.warning("⚠️ 未找到连接信息数据")
+            
+            self.page.get(current_url)
+            time.sleep(2)
+            
+            logger.info("✅ 连接信息获取完成")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ 获取连接信息失败: {str(e)}")
+            if self.site_name == 'idcflare':
+                logger.info("ℹ️ idcflare连接信息异常，但不影响继续执行")
+                return True
+            try:
+                self.page.get(self.site_config['latest_url'])
+                time.sleep(2)
+            except:
+                pass
+            return False
+
+    def run_complete_process(self):
+        """执行完整流程"""
+        try:
+            logger.info(f"🚀 开始完整处理 {self.site_name}")
+            
+            # 1. 确保登录
+            if not self.ensure_logged_in():
+                logger.error(f"❌ {self.site_name} 登录失败")
+                return False
+                                    
+            # 2. 单标签页连接信息
+            connect_success = self.get_connect_info_single_tab()
+            if not connect_success and self.site_name != 'idcflare':
+                logger.warning(f"⚠️ {self.site_name} 连接信息获取失败")
+
+            # 3. 混合架构主题浏览（关键修复：添加这行代码）
+            browse_count = self.browse_topics_hybrid()
+            
+            # 4. 保存缓存
+            self.save_caches()
+            
+            logger.success(f"✅ {self.site_name} 处理完成 - 浏览 {browse_count} 个主题")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ {self.site_name} 执行异常: {str(e)}")
+            return False
+            
+        finally:
+            self.browsing_active = False
+            try:
+                if self.browser:
+                    self.browser.quit()
+            except:
+                pass
 
 # ======================== 主函数 ========================
 def main():
