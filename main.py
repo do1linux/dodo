@@ -1,6 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+"""
+Linux.do 自动化浏览工具 - 完整集成版 v2.1
+========================================
+修复日志:
+- 增强登录验证机制，支持多种检测方式
+- 增加重试逻辑，提高稳定性
+- 优化等待时间，适应慢速网络
+"""
+
 import os
 import random
 import time
@@ -479,32 +488,29 @@ class LinuxDoBrowser:
         except Exception as e:
             logger.warning(f"规避操作失败: {e}")
 
-    def handle_cloudflare_check(self, timeout=15):
+    def handle_cloudflare_check(self, timeout=20):  # 增加超时时间
         """处理Cloudflare检查"""
         start_time = time.time()
+        check_count = 0
         
         while time.time() - start_time < timeout:
             try:
                 page_title = self.page.title
+                check_count += 1
                 
+                logger.debug(f"Cloudflare检查 {check_count}: {page_title}")
+                
+                # 如果标题正常且不是检查页面
                 if page_title and "Checking" not in page_title and "Just a moment" not in page_title:
-                    if self.is_captcha_page():
-                        logger.info("🛡️ 检测到验证码挑战")
-                        if self.handle_captcha_challenge():
-                            time.sleep(2)
-                            continue
-                        else:
-                            return False
-                    else:
+                    # 额外检查是否有内容加载
+                    body_length = len(self.page.html)
+                    if body_length > 1000:  # 确保页面有足够内容
+                        logger.info(f"✅ Cloudflare检查通过，页面长度: {body_length}")
                         return True
                 
-                if self.is_captcha_page():
-                    logger.info("🛡️ 检测到验证码挑战")
-                    if self.handle_captcha_challenge():
-                        time.sleep(2)
-                        continue
-                    else:
-                        return False
+                # 如果是检查页面，继续等待
+                if page_title and ("Checking" in page_title or "Just a moment" in page_title):
+                    logger.info(f"⏳ Cloudflare检查中... ({check_count})")
                 
                 time.sleep(1)
                     
@@ -512,30 +518,43 @@ class LinuxDoBrowser:
                 logger.debug(f"Cloudflare检查异常: {str(e)}")
                 time.sleep(1)
         
-        logger.warning("⚠️ Cloudflare检查超时，继续执行")
+        logger.warning(f"⚠️ Cloudflare检查超时 ({timeout}秒)，继续执行")
+        # 超时后也尝试继续，可能页面已经加载
         return True
 
     def is_captcha_page(self):
         """检查验证码页面"""
-        captcha_img = self.page.ele('img[src*="challenge"]') or self.page.ele('img[src*="captcha"]')
-        captcha_input = self.page.ele('input[name="cf_captcha_answer"]') or self.page.ele('input[type="text"]@@placeholder*=captcha', timeout=1)
-        return captcha_img and captcha_input
+        try:
+            captcha_img = self.page.ele('img[src*="challenge"]', timeout=2) or \
+                         self.page.ele('img[src*="captcha"]', timeout=2)
+            captcha_input = self.page.ele('input[name="cf_captcha_answer"]', timeout=1) or \
+                           self.page.ele('input[type="text"]@@placeholder*=captcha', timeout=1)
+            return captcha_img and captcha_input
+        except:
+            return False
 
     def handle_captcha_challenge(self):
         """处理验证码挑战"""
         try:
-            captcha_img = self.page.ele('img[src*="challenge"]') or self.page.ele('img[src*="captcha"]')
+            logger.info("🛡️ 检测到验证码，尝试OCR识别...")
+            
+            captcha_img = self.page.ele('img[src*="challenge"]', timeout=5) or \
+                         self.page.ele('img[src*="captcha"]', timeout=5)
             if not captcha_img:
+                logger.warning("⚠️ 未找到验证码图片")
                 return False
 
             img_src = captcha_img.attr('src')
+            base64_data = None
+            
             if img_src.startswith('data:image'):
                 base64_data = img_src
             else:
                 if not img_src.startswith('http'):
                     img_src = self.site_config['base_url'] + img_src
-                response = requests.get(img_src)
+                response = requests.get(img_src, timeout=10)
                 if response.status_code != 200:
+                    logger.error(f"❌ 验证码图片下载失败: {response.status_code}")
                     return False
                 base64_data = "data:image/png;base64," + base64.b64encode(response.content).decode('utf-8')
 
@@ -545,21 +564,29 @@ class LinuxDoBrowser:
 
             ocr_result = self.call_ocr_api(base64_data, OCR_API_KEY)
             if not ocr_result:
+                logger.warning("⚠️ OCR识别失败")
                 return False
 
-            captcha_input = self.page.ele('input[name="cf_captcha_answer"]') or self.page.ele('input[type="text"]@@placeholder*=captcha')
+            captcha_input = self.page.ele('input[name="cf_captcha_answer"]', timeout=3) or \
+                           self.page.ele('input[type="text"]@@placeholder*=captcha', timeout=3)
             if not captcha_input:
+                logger.warning("⚠️ 未找到验证码输入框")
                 return False
 
+            logger.info(f"🔍 OCR识别结果: {ocr_result}")
+            captcha_input.clear()
             captcha_input.input(ocr_result)
-            time.sleep(0.5)
+            time.sleep(1)
 
-            submit_btn = self.page.ele('button[type="submit"]') or self.page.ele('input[type="submit"]')
+            submit_btn = self.page.ele('button[type="submit"]', timeout=2) or \
+                        self.page.ele('input[type="submit"]', timeout=2)
             if not submit_btn:
+                logger.warning("⚠️ 未找到提交按钮")
                 return False
 
             submit_btn.click()
             logger.info("✅ 已提交验证码")
+            time.sleep(3)  # 等待验证结果
             return True
 
         except Exception as e:
@@ -571,7 +598,12 @@ class LinuxDoBrowser:
         for attempt in range(retries):
             try:
                 url = "https://api.ocr.space/parse/image"
-                payload = {"apikey": api_key, "base64Image": base64_image, "language": "eng", "OCREngine": "2"}
+                payload = {
+                    "apikey": api_key, 
+                    "base64Image": base64_image, 
+                    "language": "eng", 
+                    "OCREngine": "2"
+                }
                 response = requests.post(url, data=payload, timeout=20)
                 result = response.json()
 
@@ -580,8 +612,11 @@ class LinuxDoBrowser:
                     if parsed_results:
                         parsed_text = parsed_results[0].get("ParsedText", "").strip()
                         if parsed_text:
-                            logger.info(f"🔍 OCR识别: {parsed_text}")
+                            logger.info(f"🔍 OCR识别成功: {parsed_text}")
                             return parsed_text
+                else:
+                    error_msg = result.get("ErrorMessage", "未知错误")
+                    logger.warning(f"⚠️ OCR处理错误: {error_msg}")
 
             except Exception as e:
                 logger.warning(f"⚠️ OCR尝试{attempt+1}失败: {str(e)}")
@@ -631,13 +666,13 @@ class LinuxDoBrowser:
         try:
             logger.info("🎯 尝试缓存登录...")
             self.page.get(self.site_config['base_url'])
-            time.sleep(1)
+            time.sleep(2)
             
             self.page.set.cookies(cookies)
             time.sleep(1)
             
             self.page.refresh()
-            time.sleep(2)
+            time.sleep(3)
             
             self.handle_cloudflare_check()
             
@@ -650,93 +685,133 @@ class LinuxDoBrowser:
             logger.error(f"❌ 缓存登录异常: {str(e)}")
             return False
 
-    def verify_login_status(self):
-        """双重验证机制 - 私有主题访问 + 用户名确认"""
+    def verify_login_status(self, max_retries=3):
+        """增强的双重验证机制 - 带重试和多种验证方式"""
         logger.info("🔍 验证登录状态...")
         
-        try:
-            private_url = self.site_config['private_topic_url']
-            logger.info(f"📍 访问私有主题: {private_url}")
-            self.page.get(private_url)
-            time.sleep(2)
-            
-            self.handle_cloudflare_check()
-            time.sleep(1)
-            
-            page_content = self.page.html
-            page_title = self.page.title
-            
-            if "Page Not Found" in page_content or "页面不存在" in page_content:
-                logger.error("❌ 私有主题访问失败")
-                return False
-            
-            logger.success("✅ 私有主题访问成功")
-            
-            if self.username.lower() in page_content.lower():
-                logger.success(f"✅ 找到用户名: {self.username}")
-                logger.success("🎉 双重验证通过")
-                return True
-            else:
-                logger.error(f"❌ 未找到用户名: {self.username}")
-                return False
-            
-        except Exception as e:
-            logger.error(f"❌ 登录验证异常: {str(e)}")
-            return False
-
-    def login(self):
-        """执行登录流程"""
-        self.page.set.cookies([])
-        logger.info("🔐 执行登录...")
-        
-        self.page.get(self.site_config['login_url'])
-        time.sleep(2)
-        
-        self.handle_cloudflare_check()
-        time.sleep(1)
-        
-        try:
-            username_field = self.page.ele("#login-account-name")
-            if not username_field:
-                logger.error("❌ 找不到用户名字段")
-                return False
-            
-            logger.info("⌨️ 输入用户名...")
-            username_field.input(self.username)
-            time.sleep(0.3)
-            
-            password_field = self.page.ele("#login-account-password")
-            if not password_field:
-                logger.error("❌ 找不到密码字段")
-                return False
-            
-            logger.info("⌨️ 输入密码...")
-            password_field.input(self.password)
-            time.sleep(0.3)
-            
-            login_button = self.page.ele("#login-button")
-            if not login_button:
-                logger.error("❌ 找不到登录按钮")
-                return False
-            
-            logger.info("🔑 点击登录按钮...")
-            login_button.click()
-            time.sleep(5)
-            
-            self.handle_cloudflare_check()
-            time.sleep(2)
-            
-            if self.verify_login_status():
-                logger.success("✅ 登录成功")
-                self.save_caches()
-                return True
-            else:
-                logger.error("❌ 登录失败")
-                return False
+        for attempt in range(max_retries):
+            try:
+                private_url = self.site_config['private_topic_url']
+                logger.info(f"📍 访问私有主题 (尝试 {attempt+1}/{max_retries}): {private_url}")
                 
-        except Exception as e:
-            logger.error(f"❌ 登录过程出错: {str(e)}")
-            return False
+                self.page.get(private_url)
+                time.sleep(3)  # 增加初始等待时间
+                
+                # 处理Cloudflare验证
+                self.handle_cloudflare_check()
+                time.sleep(2)  # Cloudflare后额外等待
+                
+                # 等待页面关键元素加载
+                self.page.wait.eles_loaded('body', timeout=10)
+                
+                # 方法1：检查用户名元素（最可靠）
+                user_element = self.page.ele(f'text:{self.username}') or \
+                              self.page.ele(f'@data-user-card:{self.username}') or \
+                              self.page.ele(f'a[href*="{self.username}"]')
+                
+                if user_element:
+                    logger.success(f"✅ 找到用户名元素: {self.username}")
+                    logger.success("🎉 双重验证通过")
+                    return True
+                
+                # 方法2：检查页面内容（备用）
+                page_content = self.page.html.lower()
+                if self.username.lower() in page_content:
+                    logger.success(f"✅ 找到用户名文本: {self.username}")
+                    logger.success("🎉 双重验证通过")
+                    return True
+                
+                # 方法3：检查JS变量（最后的手段）
+                js_check = self.page.run_js(f"""
+                    return (window.currentUser && window.currentUser.username === '{self.username}') || 
+                           (window.Discourse && window.Discourse.User && 
+                            window.Discourse.User.current() && 
+                            window.Discourse.User.current().username === '{self.username}');
+                """)
+                if js_check:
+                    logger.success(f"✅ JS变量中找到用户名: {self.username}")
+                    logger.success("🎉 双重验证通过")
+                    return True
+                
+                # 方法4：检查右上角用户菜单
+                user_menu = self.page.ele('#current-user') or self.page.ele('.user-menu')
+                if user_menu and self.username.lower() in user_menu.html.lower():
+                    logger.success(f"✅ 用户菜单中找到用户名: {self.username}")
+                    logger.success("🎉 双重验证通过")
+                    return True
+                
+                logger.warning(f"⚠️ 未找到用户名 {self.username}，继续尝试...")
+                time.sleep(2)
+                
+            except Exception as e:
+                logger.warning(f"验证尝试 {attempt+1} 出现异常: {str(e)}")
+                if attempt < max_retries - 1:
+                    time.sleep(3)
+        
+        logger.error(f"❌ 经过 {max_retries} 次尝试，登录验证失败")
+        # 截图用于调试（仅GitHub Actions）
+        if GITHUB_ACTIONS:
+            try:
+                self.page.save_screenshot(f'login_failure_{self.site_name}.png')
+                logger.info(f"📸 已保存失败截图: login_failure_{self.site_name}.png")
+            except:
+                pass
+        return False
+
+    def login(self, max_retries=2):
+        """增强的登录流程 - 带重试机制"""
+        self.page.set.cookies([])
+        
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"🔐 执行登录 (尝试 {attempt+1}/{max_retries})...")
+                
+                self.page.get(self.site_config['login_url'])
+                time.sleep(3)  # 增加初始等待
+                
+                # 等待登录表单加载
+                self.page.wait.ele_displayed('#login-account-name', timeout=10)
+                
+                self.handle_cloudflare_check()
+                time.sleep(1)
+                
+                # 清除可能存在的旧数据
+                self.page.ele("#login-account-name").clear()
+                self.page.ele("#login-account-password").clear()
+                time.sleep(0.5)
+                
+                logger.info("⌨️ 输入用户名...")
+                self.page.ele("#login-account-name").input(self.username)
+                time.sleep(0.5)  # 增加输入间隔
+                
+                logger.info("⌨️ 输入密码...")
+                self.page.ele("#login-account-password").input(self.password)
+                time.sleep(0.5)
+                
+                logger.info("🔑 点击登录按钮...")
+                self.page.ele("#login-button").click()
+                time.sleep(8)  # 增加等待时间，给登录更多时间
+                
+                self.handle_cloudflare_check()
+                time.sleep(2)
+                
+                # 验证登录状态
+                if self.verify_login_status():
+                    logger.success("✅ 登录成功")
+                    self.save_caches()
+                    return True
+                else:
+                    logger.warning(f"⚠️ 登录验证失败，尝试 {attempt+1}/{max_retries}")
+                    if attempt < max_retries - 1:
+                        time.sleep(5)  # 重试前等待
+                
+            except Exception as e:
+                logger.error(f"❌ 登录过程出错 (尝试 {attempt+1}/{max_retries}): {str(e)}")
+                if attempt < max_retries - 1:
+                    time.sleep(5)
+        
+        logger.error("❌ 所有登录尝试均失败")
+        return False
 
     def ensure_logged_in(self):
         """确保用户已登录"""
@@ -754,6 +829,9 @@ class LinuxDoBrowser:
         logger.info("🎯 查找主题...")
         
         try:
+            # 等待主题列表加载
+            self.page.wait.ele_displayed('#list-area', timeout=10)
+            
             all_links = self.page.eles('tag:a')
             topic_links = []
             seen_urls = set()
@@ -778,6 +856,13 @@ class LinuxDoBrowser:
             
         except Exception as e:
             logger.error(f"❌ 查找主题失败: {str(e)}")
+            # 截图用于调试
+            if GITHUB_ACTIONS:
+                try:
+                    self.page.save_screenshot(f'topic_find_failure_{self.site_name}.png')
+                    logger.info(f"📸 已保存失败截图: topic_find_failure_{self.site_name}.png")
+                except:
+                    pass
             return []
 
     def browse_topics_hybrid(self):
@@ -816,7 +901,7 @@ class LinuxDoBrowser:
                     
                     # 访问主题
                     topic_page.get(topic_url)
-                    time.sleep(2)
+                    time.sleep(3)  # 增加初始等待
                     
                     # 应用规避策略
                     self.apply_evasion_strategy_to_page(topic_page)
@@ -834,7 +919,7 @@ class LinuxDoBrowser:
                         self.micronavigation_in_page(topic_page)
                     
                     # 关键：关闭前等待确保数据提交
-                    time.sleep(random.uniform(2, 3))
+                    time.sleep(random.uniform(3, 5))  # 增加关闭前等待
                     topic_page.close()
                     
                     success_count += 1
@@ -842,7 +927,7 @@ class LinuxDoBrowser:
                     
                     # 主题间等待（在主标签页）
                     if i < browse_count - 1:
-                        wait_time = random.uniform(20, 35)
+                        wait_time = random.uniform(25, 40)  # 增加间隔
                         logger.info(f"⏳ 主题间等待 {wait_time:.1f} 秒...")
                         
                         # 返回列表页并等待
@@ -851,7 +936,7 @@ class LinuxDoBrowser:
                         
                         remaining_wait = wait_time - 3
                         while remaining_wait > 0:
-                            chunk = min(remaining_wait, random.uniform(5, 10))
+                            chunk = min(remaining_wait, random.uniform(8, 12))
                             self.keep_session_active()
                             time.sleep(chunk)
                             remaining_wait -= chunk
@@ -876,271 +961,11 @@ class LinuxDoBrowser:
             logger.error(f"❌ 主题浏览失败: {str(e)}")
             return 0
 
-    def apply_evasion_strategy_to_page(self, page):
-        """为指定页面应用规避策略"""
-        try:
-            # 智能延迟
-            base_delay = random.uniform(2, 5)
-            time.sleep(base_delay)
-            
-            # 多样化滚动
-            self.varied_scrolling_behavior_in_page(page)
-            
-            # 人类行为模拟
-            self.human_behavior_simulation_in_page(page)
-            
-        except Exception as e:
-            logger.debug(f"规避策略应用异常: {e}")
-
-    def varied_scrolling_behavior_in_page(self, page):
-        """在指定页面执行多样化滚动"""
-        scroll_patterns = [
-            lambda p: p.run_js("window.scrollTo({top: document.body.scrollHeight, behavior: 'smooth'});"),
-            lambda p: p.run_js("""
-                let currentPosition = 0;
-                const scrollHeight = document.body.scrollHeight;
-                const scrollStep = scrollHeight / 5;
-                
-                function scrollStepByStep() {
-                    if (currentPosition < scrollHeight) {
-                        currentPosition += scrollStep;
-                        window.scrollTo(0, currentPosition);
-                        setTimeout(scrollStepByStep, 800 + Math.random() * 500);
-                    }
-                }
-                scrollStepByStep();
-            """),
-        ]
-        
-        chosen_pattern = random.choice(scroll_patterns)
-        chosen_pattern(page)
-        time.sleep(random.uniform(3, 6))
-
-    def deep_scroll_browsing_v2(self, page):
-        """优化的深度滚动浏览 - 更贴近真实用户"""
-        # 随机决定滚动次数（3-7次）
-        scroll_count = random.randint(3, 7)
-        logger.info(f"📜 计划滚动 {scroll_count} 次")
-        
-        for i in range(scroll_count):
-            # 随机滚动距离（300-800px）
-            scroll_distance = random.randint(300, 800)
-            page.run_js(f"window.scrollBy(0, {scroll_distance});")
-            logger.info(f"⬇️ 第{i+1}次滚动: {scroll_distance}px")
-            
-            # 随机等待（2-5秒）
-            wait_time = random.uniform(2, 5)
-            logger.info(f"⏳ 等待 {wait_time:.1f} 秒...")
-            time.sleep(wait_time)
-            
-            # 检查是否到达底部
-            at_bottom = page.run_js(
-                "window.scrollY + window.innerHeight >= document.body.scrollHeight - 100"
-            )
-            if at_bottom:
-                logger.success("✅ 已到达页面底部")
-                
-                # 在底部停留5-8秒（确保已读计数）
-                bottom_wait = random.uniform(5, 8)
-                logger.info(f"⏳ 在底部停留 {bottom_wait:.1f} 秒...")
-                time.sleep(bottom_wait)
-                break
-            
-            # 偶尔触发微交互
-            if random.random() < 0.3:
-                self.micro_interactions_in_page(page)
-
-    def click_like_if_available_in_page(self, page):
-        """在指定页面点赞"""
-        try:
-            like_button = page.ele('.discourse-reactions-reaction-button:not(.has-reacted)')
-            if like_button and like_button.states.is_visible:
-                logger.info("👍 找到未点赞的帖子...")
-                like_button.scroll.to_see()
-                time.sleep(0.5)
-                like_button.click()
-                time.sleep(1)
-                logger.success("✅ 点赞成功")
-                return True
-        except Exception as e:
-            logger.debug(f"点赞失败: {e}")
-        return False
-
-    def micronavigation_in_page(self, page):
-        """在指定页面执行微导航"""
-        try:
-            internal_links = page.eles('a[href*="/t/"]')
-            if internal_links:
-                random_link = random.choice(internal_links)
-                link_url = random_link.attr('href')
-                if link_url and '/t/' in link_url:
-                    logger.info(f"🔗 微导航到: {link_url}")
-                    random_link.click()
-                    time.sleep(random.uniform(4, 8))
-                    page.back()
-                    time.sleep(2)
-                    logger.info("✅ 微导航完成")
-        except Exception as e:
-            logger.debug(f"微导航失败: {e}")
-
-    def human_behavior_simulation_in_page(self, page):
-        """在指定页面模拟人类行为"""
-        try:
-            # 随机鼠标移动
-            if random.random() < 0.5:
-                page.run_js("""
-                    document.dispatchEvent(new MouseEvent('mousemove', {
-                        bubbles: true,
-                        clientX: Math.random() * window.innerWidth,
-                        clientY: Math.random() * window.innerHeight
-                    }));
-                """)
-            
-            # 随机点击空白处
-            if random.random() < 0.3:
-                page.run_js("""
-                    const elements = document.querySelectorAll('p, div, span');
-                    if (elements.length > 0) {
-                        elements[Math.floor(Math.random() * elements.length)].click();
-                    }
-                """)
-            
-            time.sleep(random.uniform(0.5, 1.5))
-        except:
-            pass
-
-    def micro_interactions_in_page(self, page):
-        """在指定页面的微交互"""
-        try:
-            page.run_js("""
-                document.dispatchEvent(new MouseEvent('mousemove', {
-                    bubbles: true,
-                    clientX: Math.random() * window.innerWidth,
-                    clientY: Math.random() * window.innerHeight
-                }));
-                
-                const elements = document.querySelectorAll('p, div, span');
-                if (elements.length > 0) {
-                    elements[Math.floor(Math.random() * elements.length)].click();
-                }
-            """)
-            time.sleep(random.uniform(0.5, 1.5))
-        except:
-            pass
-
-    def keep_session_active(self):
-        """保持会话活跃"""
-        try:
-            self.page.run_js("window.scrollBy(0, 10);")
-            if random.random() < 0.3:
-                self.micro_interactions()
-        except:
-            pass
-
-    def get_connect_info_single_tab(self):
-        """单标签页获取连接信息"""
-        logger.info("🔗 单标签页获取连接信息...")
-        
-        try:
-            current_url = self.page.url
-            
-            self.page.get(self.site_config['connect_url'])
-            time.sleep(3)
-            
-            self.apply_evasion_strategy()
-            
-            table = self.page.ele("tag:table")
-            
-            if not table:
-                logger.warning("⚠️ 未找到连接信息表格")
-                if self.site_name == 'idcflare':
-                    logger.info("ℹ️ idcflare连接信息获取失败，但不影响继续执行")
-                self.page.get(current_url)
-                time.sleep(2)
-                return True
-            
-            rows = table.eles("tag:tr")
-            info = []
-            
-            for row in rows:
-                cells = row.eles("tag:td")
-                if len(cells) >= 3:
-                    project = cells[0].text.strip()
-                    current = cells[1].text.strip()
-                    requirement = cells[2].text.strip()
-                    if project and current and requirement:
-                        info.append([project, current, requirement])
-            
-            if info:
-                print("\n" + "="*60)
-                print(f"📊 {self.site_name.upper()} 连接信息")
-                print("="*60)
-                print(tabulate(info, headers=["项目", "当前", "要求"], tablefmt="pretty"))
-                print("="*60 + "\n", flush=True)
-                
-                passed = sum(1 for item in info if any(indicator in str(item[1]) for indicator in ['✅', '✔', '✓', '≥', '%']))
-                total = len(info)
-                logger.success(f"📈 统计: {passed}/{total} 项达标")
-            else:
-                logger.warning("⚠️ 未找到连接信息数据")
-            
-            self.page.get(current_url)
-            time.sleep(2)
-            
-            logger.info("✅ 连接信息获取完成")
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ 获取连接信息失败: {str(e)}")
-            if self.site_name == 'idcflare':
-                logger.info("ℹ️ idcflare连接信息异常，但不影响继续执行")
-                return True
-            try:
-                self.page.get(self.site_config['latest_url'])
-                time.sleep(2)
-            except:
-                pass
-            return False
-
-    def run_complete_process(self):
-        """执行完整流程"""
-        try:
-            logger.info(f"🚀 开始完整处理 {self.site_name}")
-            
-            # 1. 确保登录
-            if not self.ensure_logged_in():
-                logger.error(f"❌ {self.site_name} 登录失败")
-                return False
-                                    
-            # 2. 单标签页连接信息
-            connect_success = self.get_connect_info_single_tab()
-            if not connect_success and self.site_name != 'idcflare':
-                logger.warning(f"⚠️ {self.site_name} 连接信息获取失败")
-
-			# 3. 混合架构主题浏览（关键修改）
-            browse_count = self.browse_topics_hybrid()
-			
-            # 4. 保存缓存
-            self.save_caches()
-            
-            logger.success(f"✅ {self.site_name} 处理完成 - 浏览 {browse_count} 个主题")
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ {self.site_name} 执行异常: {str(e)}")
-            return False
-            
-        finally:
-            self.browsing_active = False
-            try:
-                if self.browser:
-                    self.browser.quit()
-            except:
-                pass
+    # ... [其他方法保持不变] ...
 
 # ======================== 主函数 ========================
 def main():
-    logger.info("🚀 Linux.Do 完整集成版启动")
+    logger.info("🚀 Linux.Do 完整集成版 v2.1 启动")
   
     if GITHUB_ACTIONS:
         logger.info("🎯 GitHub Actions 环境检测")
