@@ -41,7 +41,7 @@ SITES = [
         'name': 'linux_do',
         'base_url': 'https://linux.do',
         'login_url': 'https://linux.do/login',
-        'private_topic_url': 'https://linux.do/t/topic/2362',
+        'private_topic_url': 'https://linux.do/t/topic/187640',
         'latest_url': 'https://linux.do/latest',
         'connect_url': 'https://connect.linux.do',
         'user_url': 'https://linux.do/u',
@@ -1310,3 +1310,4 @@ if __name__ == "__main__":
         logger.warning("⚠️ 未配置OCR_API_KEY，验证码处理将不可用")
     
     main()
+
