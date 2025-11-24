@@ -511,7 +511,7 @@ class LinuxDoBrowser:
                 
                 # 如果是检查页面，继续等待
                 if page_title and ("Checking" in page_title or "Just a moment" in page_title):
-                    logger.info(f"⏳ Cloudflare检查中... ({check_count})")
+                   # logger.info(f"⏳ Cloudflare检查中... ({check_count})")
                 
                 time.sleep(1)
                     
@@ -1310,5 +1310,6 @@ if __name__ == "__main__":
         logger.warning("⚠️ 未配置OCR_API_KEY，验证码处理将不可用")
     
     main()
+
 
 
