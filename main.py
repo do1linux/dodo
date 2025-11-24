@@ -1012,7 +1012,7 @@ class LinuxDoBrowser:
             # 随机滚动距离（300-800px）
             scroll_distance = random.randint(300, 800)
             page.run_js(f"window.scrollBy(0, {scroll_distance});")
-            logger.info(f"⬇️ 第{i+1}次滚动: {scroll_distance}px")
+          #  logger.info(f"⬇️ 第{i+1}次滚动: {scroll_distance}px")
             
             # 随机等待（2-5秒）
             wait_time = random.uniform(2, 5)
@@ -1310,6 +1310,7 @@ if __name__ == "__main__":
         logger.warning("⚠️ 未配置OCR_API_KEY，验证码处理将不可用")
     
     main()
+
 
 
 
