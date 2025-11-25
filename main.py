@@ -44,7 +44,7 @@ SITES = [
         'base_url': 'https://linux.do',
         'login_url': 'https://linux.do/login',
         'private_topic_url': 'https://linux.do/t/topic/870130',
-        'latest_url': 'https://linux.do/latest',
+        'unread_url': 'https://linux.do/unread',
         'connect_url': 'https://connect.linux.do',
         'user_url': 'https://linux.do/u',
         'cf_cookies_file': "cf_cookies_linux_do.json",
@@ -55,7 +55,7 @@ SITES = [
         'base_url': 'https://idcflare.com',
         'login_url': 'https://idcflare.com/login',
         'private_topic_url': 'https://idcflare.com/t/topic/24',
-        'latest_url': 'https://idcflare.com/latest',
+        'unread_url': 'https://idcflare.com/latest',
         'connect_url': 'https://connect.idcflare.com',
         'user_url': 'https://idcflare.com/u',
         'cf_cookies_file': "cf_cookies_idcflare.json",
@@ -652,7 +652,7 @@ class LinuxDoBrowser:
             time.sleep(random.uniform(8, 15))
             self.page.refresh()
             time.sleep(random.uniform(5, 10))
-            self.page.get(self.site_config['latest_url'])
+            self.page.get(self.site_config['unread_url'])
             time.sleep(random.uniform(3, 7))
         except Exception as e:
             logger.warning(f"规避操作失败: {e}")
@@ -1040,7 +1040,7 @@ class LinuxDoBrowser:
                 self.user_script.inject_external_link_handler()
             
             # 主标签页获取主题列表
-            self.page.get(self.site_config['latest_url'])
+            self.page.get(self.site_config['unread_url'])
             self.apply_evasion_strategy()
             
             topic_urls = self.find_topic_elements()
@@ -1124,7 +1124,7 @@ class LinuxDoBrowser:
                         success_count += 1
                     
                     # 返回列表页
-                    self.page.get(self.site_config['latest_url'])
+                    self.page.get(self.site_config['unread_url'])
                     time.sleep(random.uniform(2, 4))
                     
                     # 主题间等待
@@ -1139,7 +1139,7 @@ class LinuxDoBrowser:
                     logger.error(f"❌ 浏览主题失败: {str(e)}")
                     # 确保返回列表页
                     try:
-                        self.page.get(self.site_config['latest_url'])
+                        self.page.get(self.site_config['unread_url'])
                         time.sleep(2)
                     except:
                         pass
@@ -1391,7 +1391,7 @@ class LinuxDoBrowser:
                 logger.info("ℹ️ idcflare连接信息异常，但不影响继续执行")
                 return True
             try:
-                self.page.get(self.site_config['latest_url'])
+                self.page.get(self.site_config['unread_url'])
                 time.sleep(2)
             except:
                 pass
@@ -1534,6 +1534,7 @@ if __name__ == "__main__":
         logger.warning("⚠️ 未配置OCR_API_KEY，验证码处理将不可用")
     
     main()
+
 
 
 
