@@ -2,15 +2,13 @@
 # -*- coding: utf-8 -*-
 
 """
-Linux.do 自动化浏览工具 - 终极修复版 v3.4
+Linux.do 自动化浏览工具 - 终极修复版 v3.5
 ====================================
 修复清单：
-1. ✅ 修复缺失的 micro_interactions_in_page 方法
-2. ✅ 移除私有主题404警告日志
-3. ✅ 精简日志输出
-4. ✅ 恢复连接信息可视化表格
-5. ✅ 统一使用 unread_url
-6. ✅ 优化双重验证逻辑
+1. ✅ 修复连接信息表格获取失败问题（增加智能等待）
+2. ✅ 精简日志输出，移除非关键DEBUG日志
+3. ✅ 优化验证规避策略在连接信息获取中的应用
+4. ✅ 增强表格数据解析健壮性
 """
 
 import os
@@ -23,8 +21,12 @@ import base64
 import requests
 from datetime import datetime
 from loguru import logger
-from DrissionPage import ChromiumPage, ChromiumOptions
+from DrissionsPage import ChromiumPage, ChromiumOptions
 from tabulate import tabulate
+
+# 日志配置 - 只保留INFO及以上级别
+logger.remove()
+logger.add(sys.stderr, level="INFO", format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <level>{message}</level>")
 
 # ======================== 配置常量 ========================
 SITE_CREDENTIALS = {
@@ -84,7 +86,6 @@ class UserScriptInjector:
     def inject_external_link_handler(self):
         """注入处理外部链接的UserScript"""
         try:
-            # 修复API调用：使用doc_loaded()替代load_complete()
             try:
                 self.page.wait.doc_loaded()
             except:
@@ -93,7 +94,6 @@ class UserScriptInjector:
             js_code = """
             (function() {
                 'use strict';
-                
                 if (window.discourseUserScriptInjected) return;
                 window.discourseUserScriptInjected = true;
                 
@@ -107,26 +107,8 @@ class UserScriptInjector:
                     }
                 }
                 
-                function isInternalDiscourseLink(href) {
-                    if (!href) return false;
-                    const lowerHref = href.toLowerCase();
-                    return (
-                        lowerHref.includes('/t/') || 
-                        lowerHref.includes('/u/') ||
-                        lowerHref.includes('/c/') ||
-                        lowerHref.includes('/tags') ||
-                        lowerHref.includes('/latest') ||
-                        lowerHref.includes('/top') ||
-                        lowerHref.includes('/login') ||
-                        lowerHref.includes('/signup')
-                    ) && !href.includes('/uploads/') && 
-                       !/\.(png|jpg|jpeg|gif|webp|svg|zip|rar|7z|pdf|mp4|mp3)$/i.test(href) &&
-                       !isExternalLink(href);
-                }
-                
                 document.addEventListener('click', function(e) {
                     if (!e.isTrusted) return;
-                    
                     const link = e.target.closest('a');
                     if (!link) return;
                     
@@ -139,7 +121,6 @@ class UserScriptInjector:
                     if (isExternalLink(fullUrl)) {
                         e.preventDefault();
                         e.stopPropagation();
-                        
                         setTimeout(() => {
                             window.open(fullUrl, '_blank', 'noopener,noreferrer');
                         }, 50 + Math.random() * 150);
@@ -148,40 +129,22 @@ class UserScriptInjector:
                         setTimeout(() => {
                             link.style.opacity = '';
                         }, 120);
-                        
-                        return false;
-                    }
-                    
-                    if (isInternalDiscourseLink(href) && Math.random() < 0.3) {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        
-                        setTimeout(() => {
-                            window.open(fullUrl, '_blank');
-                        }, 50 + Math.random() * 100);
-                        
                         return false;
                     }
                 }, true);
-                
-                console.log('🎯 Discourse UserScript 已激活 - 外部链接将在新标签页打开');
             })();
             """ % self.site_config['base_url']
             
             self.page.run_js(js_code)
             self.injected = True
-            logger.debug("✅ UserScript注入成功")
             return True
             
         except Exception as e:
-            logger.warning(f"⚠️ UserScript注入失败: {str(e)}，尝试回退注入")
             try:
                 self.page.run_js(js_code)
                 self.injected = True
-                logger.debug("✅ UserScript回退注入成功")
                 return True
-            except Exception as e2:
-                logger.error(f"❌ UserScript回退注入失败: {e2}")
+            except:
                 return False
     
     def inject_mouse_behavior(self):
@@ -194,7 +157,6 @@ class UserScriptInjector:
                 
                 setInterval(() => {
                     if (Math.random() < 0.2) return;
-                    
                     const x = Math.random() * window.innerWidth;
                     const y = Math.random() * window.innerHeight;
                     
@@ -210,10 +172,9 @@ class UserScriptInjector:
             """
             
             self.page.run_js(js_code)
-            logger.debug("✅ 鼠标行为补充注入")
             return True
             
-        except Exception:
+        except:
             return False
 
 # ======================== 缓存管理器 ========================
@@ -233,10 +194,8 @@ class CacheManager:
             try:
                 with open(file_path, "r", encoding='utf-8') as f:
                     data = json.load(f)
-                logger.debug(f"加载缓存: {file_name}")
                 return data
             except Exception as e:
-                logger.warning(f"缓存加载失败 {file_name}: {str(e)}")
                 try:
                     os.remove(file_path)
                 except:
@@ -249,10 +208,9 @@ class CacheManager:
             file_path = CacheManager.get_cache_file_path(file_name)
             with open(file_path, "w", encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
-            logger.debug(f"保存缓存: {file_name}")
             return True
         except Exception as e:
-            logger.error(f"缓存保存失败 {file_name}: {str(e)}")
+            logger.error(f"❌ 缓存保存失败: {str(e)}")
             return False
 
     @staticmethod
@@ -275,12 +233,11 @@ class CacheManager:
                 file_path = CacheManager.get_cache_file_path(file_name)
                 if os.path.exists(file_path):
                     os.remove(file_path)
-                    logger.debug(f"清除缓存: {file_name}")
             
             logger.info(f"✅ {site_name} 缓存已清除")
             
         except Exception as e:
-            logger.error(f"清除缓存失败: {str(e)}")
+            logger.error(f"❌ 清除缓存失败: {str(e)}")
 
 # ======================== 主浏览器类 ========================
 class LinuxDoBrowser:
@@ -379,7 +336,6 @@ class LinuxDoBrowser:
             Object.defineProperty(screen, 'height', {{get: () => {height}}});
             """
             self.page.run_js(js_code)
-            logger.debug("✅ 指纹优化已应用")
             
             # 注入 UserScript 处理外部链接
             if BEHAVIOR_INJECTION_ENABLED:
@@ -472,7 +428,6 @@ class LinuxDoBrowser:
             session_duration = time.time() - self.session_start_time
             
             if session_duration > 1800:
-                logger.debug("🔄 长时间运行，刷新会话")
                 self.page.refresh()
                 time.sleep(5)
                 self.session_start_time = time.time()
@@ -480,11 +435,10 @@ class LinuxDoBrowser:
                 
             page_title = self.page.title.lower()
             if any(indicator in page_title for indicator in ["checking", "verifying", "just a moment"]):
-                logger.debug("检测到验证页面，执行规避")
                 self.evasive_maneuvers()
                 
         except Exception as e:
-            logger.debug(f"会话监控异常: {e}")
+            pass
 
     def evasive_maneuvers(self):
         """规避操作"""
@@ -511,7 +465,6 @@ class LinuxDoBrowser:
                 if page_title and "Checking" not in page_title and "Just a moment" not in page_title:
                     body_length = len(self.page.html)
                     if body_length > 1000:
-                        logger.debug(f"Cloudflare检查通过，页面长度: {body_length}")
                         return True
                 
                 if page_title and ("Checking" in page_title or "Just a moment" in page_title):
@@ -544,7 +497,6 @@ class LinuxDoBrowser:
                     if parsed_results:
                         parsed_text = parsed_results[0].get("ParsedText", "").strip()
                         if parsed_text:
-                            logger.debug(f"OCR识别成功: {parsed_text}")
                             return parsed_text
 
             except Exception as e:
@@ -564,7 +516,6 @@ class LinuxDoBrowser:
             cookies = self.page.cookies()
             if cookies:
                 CacheManager.save_site_cache(cookies, self.site_name, 'cf_cookies')
-                logger.debug(f"保存 {len(cookies)} 个Cookies")
             
             session_data = {
                 'last_success': datetime.now().isoformat(),
@@ -580,7 +531,7 @@ class LinuxDoBrowser:
             logger.info(f"✅ {self.site_name} 缓存保存完成")
             
         except Exception as e:
-            logger.error(f"缓存保存失败: {str(e)}")
+            logger.error(f"❌ 缓存保存失败: {str(e)}")
 
     def try_cache_login(self):
         """尝试缓存登录"""
@@ -671,8 +622,8 @@ class LinuxDoBrowser:
                 time.sleep(2)
                 
             except Exception as e:
-                logger.warning(f"验证尝试 {attempt+1} 异常: {str(e)}")
                 if attempt < max_retries - 1:
+                    logger.warning(f"验证尝试 {attempt+1} 异常，重试中...")
                     time.sleep(3)
         
         logger.error(f"❌ 登录验证失败")
@@ -850,12 +801,10 @@ class LinuxDoBrowser:
         
         # 随机滚动次数
         scroll_count = random.randint(3, 7)
-        logger.debug(f"📜 滚动 {scroll_count} 次")
         
         for i in range(scroll_count):
             scroll_distance = random.randint(300, 800)
             page.run_js(f"window.scrollBy(0, {scroll_distance});")
-            logger.debug(f"⬇️ 第{i+1}次滚动: {scroll_distance}px")
             
             wait_time = random.uniform(2, 6)
             time.sleep(wait_time)
@@ -865,7 +814,6 @@ class LinuxDoBrowser:
                 "window.scrollY + window.innerHeight >= document.body.scrollHeight - 100"
             )
             if at_bottom:
-                logger.debug("✅ 到达页面底部")
                 bottom_wait = random.uniform(5, 8)
                 time.sleep(bottom_wait)
                 break
@@ -900,25 +848,30 @@ class LinuxDoBrowser:
         try:
             current_url = self.page.url
             
+            # 访问连接页面并应用规避策略
             self.page.get(self.site_config['connect_url'])
-            time.sleep(3)
+            time.sleep(5)  # 增加初始等待时间
             
-            # 注入 UserScript
-            if BEHAVIOR_INJECTION_ENABLED and self.user_script:
-                self.user_script.inject_external_link_handler()
-            
+            # 应用规避策略确保页面完全加载
             self.apply_evasion_strategy()
             
-            table = self.page.ele("tag:table")
+            # 等待表格出现
+            table = None
+            for i in range(5):
+                table = self.page.ele("tag:table", timeout=5)
+                if table:
+                    break
+                time.sleep(2)
             
             if not table:
                 logger.warning("⚠️ 未找到连接信息表格")
                 if self.site_name == 'idcflare':
-                    logger.info("ℹ️ idcflare连接信息获取失败，但不影响继续执行")
+                    logger.info("ℹ️ idcflare连接信息获取失败，不影响主流程")
                 self.page.get(current_url)
                 time.sleep(2)
                 return True
             
+            # 解析表格数据
             rows = table.eles("tag:tr")
             info = []
             
@@ -944,6 +897,7 @@ class LinuxDoBrowser:
             else:
                 logger.warning("⚠️ 未找到连接信息数据")
             
+            # 返回原页面
             self.page.get(current_url)
             time.sleep(2)
             
@@ -1000,12 +954,10 @@ class LinuxDoBrowser:
 
 # ======================== 主函数 ========================
 def main():
-    logger.info("🚀 Linux.Do 自动化 v3.4 启动")
+    logger.info("🚀 Linux.Do 自动化 v3.5 启动")
     
     if GITHUB_ACTIONS:
         logger.info("🎯 GitHub Actions 环境")
-    
-    logger.debug(f"UserScript: {'开' if EXTERNAL_LINKS_NEW_TAB else '关'} | 行为注入: {'开' if BEHAVIOR_INJECTION_ENABLED else '关'}")
     
     success_sites = []
     failed_sites = []
