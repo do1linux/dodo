@@ -21,7 +21,7 @@ import base64
 import requests
 from datetime import datetime
 from loguru import logger
-from DrissionsPage import ChromiumPage, ChromiumOptions
+from DrissionPage import ChromiumPage, ChromiumOptions
 from tabulate import tabulate
 
 # 日志配置 - 只保留INFO及以上级别
@@ -1032,3 +1032,4 @@ if __name__ == "__main__":
         logger.warning("⚠️ 未配置OCR_API_KEY，验证码处理将不可用")
     
     main()
+
