@@ -13,7 +13,7 @@ on:
           - linux_do
           - idcflare
   schedule:
-    - cron: '0 0-15 * * *'  # UTC时间，北京时间8-23点
+    - cron: '0 11 * * *'  # UTC时间，北京时间8-23点
 
 env:
   PYTHON_VERSION: '3.11'
