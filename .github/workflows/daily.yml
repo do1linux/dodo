@@ -1,4 +1,4 @@
-name: LinuxDo Smart Automation v3.0
+name: LinuxDo Smart Automation v3.1
 
 on:
   workflow_dispatch:
@@ -17,12 +17,12 @@ on:
 
 env:
   PYTHON_VERSION: '3.11'
-  CACHE_PRIMARY_KEY: ${{ github.ref }}-linuxdo-smart-cache-v8
+  CACHE_PRIMARY_KEY: ${{ github.ref }}-linuxdo-smart-cache-v9
 
 jobs:
   automate-smart:
     runs-on: ubuntu-22.04
-    timeout-minutes: 30  # 增加超时时间，新脚本更耗时
+    timeout-minutes: 35  # 增加至35分钟，新版本更耗时
 
     steps:
     - name: Checkout repository
@@ -60,12 +60,6 @@ jobs:
         pip install -r requirements.txt
         pip install DrissionPage --upgrade
 
-    # 🗑️ 移除 turnstilePatch 设置步骤 - 新脚本使用动态注入而非扩展
-    # - name: Setup turnstilePatch extension
-    #   run: |
-    #     python setup_directories.py
-    #     echo "✅ TurnstilePatch扩展设置完成"
-
     - name: 恢复智能缓存
       uses: actions/cache@v3
       id: cache-restore
@@ -74,7 +68,6 @@ jobs:
           *.json
           cache/
           sessions/
-          # turnstilePatch/  # 不再缓存扩展目录
         key: ${{ env.CACHE_PRIMARY_KEY }}-${{ github.sha }}
         restore-keys: |
           ${{ env.CACHE_PRIMARY_KEY }}-
@@ -94,13 +87,13 @@ jobs:
         BROWSE_ENABLED: 'true'
         FORCE_LOGIN: 'false'
         
-        # 🆕 新脚本环境变量
-        TURNSTILE_PATCH_ENABLED: 'true'      # 重命名统一
-        BEHAVIOR_INJECTION_ENABLED: 'true'   # 新增：启用UserScript行为注入
-        EXTERNAL_LINKS_NEW_TAB: 'true'       # 新增：外部链接新标签页处理
+        # 新脚本环境变量
+        TURNSTILE_PATCH_ENABLED: 'true'
+        BEHAVIOR_INJECTION_ENABLED: 'true'
+        EXTERNAL_LINKS_NEW_TAB: 'true'
         
       run: |
-        echo "🎯 开始执行智能自动化脚本 v3.0"
+        echo "🎯 开始执行智能自动化脚本 v3.1"
         echo "站点选择: $SITE_SELECTOR"
         echo "缓存恢复: ${{ steps.cache-restore.outputs.cache-hit == 'true' && '✅' || '❌' }}"
         echo "行为注入系统: ✅ (UserScript + 智能模拟)"
@@ -118,7 +111,6 @@ jobs:
           *.json
           cache/
           sessions/
-          # turnstilePatch/  # 不再缓存
         key: ${{ env.CACHE_PRIMARY_KEY }}-${{ github.sha }}
 
     - name: Upload tracking artifacts
@@ -128,7 +120,7 @@ jobs:
         name: linuxdo-tracking-data-${{ github.run_id }}
         path: |
           session_data_*.json
-          # 可添加失败截图用于调试
+          # 失败调试图
           # login_failure_*.png
           # topic_find_failure_*.png
         retention-days: 14
