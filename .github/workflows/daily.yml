@@ -13,11 +13,11 @@ on:
           - linux_do
           - idcflare
   schedule:
-    - cron: '0 0-15 * * *' 
+    - cron: '0 0-15 * * *'  # UTC时间，北京时间8-23点
 
 env:
   PYTHON_VERSION: '3.11'
-  CACHE_PRIMARY_KEY: ${{ github.ref }}-linuxdo-smart-cache-v8  # 更新版本号
+  CACHE_PRIMARY_KEY: ${{ github.ref }}-linuxdo-smart-cache-v8
 
 jobs:
   automate-smart:
@@ -95,9 +95,9 @@ jobs:
         FORCE_LOGIN: 'false'
         
         # 🆕 新脚本环境变量
-        TURNSTILE_PATCH_ENABLED: 'true'  # 重命名统一
-        BEHAVIOR_INJECTION_ENABLED: 'true'  # 启用行为注入
-        EXTERNAL_LINKS_NEW_TAB: 'true'  # 启用外部链接新标签页
+        TURNSTILE_PATCH_ENABLED: 'true'      # 重命名统一
+        BEHAVIOR_INJECTION_ENABLED: 'true'   # 新增：启用UserScript行为注入
+        EXTERNAL_LINKS_NEW_TAB: 'true'       # 新增：外部链接新标签页处理
         
       run: |
         echo "🎯 开始执行智能自动化脚本 v3.0"
