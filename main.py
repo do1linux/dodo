@@ -2,15 +2,13 @@
 # -*- coding: utf-8 -*-
 
 """
-Linux.do 自动化浏览工具 - 增强版 v4.0
-====================================
-新增功能：
-1. ✅ 强制已读标记 - 5次滚动到底部确保网站记录阅读行为
-2. ✅ 页面活性证明 - 主动触发浏览器事件证明用户活跃
-3. ✅ 微导航机制 - 15%概率点击文章内链模拟真实探索
-4. ✅ 智能休眠系统 - 30%概率长休眠模拟真实用户行为
-5. ✅ 提前退出机制 - 5%概率模拟用户离开
-6. ✅ Canvas噪声注入 - 增强指纹伪装完整性
+Linux.do 自动化浏览工具 - 话题深度浏览版 v4.1
+=========================================
+重点修复：
+1. ✅ 主题内话题深度浏览 - 确保浏览主题下的所有话题
+2. ✅ 话题级强制已读标记 - 针对每个话题进行5次滚动
+3. ✅ 话题间自然过渡 - 模拟真实的话题阅读顺序
+4. ✅ 话题内容识别 - 精确识别和浏览主题内的话题内容
 """
 
 import os
@@ -749,37 +747,114 @@ class LinuxDoBrowser:
             logger.error(f"❌ 查找主题失败: {str(e)}")
             return []
 
-    # ======================== 新增功能方法 ========================
+    # ======================== 话题深度浏览核心功能 ========================
 
-    def force_mark_read(self, page=None):
-        """强制标记为已读 - 5次滚动到底部确保网站记录阅读行为"""
-        if page is None:
-            page = self.page
-            
-        logger.info("📖 强制标记为已读...")
-        for i in range(5):
-            try:
-                # 滚动到底部
-                page.run_js("window.scrollTo(0, document.body.scrollHeight);")
-                # 关键：长时间停留让网站记录阅读行为
-                wait_time = random.uniform(3, 8)
-                time.sleep(wait_time)
-                
-                # 偶尔滚动回中间模拟真实阅读
-                if random.random() < 0.3:
-                    page.run_js("window.scrollTo(0, document.body.scrollHeight * 0.3);")
-                    time.sleep(2)
-                    
-            except Exception as e:
-                logger.debug(f"滚动异常: {e}")
+    def find_posts_in_topic(self):
+        """在主题页面内查找所有话题（帖子）"""
+        logger.info("🔍 查找主题内的话题...")
         
-        logger.debug("✅ 强制标记完成")
-
-    def prove_page_activity(self, page=None):
-        """页面活性证明 - 主动触发浏览器事件证明用户活跃"""
-        if page is None:
-            page = self.page
+        try:
+            # 等待页面加载
+            self.page.wait.doc_loaded()
+            time.sleep(3)
             
+            # 查找所有话题元素 - Discourse通常使用 .topic-post 或 [data-post-id]
+            posts = []
+            
+            # 方法1: 通过数据属性查找
+            post_elements = self.page.eles('[data-post-id]')
+            if post_elements:
+                for element in post_elements:
+                    post_id = element.attr('data-post-id')
+                    if post_id and post_id.isdigit():
+                        posts.append({
+                            'element': element,
+                            'post_id': post_id,
+                            'type': 'data-attribute'
+                        })
+            
+            # 方法2: 通过CSS类查找
+            if not posts:
+                post_elements = self.page.eles('.topic-post')
+                for element in post_elements:
+                    posts.append({
+                        'element': element,
+                        'post_id': f"css_{len(posts)}",
+                        'type': 'css-class'
+                    })
+            
+            # 方法3: 通过文章标签查找
+            if not posts:
+                post_elements = self.page.eles('article')
+                for element in post_elements:
+                    posts.append({
+                        'element': element,
+                        'post_id': f"article_{len(posts)}",
+                        'type': 'article-tag'
+                    })
+            
+            logger.info(f"📝 在主题中找到 {len(posts)} 个话题")
+            return posts
+            
+        except Exception as e:
+            logger.error(f"❌ 查找话题失败: {str(e)}")
+            return []
+
+    def browse_post_content(self, post_element):
+        """深度浏览单个话题内容"""
+        try:
+            # 滚动到话题位置
+            self.page.run_js(f"""
+                arguments[0].scrollIntoView({{behavior: 'smooth', block: 'center'}});
+            """, post_element)
+            time.sleep(random.uniform(2, 4))
+            
+            # 证明页面活性
+            self.prove_page_activity()
+            
+            # 话题内容强制阅读 - 5次滚动到底部
+            logger.debug("📖 强制阅读话题内容...")
+            for i in range(5):
+                try:
+                    # 滚动到话题底部
+                    self.page.run_js("""
+                        const post = arguments[0];
+                        const postBottom = post.offsetTop + post.offsetHeight;
+                        window.scrollTo({top: postBottom - window.innerHeight + 100, behavior: 'smooth'});
+                    """, post_element)
+                    
+                    # 关键：长时间停留让网站记录阅读行为
+                    wait_time = random.uniform(3, 8)
+                    time.sleep(wait_time)
+                    
+                    # 偶尔滚动回话题顶部模拟真实阅读
+                    if random.random() < 0.3:
+                        self.page.run_js("""
+                            const post = arguments[0];
+                            window.scrollTo({top: post.offsetTop - 100, behavior: 'smooth'});
+                        """, post_element)
+                        time.sleep(2)
+                        
+                except Exception as e:
+                    logger.debug(f"话题滚动异常: {e}")
+            
+            # 微交互：偶尔点击话题内容
+            if random.random() < 0.2:
+                try:
+                    post_element.click()
+                    time.sleep(random.uniform(1, 3))
+                except:
+                    pass
+            
+            logger.debug("✅ 话题阅读完成")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ 话题浏览失败: {str(e)}")
+            return False
+
+    def prove_page_activity(self):
+        """页面活性证明 - 主动触发浏览器事件证明用户活跃"""
         try:
             js_code = """
             // 触发 visibilitychange 事件
@@ -799,30 +874,30 @@ class LinuxDoBrowser:
                 clientY: 100
             }));
             """
-            page.run_js(js_code)
+            self.page.run_js(js_code)
             time.sleep(1)
-            logger.debug("✅ 页面活性证明完成")
         except Exception as e:
             logger.debug(f"页面活性证明异常: {e}")
 
-    def micro_navigation(self, page=None):
-        """微导航机制 - 15%概率点击文章内链模拟真实探索"""
-        if page is None:
-            page = self.page
-            
+    def micro_navigation_in_topic(self):
+        """主题内微导航 - 15%概率点击相关链接"""
         if random.random() < 0.15:
             try:
-                # 只点击站内链接，避免外部链接
-                internal_links = page.eles('tag:a[href*="/t/"]') or page.eles('tag:a[href^="/"]')
+                # 在主题内点击相关链接（但不离开当前主题）
+                internal_links = self.page.eles('tag:a[href*="/t/"]')
                 if internal_links:
                     link = random.choice(internal_links)
                     link_text = link.text[:20] + "..." if len(link.text) > 20 else link.text
-                    logger.info(f"🔗 微导航点击: {link_text}")
+                    logger.info(f"🔗 主题内微导航: {link_text}")
                     link.click()
-                    time.sleep(random.uniform(8, 15))
+                    time.sleep(random.uniform(5, 10))
+                    
+                    # 返回原主题
+                    self.page.back()
+                    time.sleep(3)
                     return True
             except Exception as e:
-                logger.debug(f"微导航异常: {e}")
+                logger.debug(f"主题内微导航异常: {e}")
         
         return False
 
@@ -842,59 +917,10 @@ class LinuxDoBrowser:
             return True
         return False
 
-    def deep_scroll_browsing_enhanced(self, page=None):
-        """增强版深度滚动浏览 - 集成所有新功能"""
-        if page is None:
-            page = self.page
-        
-        # 1. 先证明页面活性
-        self.prove_page_activity(page)
-        
-        # 2. 随机滚动次数
-        scroll_count = random.randint(3, 7)
-        
-        for i in range(scroll_count):
-            scroll_distance = random.randint(300, 800)
-            page.run_js(f"window.scrollBy(0, {scroll_distance});")
-            
-            wait_time = random.uniform(2, 6)
-            time.sleep(wait_time)
-            
-            # 3. 偶尔微导航
-            if random.random() < 0.1:  # 10%概率
-                if self.micro_navigation(page):
-                    # 如果发生了导航，重新开始滚动
-                    break
-            
-            # 4. 检查是否到达底部
-            at_bottom = page.run_js(
-                "window.scrollY + window.innerHeight >= document.body.scrollHeight - 100"
-            )
-            if at_bottom:
-                bottom_wait = random.uniform(5, 8)
-                time.sleep(bottom_wait)
-                break
-            
-            # 5. 偶尔微交互
-            if random.random() < 0.3:
-                self.micro_interactions_in_page(page)
-        
-        # 6. 强制标记为已读（关键！）
-        self.force_mark_read(page)
-        
-        # 7. 智能休眠（30%概率长休眠）
-        self.smart_sleep()
-        
-        # 8. 提前退出机制（5%概率）
-        if self.early_exit():
-            return True
-        
-        return False
-
-    def browse_topic_enhanced(self, topic_url):
-        """增强版主题浏览"""
+    def browse_topic_posts_deep(self, topic_url):
+        """深度浏览主题内的所有话题"""
         try:
-            logger.info(f"📖 浏览主题: {topic_url.split('/')[-1]}")
+            logger.info(f"📖 深度浏览主题: {topic_url.split('/')[-1]}")
             
             # 访问主题
             self.page.get(topic_url)
@@ -903,78 +929,105 @@ class LinuxDoBrowser:
             # 应用规避策略
             self.apply_evasion_strategy()
             
-            # 增强版深度浏览
-            early_exit = self.deep_scroll_browsing_enhanced()
+            # 查找主题内的所有话题
+            posts = self.find_posts_in_topic()
+            if not posts:
+                logger.warning("⚠️ 主题内未找到话题，进行常规浏览")
+                return self.browse_topic_fallback(topic_url)
             
-            # 如果提前退出，直接返回
-            if early_exit:
+            success_count = 0
+            total_posts = len(posts)
+            
+            logger.info(f"📊 计划深度浏览 {total_posts} 个话题")
+            
+            # 逐个浏览话题
+            for i, post_info in enumerate(posts):
+                try:
+                    logger.info(f"  📝 浏览话题 {i+1}/{total_posts} (ID: {post_info['post_id']})")
+                    
+                    # 深度浏览单个话题
+                    if self.browse_post_content(post_info['element']):
+                        success_count += 1
+                    
+                    # 话题间等待
+                    if i < total_posts - 1:
+                        wait_time = random.uniform(5, 15)
+                        time.sleep(wait_time)
+                        
+                    # 偶尔主题内微导航
+                    if random.random() < 0.1:
+                        self.micro_navigation_in_topic()
+                        
+                except Exception as e:
+                    logger.error(f"❌ 浏览话题 {i+1} 失败: {str(e)}")
+                    continue
+            
+            # 主题整体滚动浏览（备用）
+            self.deep_scroll_topic_overview()
+            
+            # 智能休眠
+            self.smart_sleep()
+            
+            # 提前退出机制
+            if self.early_exit():
                 return True
                 
+            logger.success(f"✅ 主题浏览完成: {success_count}/{total_posts} 个话题深度阅读")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ 主题深度浏览失败: {str(e)}")
+            return False
+
+    def browse_topic_fallback(self, topic_url):
+        """备用浏览方案 - 当无法识别话题时使用"""
+        try:
+            logger.info("🔄 使用备用浏览方案")
+            
+            # 整体主题滚动浏览
+            self.deep_scroll_topic_overview()
+            
             # 额外停留确保记录
-            extra_wait = random.uniform(5, 12)
+            extra_wait = random.uniform(10, 20)
             time.sleep(extra_wait)
             
             return True
             
         except Exception as e:
-            logger.error(f"❌ 浏览主题失败: {str(e)}")
+            logger.error(f"❌ 备用浏览失败: {str(e)}")
             return False
 
-    def browse_topics_user_script_aware(self):
-        """增强版主题浏览 - 集成所有新功能"""
-        if not BROWSE_ENABLED:
-            logger.info("⏭️ 浏览功能已禁用")
-            return 0
-
+    def deep_scroll_topic_overview(self):
+        """主题整体滚动浏览"""
         try:
-            logger.info(f"🌐 开始浏览 {self.site_name} 主题...")
+            # 随机滚动次数
+            scroll_count = random.randint(3, 7)
             
-            # 注入UserScript
-            if BEHAVIOR_INJECTION_ENABLED and self.user_script:
-                self.user_script.inject_external_link_handler()
+            for i in range(scroll_count):
+                scroll_distance = random.randint(300, 800)
+                self.page.run_js(f"window.scrollBy(0, {scroll_distance});")
+                
+                wait_time = random.uniform(2, 6)
+                time.sleep(wait_time)
+                
+                # 检查是否到达底部
+                at_bottom = self.page.run_js(
+                    "window.scrollY + window.innerHeight >= document.body.scrollHeight - 100"
+                )
+                if at_bottom:
+                    bottom_wait = random.uniform(5, 8)
+                    time.sleep(bottom_wait)
+                    break
+                
+                # 偶尔微交互
+                if random.random() < 0.3:
+                    self.micro_interactions_in_page(self.page)
             
-            # 获取主题列表
-            self.page.get(self.site_config['unread_url'])
-            self.apply_evasion_strategy()
-            
-            topic_urls = self.find_topic_elements()
-            if not topic_urls:
-                logger.warning("❌ 未找到可浏览的主题")
-                return 0
-            
-            # 选择要浏览的主题
-            browse_count = min(random.randint(3, 6), len(topic_urls))
-            selected_urls = random.sample(topic_urls, browse_count)
-            success_count = 0
-            
-            logger.info(f"📊 计划浏览 {browse_count} 个主题")
-            
-            for i, topic_url in enumerate(selected_urls):
-                try:
-                    logger.info(f"📖 浏览主题 {i+1}/{browse_count}")
-                    
-                    # 使用增强版主题浏览
-                    if self.browse_topic_enhanced(topic_url):
-                        success_count += 1
-                    
-                    # 返回列表页
-                    self.page.get(self.site_config['unread_url'])
-                    time.sleep(2)
-                    
-                    # 主题间等待
-                    if i < browse_count - 1:
-                        time.sleep(random.uniform(20, 40))
-                        
-                except Exception as e:
-                    logger.error(f"❌ 浏览主题失败: {str(e)}")
-                    continue
-            
-            logger.success(f"🎉 共成功浏览 {success_count} 个主题")
-            return success_count
+            return True
             
         except Exception as e:
-            logger.error(f"❌ 主题浏览失败: {str(e)}")
-            return 0
+            logger.debug(f"主题整体滚动异常: {e}")
+            return False
 
     def micro_interactions_in_page(self, page):
         """在指定页面的微交互"""
@@ -994,6 +1047,64 @@ class LinuxDoBrowser:
             time.sleep(random.uniform(0.5, 1.5))
         except:
             pass
+
+    def browse_topics_deep_reading(self):
+        """深度阅读版主题浏览 - 专门针对话题级浏览"""
+        if not BROWSE_ENABLED:
+            logger.info("⏭️ 浏览功能已禁用")
+            return 0
+
+        try:
+            logger.info(f"🌐 开始深度浏览 {self.site_name} 主题...")
+            
+            # 注入UserScript
+            if BEHAVIOR_INJECTION_ENABLED and self.user_script:
+                self.user_script.inject_external_link_handler()
+            
+            # 获取主题列表
+            self.page.get(self.site_config['unread_url'])
+            self.apply_evasion_strategy()
+            
+            topic_urls = self.find_topic_elements()
+            if not topic_urls:
+                logger.warning("❌ 未找到可浏览的主题")
+                return 0
+            
+            # 选择要浏览的主题（数量减少，因为每个主题内要浏览多个话题）
+            browse_count = min(random.randint(2, 4), len(topic_urls))
+            selected_urls = random.sample(topic_urls, browse_count)
+            success_count = 0
+            
+            logger.info(f"📊 计划深度浏览 {browse_count} 个主题")
+            
+            for i, topic_url in enumerate(selected_urls):
+                try:
+                    logger.info(f"📖 深度浏览主题 {i+1}/{browse_count}")
+                    
+                    # 使用深度话题浏览
+                    if self.browse_topic_posts_deep(topic_url):
+                        success_count += 1
+                    
+                    # 返回列表页
+                    self.page.get(self.site_config['unread_url'])
+                    time.sleep(2)
+                    
+                    # 主题间等待（更长时间，因为每个主题浏览时间较长）
+                    if i < browse_count - 1:
+                        wait_time = random.uniform(30, 60)
+                        logger.info(f"⏳ 主题间等待 {wait_time:.1f} 秒...")
+                        time.sleep(wait_time)
+                        
+                except Exception as e:
+                    logger.error(f"❌ 深度浏览主题失败: {str(e)}")
+                    continue
+            
+            logger.success(f"🎉 共成功深度浏览 {success_count} 个主题")
+            return success_count
+            
+        except Exception as e:
+            logger.error(f"❌ 深度主题浏览失败: {str(e)}")
+            return 0
 
     def get_connect_info_single_tab(self):
         """单标签页获取连接信息 - 恢复表格打印"""
@@ -1085,13 +1196,13 @@ class LinuxDoBrowser:
             if not connect_success and self.site_name != 'idcflare':
                 logger.warning(f"⚠️ {self.site_name} 连接信息获取失败")
 
-            # 3. 增强版主题浏览（集成所有新功能）
-            browse_count = self.browse_topics_user_script_aware()
+            # 3. 深度话题浏览（专门针对话题级浏览）
+            browse_count = self.browse_topics_deep_reading()
             
             # 4. 保存缓存
             self.save_caches()
             
-            logger.success(f"✅ {self.site_name} 处理完成 - 浏览 {browse_count} 个主题")
+            logger.success(f"✅ {self.site_name} 处理完成 - 深度浏览 {browse_count} 个主题")
             return True
             
         except Exception as e:
@@ -1108,7 +1219,7 @@ class LinuxDoBrowser:
 
 # ======================== 主函数 ========================
 def main():
-    logger.info("🚀 Linux.Do 自动化 v4.0 增强版启动")
+    logger.info("🚀 Linux.Do 自动化 v4.1 话题深度浏览版启动")
     
     if GITHUB_ACTIONS:
         logger.info("🎯 GitHub Actions 环境")
