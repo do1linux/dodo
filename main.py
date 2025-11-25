@@ -2,13 +2,12 @@
 # -*- coding: utf-8 -*-
 
 """
-Linux.do 自动化浏览工具 - 优化版 v4.2
+Linux.do 自动化浏览工具 - 修复版 v4.3
 ====================================
-优化内容：
-1. ✅ 移除失效的话题查找功能
-2. ✅ 集成1%概率点赞功能
-3. ✅ 保持话题深度浏览核心逻辑
-4. ✅ 优化行为模拟和反检测
+修复内容：
+1. ✅ 修复 CacheManager 递归调用错误
+2. ✅ 保持所有优化功能
+3. ✅ 增强错误处理
 """
 
 import os
@@ -185,7 +184,8 @@ class CacheManager:
 
     @staticmethod
     def get_cache_file_path(file_name):
-        return os.path.join(CacheManager.get_cache_file_path(file_name))
+        # 修复：直接返回文件路径，而不是递归调用
+        return os.path.join(CacheManager.get_cache_directory(), file_name)
 
     @staticmethod
     def load_cache(file_name):
@@ -297,6 +297,8 @@ class LinuxDoBrowser:
             
             # 加载会话数据
             self.session_data = CacheManager.load_site_cache(self.site_name, 'session_data') or {}
+            
+            logger.info("✅ 浏览器初始化成功")
         
         except Exception as e:
             logger.error(f"❌ 浏览器初始化失败: {str(e)}")
@@ -1129,7 +1131,7 @@ class LinuxDoBrowser:
 
 # ======================== 主函数 ========================
 def main():
-    logger.info("🚀 Linux.Do 自动化 v4.2 优化版启动")
+    logger.info("🚀 Linux.Do 自动化 v4.3 修复版启动")
     
     if GITHUB_ACTIONS:
         logger.info("🎯 GitHub Actions 环境")
