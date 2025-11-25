@@ -748,58 +748,7 @@ class LinuxDoBrowser:
             return []
 
     # ======================== 话题深度浏览核心功能 ========================
-
-    def find_posts_in_topic(self):
-        """在主题页面内查找所有话题（帖子）"""
-        logger.info("🔍 查找主题内的话题...")
-        
-        try:
-            # 等待页面加载
-            self.page.wait.doc_loaded()
-            time.sleep(3)
-            
-            # 查找所有话题元素 - Discourse通常使用 .topic-post 或 [data-post-id]
-            posts = []
-            
-            # 方法1: 通过数据属性查找
-            post_elements = self.page.eles('[data-post-id]')
-            if post_elements:
-                for element in post_elements:
-                    post_id = element.attr('data-post-id')
-                    if post_id and post_id.isdigit():
-                        posts.append({
-                            'element': element,
-                            'post_id': post_id,
-                            'type': 'data-attribute'
-                        })
-            
-            # 方法2: 通过CSS类查找
-            if not posts:
-                post_elements = self.page.eles('.topic-post')
-                for element in post_elements:
-                    posts.append({
-                        'element': element,
-                        'post_id': f"css_{len(posts)}",
-                        'type': 'css-class'
-                    })
-            
-            # 方法3: 通过文章标签查找
-            if not posts:
-                post_elements = self.page.eles('article')
-                for element in post_elements:
-                    posts.append({
-                        'element': element,
-                        'post_id': f"article_{len(posts)}",
-                        'type': 'article-tag'
-                    })
-            
-            logger.info(f"📝 在主题中找到 {len(posts)} 个话题")
-            return posts
-            
-        except Exception as e:
-            logger.error(f"❌ 查找话题失败: {str(e)}")
-            return []
-
+ 
     def browse_post_content(self, post_element):
         """深度浏览单个话题内容"""
         try:
@@ -1297,3 +1246,4 @@ if __name__ == "__main__":
         logger.warning("⚠️ 未配置OCR_API_KEY，验证码处理将不可用")
     
     main()
+
