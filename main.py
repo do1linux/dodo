@@ -2,16 +2,15 @@
 # -*- coding: utf-8 -*-
 
 """
-Linux.do 自动化浏览工具 - 终极修复版 v3.2
+Linux.do 自动化浏览工具 - 终极修复版 v3.3
 ====================================
 修复清单：
-1. ✅ 修复UserScript注入API错误（TabWaiter无load_complete方法）
-2. ✅ 增强私有主题验证逻辑（增加会话生效等待与重试）
-3. ✅ 重构find_topic_elements基于href模式精准去重提取
-4. ✅ 补充缺失的实例方法
-5. ✅ 删除废弃环境变量
-6. ✅ 优化回退策略，确保链接点击可靠性
-7. ✅ 简化主题查找和浏览逻辑，提高稳定性
+1. ✅ 修复UserScript注入API错误
+2. ✅ 增强私有主题验证逻辑（双重验证）
+3. ✅ 简化主题查找逻辑
+4. ✅ 恢复连接信息可视化表格
+5. ✅ 精简日志输出
+6. ✅ 移除latest_url，统一使用unread_url
 """
 
 import os
@@ -46,7 +45,6 @@ SITES = [
         'login_url': 'https://linux.do/login',
         'private_topic_url': 'https://linux.do/t/topic/870130',
         'unread_url': 'https://linux.do/unread',
-        'latest_url': 'https://linux.do/latest',
         'connect_url': 'https://connect.linux.do',
         'user_url': 'https://linux.do/u',
         'cf_cookies_file': "cf_cookies_linux_do.json",
@@ -58,7 +56,6 @@ SITES = [
         'login_url': 'https://idcflare.com/login',
         'private_topic_url': 'https://idcflare.com/t/topic/24',
         'unread_url': 'https://idcflare.com/unread',
-        'latest_url': 'https://idcflare.com/latest',
         'connect_url': 'https://connect.idcflare.com',
         'user_url': 'https://idcflare.com/u',
         'cf_cookies_file': "cf_cookies_idcflare.json",
@@ -91,7 +88,6 @@ class UserScriptInjector:
             try:
                 self.page.wait.doc_loaded()
             except:
-                # 如果等待失败，尝试直接注入
                 pass
             
             js_code = """
@@ -180,7 +176,6 @@ class UserScriptInjector:
         except Exception as e:
             logger.warning(f"⚠️ UserScript注入失败: {str(e)}，尝试回退注入")
             try:
-                # 回退：直接注入
                 self.page.run_js(js_code)
                 self.injected = True
                 logger.debug("✅ UserScript回退注入成功")
@@ -310,7 +305,7 @@ class LinuxDoBrowser:
             
             # GitHub Actions 环境特殊配置
             if GITHUB_ACTIONS:
-                logger.info("🎯 GitHub Actions 环境优化配置")
+                logger.info("🎯 GitHub Actions 环境")
                 co.headless(True)
                 co.set_argument("--disable-dev-shm-usage")
                 co.set_argument("--disable-gpu")
@@ -325,8 +320,6 @@ class LinuxDoBrowser:
             co.incognito(True)
             co.set_argument("--no-sandbox")
             co.set_argument("--disable-dev-shm-usage")
-            
-            # 不加载任何外部扩展，减少指纹特征
             
             # 基础反检测配置
             co.set_argument("--disable-blink-features=AutomationControlled")
@@ -449,11 +442,9 @@ class LinuxDoBrowser:
                     clientY: Math.random() * window.innerHeight
                 }}));
             }}, 15000 + Math.random() * 15000);
-
-            console.log('🛡️ 增强指纹保护已启用');
             """
             self.page.run_js(js_code)
-            logger.debug("✅ 增强浏览器指纹优化已应用")
+            logger.debug("✅ 指纹优化已应用")
             
             # 注入 UserScript 处理外部链接
             if BEHAVIOR_INJECTION_ENABLED:
@@ -670,24 +661,21 @@ class LinuxDoBrowser:
                 page_title = self.page.title
                 check_count += 1
                 
-                logger.debug(f"Cloudflare检查 {check_count}: {page_title}")
-                
                 if page_title and "Checking" not in page_title and "Just a moment" not in page_title:
                     body_length = len(self.page.html)
                     if body_length > 1000:
-                        logger.info(f"✅ Cloudflare检查通过，页面长度: {body_length}")
+                        logger.debug(f"Cloudflare检查通过，页面长度: {body_length}")
                         return True
                 
                 if page_title and ("Checking" in page_title or "Just a moment" in page_title):
-                    logger.info(f"⏳ Cloudflare检查中... ({check_count})")
+                    logger.debug(f"Cloudflare检查中... ({check_count})")
                 
                 time.sleep(1)
                     
             except Exception as e:
-                logger.debug(f"Cloudflare检查异常: {str(e)}")
                 time.sleep(1)
         
-        logger.warning(f"⚠️ Cloudflare检查超时 ({timeout}秒)，继续执行")
+        logger.warning(f"Cloudflare检查超时 ({timeout}秒)，继续执行")
         return True
 
     def is_captcha_page(self):
@@ -741,7 +729,7 @@ class LinuxDoBrowser:
                 logger.warning("⚠️ 未找到验证码输入框")
                 return False
 
-            logger.info(f"🔍 OCR识别结果: {ocr_result}")
+            logger.debug(f"OCR识别结果: {ocr_result}")
             captcha_input.clear()
             captcha_input.input(ocr_result)
             time.sleep(1)
@@ -780,7 +768,7 @@ class LinuxDoBrowser:
                     if parsed_results:
                         parsed_text = parsed_results[0].get("ParsedText", "").strip()
                         if parsed_text:
-                            logger.info(f"🔍 OCR识别成功: {parsed_text}")
+                            logger.debug(f"OCR识别成功: {parsed_text}")
                             return parsed_text
                 else:
                     error_msg = result.get("ErrorMessage", "未知错误")
@@ -803,7 +791,7 @@ class LinuxDoBrowser:
             cookies = self.page.cookies()
             if cookies:
                 CacheManager.save_site_cache(cookies, self.site_name, 'cf_cookies')
-                logger.info(f"✅ 保存 {len(cookies)} 个Cookies")
+                logger.debug(f"保存 {len(cookies)} 个Cookies")
             
             session_data = {
                 'last_success': datetime.now().isoformat(),
@@ -854,55 +842,64 @@ class LinuxDoBrowser:
             return False
 
     def verify_login_status(self, max_retries=3):
-        """验证登录状态"""
+        """验证登录状态 - 双重验证"""
         logger.info("🔍 验证登录状态...")
+        
+        # 验证标志
+        private_topic_ok = False
+        username_ok = False
         
         for attempt in range(max_retries):
             try:
                 private_url = self.site_config['private_topic_url']
-                logger.info(f"📍 访问私有主题 (尝试 {attempt+1}/{max_retries}): {private_url}")
+                logger.info(f"📍 访问私有主题 (尝试 {attempt+1}/{max_retries})")
                 
                 self.page.get(private_url)
-                time.sleep(5)  # 增加等待时间，确保页面加载
+                time.sleep(5)
                 
                 self.handle_cloudflare_check()
-                time.sleep(3)  # 额外等待，确保会话生效
+                time.sleep(3)
                 
                 self.page.wait.eles_loaded('body', timeout=10)
                 
-                # 检查是否是404页面
+                # 检查404页面
                 page_title = self.page.title
                 if "找不到页面" in page_title or "404" in self.page.html:
-                    logger.warning(f"⚠️ 私有主题返回404，可能是会话未生效")
+                    logger.warning(f"⚠️ 私有主题返回404")
                     if attempt < max_retries - 1:
                         time.sleep(5)
                         continue
                 
-                # 多种验证方式
+                # 1. 私有主题验证
+                content = self.page.html
+                if "关于" in content and "类别" in content:
+                    private_topic_ok = True
+                    logger.debug("✅ 私有主题验证通过")
+                
+                # 2. 用户名验证
                 user_element = self.page.ele(f'text:{self.username}') or \
                               self.page.ele(f'@data-user-card:{self.username}') or \
                               self.page.ele(f'a[href*="{self.username}"]')
                 
                 if user_element:
-                    logger.success(f"✅ 找到用户名: {self.username}")
+                    username_ok = True
+                    logger.debug(f"✅ 用户名验证通过: {self.username}")
+                
+                # JS变量检查作为备用
+                if not username_ok:
+                    js_check = self.page.run_js(f"""
+                        return (window.currentUser && window.currentUser.username === '{self.username}') || 
+                               (window.Discourse && window.Discourse.User && 
+                                window.Discourse.User.current() && 
+                                window.Discourse.User.current().username === '{self.username}');
+                    """)
+                    if js_check:
+                        username_ok = True
+                        logger.debug(f"✅ JS用户名验证通过")
+                
+                # 双重验证必须都通过
+                if private_topic_ok and username_ok:
                     logger.success("🎉 双重验证通过")
-                    return True
-                
-                # JS变量检查
-                js_check = self.page.run_js(f"""
-                    return (window.currentUser && window.currentUser.username === '{self.username}') || 
-                           (window.Discourse && window.Discourse.User && 
-                            window.Discourse.User.current() && 
-                            window.Discourse.User.current().username === '{self.username}');
-                """)
-                if js_check:
-                    logger.success(f"✅ JS验证通过: {self.username}")
-                    return True
-                
-                # 用户菜单检查
-                user_menu = self.page.ele('#current-user') or self.page.ele('.user-menu')
-                if user_menu and self.username.lower() in user_menu.html.lower():
-                    logger.success(f"✅ 用户菜单验证通过: {self.username}")
                     return True
                 
                 time.sleep(2)
@@ -913,11 +910,6 @@ class LinuxDoBrowser:
                     time.sleep(3)
         
         logger.error(f"❌ 登录验证失败")
-        if GITHUB_ACTIONS:
-            try:
-                self.page.save_screenshot(f'login_failure_{self.site_name}.png')
-            except:
-                pass
         return False
 
     def login(self, max_retries=2):
@@ -926,7 +918,7 @@ class LinuxDoBrowser:
         
         for attempt in range(max_retries):
             try:
-                logger.info(f"🔐 执行登录 (尝试 {attempt+1}/{max_retries})...")
+                logger.info(f"🔐 执行登录 (尝试 {attempt+1}/{max_retries})")
                 
                 self.page.get(self.site_config['login_url'])
                 time.sleep(3)
@@ -950,10 +942,10 @@ class LinuxDoBrowser:
                 
                 logger.info("🔑 点击登录按钮...")
                 self.page.ele("#login-button").click()
-                time.sleep(12)  # 增加等待时间，确保登录完成并跳转到首页
+                time.sleep(12)
                 
                 self.handle_cloudflare_check()
-                time.sleep(3)   # 额外等待，确保会话完全生效
+                time.sleep(3)
                 
                 if self.verify_login_status():
                     logger.success("✅ 登录成功")
@@ -1038,7 +1030,7 @@ class LinuxDoBrowser:
                 self.user_script.inject_external_link_handler()
             
             # 获取主题列表
-            self.page.get(self.site_config['latest_url'])
+            self.page.get(self.site_config['unread_url'])
             self.apply_evasion_strategy()
             
             topic_urls = self.find_topic_elements()
@@ -1065,7 +1057,7 @@ class LinuxDoBrowser:
                     self.deep_scroll_browsing_enhanced()
                     
                     # 返回列表页
-                    self.page.get(self.site_config['latest_url'])
+                    self.page.get(self.site_config['unread_url'])
                     time.sleep(2)
                     
                     success_count += 1
@@ -1085,27 +1077,6 @@ class LinuxDoBrowser:
             logger.error(f"❌ 主题浏览失败: {str(e)}")
             return 0
 
-    def interact_in_new_tab(self, tab):
-        """在新标签页中进行交互"""
-        try:
-            # 等待页面加载
-            tab.wait.doc_loaded()
-            time.sleep(random.uniform(3, 6))
-            
-            # 深度浏览
-            self.deep_scroll_browsing_enhanced(tab)
-            
-            # 随机点赞
-            if random.random() < 0.05:
-                self.click_like_if_available_in_page(tab)
-            
-            # 微导航
-            if random.random() < 0.1:
-                self.micronavigation_in_page(tab)
-                
-        except Exception as e:
-            logger.debug(f"新标签页交互失败: {e}")
-    
     def deep_scroll_browsing_enhanced(self, page=None):
         """优化的深度滚动浏览"""
         if page is None:
@@ -1113,15 +1084,14 @@ class LinuxDoBrowser:
         
         # 随机滚动次数
         scroll_count = random.randint(3, 7)
-        logger.info(f"📜 计划滚动 {scroll_count} 次")
+        logger.debug(f"📜 滚动 {scroll_count} 次")
         
         for i in range(scroll_count):
             scroll_distance = random.randint(300, 800)
             page.run_js(f"window.scrollBy(0, {scroll_distance});")
-            logger.info(f"⬇️ 第{i+1}次滚动: {scroll_distance}px")
+            logger.debug(f"⬇️ 第{i+1}次滚动: {scroll_distance}px")
             
             wait_time = random.uniform(2, 6)
-            logger.info(f"⏳ 等待 {wait_time:.1f} 秒...")
             time.sleep(wait_time)
             
             # 检查是否到达底部
@@ -1129,9 +1099,8 @@ class LinuxDoBrowser:
                 "window.scrollY + window.innerHeight >= document.body.scrollHeight - 100"
             )
             if at_bottom:
-                logger.success("✅ 已到达页面底部")
+                logger.debug("✅ 到达页面底部")
                 bottom_wait = random.uniform(5, 8)
-                logger.info(f"⏳ 在底部停留 {bottom_wait:.1f} 秒...")
                 time.sleep(bottom_wait)
                 break
             
@@ -1139,131 +1108,9 @@ class LinuxDoBrowser:
             if random.random() < 0.3:
                 self.micro_interactions_in_page(page)
     
-    def click_like_if_available_in_page(self, page):
-        """在指定页面点赞"""
-        try:
-            like_button = page.ele('.discourse-reactions-reaction-button:not(.has-reacted)')
-            if like_button and like_button.states.is_visible:
-                logger.info("👍 找到未点赞的帖子...")
-                like_button.scroll.to_see()
-                time.sleep(0.5)
-                like_button.click()
-                time.sleep(1)
-                logger.success("✅ 点赞成功")
-                return True
-        except Exception as e:
-            logger.debug(f"点赞失败: {e}")
-        return False
-
-    def micronavigation_in_page(self, page):
-        """在指定页面执行微导航"""
-        try:
-            internal_links = page.eles('a[href*="/t/"]')
-            if internal_links:
-                random_link = random.choice(internal_links)
-                link_url = random_link.attr('href')
-                if link_url and '/t/' in link_url:
-                    logger.info(f"🔗 微导航到: {link_url}")
-                    random_link.click()
-                    time.sleep(random.uniform(4, 8))
-                    page.back()
-                    time.sleep(2)
-                    logger.info("✅ 微导航完成")
-        except Exception as e:
-            logger.debug(f"微导航失败: {e}")
-
-    def micro_interactions_in_page(self, page):
-        """在指定页面的微交互"""
-        try:
-            page.run_js("""
-                document.dispatchEvent(new MouseEvent('mousemove', {
-                    bubbles: true,
-                    clientX: Math.random() * window.innerWidth,
-                    clientY: Math.random() * window.innerHeight
-                }));
-                
-                const elements = document.querySelectorAll('p, div, span');
-                if (elements.length > 0) {
-                    elements[Math.floor(Math.random() * elements.length)].click();
-                }
-            """)
-            time.sleep(random.uniform(0.5, 1.5))
-        except:
-            pass
-    
-    def random_activities_during_wait(self, total_wait):
-        """等待期间进行随机活动"""
-        activities = [
-            self.random_scroll_activity,
-            self.random_click_activity,
-            self.reading_simulation,
-            self.navigation_activity
-        ]
-        
-        remaining = total_wait
-        while remaining > 0:
-            activity = random.choice(activities)
-            activity_time = min(remaining, random.uniform(8, 15))
-            
-            start = time.time()
-            activity()
-            elapsed = time.time() - start
-            
-            remaining -= elapsed
-            if remaining > 0:
-                time.sleep(min(remaining, random.uniform(5, 10)))
-    
-    def random_scroll_activity(self):
-        """随机滚动"""
-        try:
-            scroll_actions = [
-                "window.scrollTo(0, document.body.scrollHeight * Math.random());",
-                "window.scrollBy(0, 300 + Math.random() * 500);",
-                "window.scrollTo({top: Math.random() * document.body.scrollHeight, behavior: 'smooth'});"
-            ]
-            self.page.run_js(random.choice(scroll_actions))
-            time.sleep(random.uniform(2, 5))
-        except:
-            pass
-    
-    def random_click_activity(self):
-        """随机点击空白处"""
-        try:
-            if random.random() < 0.3:
-                self.page.run_js("""
-                    const elements = document.querySelectorAll('p, div, span');
-                    if (elements.length > 0) {
-                        elements[Math.floor(Math.random() * elements.length)].click();
-                    }
-                """)
-                time.sleep(random.uniform(0.5, 2))
-        except:
-            pass
-    
-    def reading_simulation(self):
-        """阅读模拟"""
-        try:
-            time.sleep(random.uniform(5, 10))
-            for _ in range(random.randint(1, 3)):
-                self.page.run_js("window.scrollBy(0, 50 + Math.random() * 100);")
-                time.sleep(random.uniform(1, 3))
-        except:
-            pass
-    
-    def navigation_activity(self):
-        """导航活动"""
-        try:
-            if random.random() < 0.2:
-                self.page.run_js("window.history.back();")
-                time.sleep(1)
-                self.page.run_js("window.history.forward();")
-                time.sleep(1)
-        except:
-            pass
-
     def get_connect_info_single_tab(self):
-        """单标签页获取连接信息"""
-        logger.info("🔗 单标签页获取连接信息...")
+        """单标签页获取连接信息 - 恢复表格打印"""
+        logger.info("🔗 获取连接信息...")
         
         try:
             current_url = self.page.url
@@ -1366,33 +1213,14 @@ class LinuxDoBrowser:
             except:
                 pass
 
-# ======================== 补充缺失的实例方法 ========================
-def click_like_if_available(self):
-    """在当前页面点赞（如果可用）"""
-    return self.click_like_if_available_in_page(self.page)
-
-def micronavigation(self):
-    """在当前页面执行微导航"""
-    return self.micronavigation_in_page(self.page)
-
-def micro_interactions(self):
-    """在当前页面的微交互"""
-    return self.micro_interactions_in_page(self.page)
-
-# 将方法绑定到类
-LinuxDoBrowser.click_like_if_available = click_like_if_available
-LinuxDoBrowser.micronavigation = micronavigation
-LinuxDoBrowser.micro_interactions = micro_interactions
-
 # ======================== 主函数 ========================
 def main():
-    logger.info("🚀 Linux.Do 终极修复版 v3.2 启动")
+    logger.info("🚀 Linux.Do 自动化 v3.3 启动")
     
     if GITHUB_ACTIONS:
-        logger.info("🎯 GitHub Actions 环境检测")
+        logger.info("🎯 GitHub Actions 环境")
     
-    logger.info(f"🎯 UserScript 外部链接处理: {'已启用' if EXTERNAL_LINKS_NEW_TAB else '已禁用'}")
-    logger.info(f"🎯 行为注入系统: {'已启用' if BEHAVIOR_INJECTION_ENABLED else '已禁用'}")
+    logger.debug(f"UserScript: {'开' if EXTERNAL_LINKS_NEW_TAB else '关'} | 行为注入: {'开' if BEHAVIOR_INJECTION_ENABLED else '关'}")
     
     success_sites = []
     failed_sites = []
@@ -1443,11 +1271,11 @@ def main():
             time.sleep(wait_time)
 
     # 总结
-    logger.info("=" * 80)
-    logger.info("📊 完整执行总结:")
-    logger.info(f"✅ 成功站点: {', '.join(success_sites) if success_sites else '无'}")
-    logger.info(f"❌ 失败站点: {', '.join(failed_sites) if failed_sites else '无'}")
-    logger.info("=" * 80)
+    logger.info("=" * 60)
+    logger.info("📊 执行总结:")
+    logger.info(f"✅ 成功: {', '.join(success_sites) if success_sites else '无'}")
+    logger.info(f"❌ 失败: {', '.join(failed_sites) if failed_sites else '无'}")
+    logger.info("=" * 60)
 
     if success_sites:
         logger.success(f"🎉 任务完成: {len(success_sites)}/{len(target_sites)} 个站点成功")
