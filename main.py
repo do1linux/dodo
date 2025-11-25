@@ -5,10 +5,11 @@
 Linux.do 自动化浏览工具 - 终极集成版 v3.0
 ====================================
 核心改进：
-1. 完美融合 Discourse UserScript 核心逻辑
-2. 智能外部链接检测与新标签页处理
-3. 分层行为模拟（JS层 + Python层协同）
-4. 防冲突机制避免重复操作
+1. 动态UserScript注入替代外部扩展
+2. 智能外部链接新标签页处理
+3. 分层行为模拟（JS层+Python层协同）
+4. 单标签页为主架构，自动管理新标签
+5. 增强反检测指纹与规避策略
 """
 
 import os
@@ -25,7 +26,6 @@ from DrissionPage import ChromiumPage, ChromiumOptions
 from tabulate import tabulate
 
 # ======================== 配置常量 ========================
-# ... 保持原有配置不变 ...
 SITE_CREDENTIALS = {
     'linux_do': {
         'username': os.getenv('LINUXDO_USERNAME'),
@@ -66,12 +66,13 @@ SITES = [
 BROWSE_ENABLED = os.environ.get("BROWSE_ENABLED", "true").strip().lower() not in ["false", "0", "off"]
 HEADLESS = os.environ.get("HEADLESS", "true").strip().lower() not in ["false", "0", "off"]
 FORCE_LOGIN_EVERY_TIME = os.environ.get("FORCE_LOGIN", "false").strip().lower() in ["true", "1", "on"]
+TURNSTILE_PATCH_ENABLED = os.environ.get("TURNSTILE_PATCH_ENABLED", "true").strip().lower() not in ["false", "0", "off"]
 BEHAVIOR_INJECTION_ENABLED = os.environ.get("BEHAVIOR_INJECTION_ENABLED", "true").strip().lower() not in ["false", "0", "off"]
 EXTERNAL_LINKS_NEW_TAB = os.environ.get("EXTERNAL_LINKS_NEW_TAB", "true").strip().lower() not in ["false", "0", "off"]
 OCR_API_KEY = os.getenv("OCR_API_KEY")
 GITHUB_ACTIONS = os.environ.get("GITHUB_ACTIONS") == "true"
 
-# ======================== 动态UserScript注入系统 ========================
+# ======================== UserScript注入系统 ========================
 class UserScriptInjector:
     """融合 Discourse UserScript 核心逻辑的外部链接处理器"""
     
@@ -81,18 +82,15 @@ class UserScriptInjector:
         self.injected = False
         
     def inject_external_link_handler(self):
-        """注入处理外部链接的 UserScript"""
+        """注入处理外部链接的UserScript"""
         try:
-            # 核心逻辑：在新标签页打开外部链接，内部链接保持
             js_code = """
             (function() {
                 'use strict';
                 
-                // 防止重复注入
                 if (window.discourseUserScriptInjected) return;
                 window.discourseUserScriptInjected = true;
                 
-                // 判断是否为外部链接
                 function isExternalLink(url) {
                     if (!url || url.startsWith('#')) return false;
                     try {
@@ -103,7 +101,6 @@ class UserScriptInjector:
                     }
                 }
                 
-                // 判断是否为Discourse内部链接
                 function isInternalDiscourseLink(href) {
                     if (!href) return false;
                     const lowerHref = href.toLowerCase();
@@ -117,13 +114,11 @@ class UserScriptInjector:
                         lowerHref.includes('/login') ||
                         lowerHref.includes('/signup')
                     ) && !href.includes('/uploads/') && 
-                       !/\\.(png|jpg|jpeg|gif|webp|svg|zip|rar|7z|pdf|mp4|mp3)$/i.test(href) &&
+                       !/\.(png|jpg|jpeg|gif|webp|svg|zip|rar|7z|pdf|mp4|mp3)$/i.test(href) &&
                        !isExternalLink(href);
                 }
                 
-                // 智能链接点击处理器
                 document.addEventListener('click', function(e) {
-                    // 只处理真实用户点击
                     if (!e.isTrusted) return;
                     
                     const link = e.target.closest('a');
@@ -133,21 +128,16 @@ class UserScriptInjector:
                     if (!href) return;
                     
                     const baseUrl = '%s';
-                    
-                    // 处理相对路径
                     const fullUrl = href.startsWith('http') ? href : baseUrl + href;
                     
-                    // 核心逻辑：外部链接在新标签页打开
                     if (isExternalLink(fullUrl)) {
                         e.preventDefault();
                         e.stopPropagation();
                         
-                        // 短暂延迟后在新标签页打开
                         setTimeout(() => {
                             window.open(fullUrl, '_blank', 'noopener,noreferrer');
                         }, 50 + Math.random() * 150);
                         
-                        // 视觉反馈
                         link.style.opacity = '0.75';
                         setTimeout(() => {
                             link.style.opacity = '';
@@ -156,7 +146,6 @@ class UserScriptInjector:
                         return false;
                     }
                     
-                    // 内部链接：随机决定是否在新标签页打开（30%概率）
                     if (isInternalDiscourseLink(href) && Math.random() < 0.3) {
                         e.preventDefault();
                         e.stopPropagation();
@@ -173,31 +162,26 @@ class UserScriptInjector:
             })();
             """ % self.site_config['base_url']
             
-            # 确保页面加载完成
             self.page.wait.load_complete()
-            
-            # 注入脚本
             self.page.run_js(js_code)
             self.injected = True
-            logger.debug("✅ UserScript 注入成功")
-            
+            logger.debug("✅ UserScript注入成功")
             return True
             
         except Exception as e:
-            logger.debug(f"UserScript 注入失败: {str(e)}")
+            logger.debug(f"UserScript注入失败: {str(e)}")
             return False
     
     def inject_mouse_behavior(self):
-        """补充鼠标行为（与 Python 层不冲突）"""
+        """补充低频率鼠标移动"""
         try:
             js_code = """
             (function() {
                 if (window.mouseBehaviorInjected) return;
                 window.mouseBehaviorInjected = true;
                 
-                // 低频率的随机鼠标移动
                 setInterval(() => {
-                    if (Math.random() < 0.2) return; // 80%概率不移动
+                    if (Math.random() < 0.2) return;
                     
                     const x = Math.random() * window.innerWidth;
                     const y = Math.random() * window.innerHeight;
@@ -220,7 +204,7 @@ class UserScriptInjector:
         except Exception:
             return False
 
-# ======================== 缓存管理器（保持不变） ========================
+# ======================== 缓存管理器 ========================
 class CacheManager:
     @staticmethod
     def get_cache_directory():
@@ -462,7 +446,7 @@ class LinuxDoBrowser:
         
         except Exception as e:
             logger.debug(f"指纹优化异常: {str(e)}")
-    
+
     def random_sleep(self):
         """增加随机休眠"""
         if random.random() < 0.3:
