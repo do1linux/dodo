@@ -2,13 +2,15 @@
 # -*- coding: utf-8 -*-
 
 """
-Linux.do 自动化浏览工具 - 终极修复版 v3.5
+Linux.do 自动化浏览工具 - 增强版 v4.0
 ====================================
-修复清单：
-1. ✅ 修复连接信息表格获取失败问题（增加智能等待）
-2. ✅ 精简日志输出，移除非关键DEBUG日志
-3. ✅ 优化验证规避策略在连接信息获取中的应用
-4. ✅ 增强表格数据解析健壮性
+新增功能：
+1. ✅ 强制已读标记 - 5次滚动到底部确保网站记录阅读行为
+2. ✅ 页面活性证明 - 主动触发浏览器事件证明用户活跃
+3. ✅ 微导航机制 - 15%概率点击文章内链模拟真实探索
+4. ✅ 智能休眠系统 - 30%概率长休眠模拟真实用户行为
+5. ✅ 提前退出机制 - 5%概率模拟用户离开
+6. ✅ Canvas噪声注入 - 增强指纹伪装完整性
 """
 
 import os
@@ -303,7 +305,7 @@ class LinuxDoBrowser:
             raise
 
     def enhance_browser_fingerprint(self):
-        """浏览器指纹优化"""
+        """浏览器指纹优化 - 新增Canvas噪声注入"""
         try:
             # 使用更真实的硬件参数
             resolutions = [(1920,1080), (1366,768), (1536,864), (1440,900)]
@@ -334,6 +336,20 @@ class LinuxDoBrowser:
             // 屏幕属性
             Object.defineProperty(screen, 'width', {{get: () => {width}}});
             Object.defineProperty(screen, 'height', {{get: () => {height}}});
+
+            // Canvas指纹噪声注入
+            const originalGetContext = HTMLCanvasElement.prototype.getContext;
+            HTMLCanvasElement.prototype.getContext = function(...args) {{
+                const context = originalGetContext.apply(this, args);
+                if (context && args[0] === '2d') {{
+                    const originalFillText = context.fillText;
+                    context.fillText = function(...textArgs) {{
+                        textArgs[0] = textArgs[0] + ' ' + Math.random().toString(36).substr(2, 1);
+                        return originalFillText.apply(this, textArgs);
+                    }};
+                }}
+                return context;
+            }};
             """
             self.page.run_js(js_code)
             
@@ -733,8 +749,179 @@ class LinuxDoBrowser:
             logger.error(f"❌ 查找主题失败: {str(e)}")
             return []
 
+    # ======================== 新增功能方法 ========================
+
+    def force_mark_read(self, page=None):
+        """强制标记为已读 - 5次滚动到底部确保网站记录阅读行为"""
+        if page is None:
+            page = self.page
+            
+        logger.info("📖 强制标记为已读...")
+        for i in range(5):
+            try:
+                # 滚动到底部
+                page.run_js("window.scrollTo(0, document.body.scrollHeight);")
+                # 关键：长时间停留让网站记录阅读行为
+                wait_time = random.uniform(3, 8)
+                time.sleep(wait_time)
+                
+                # 偶尔滚动回中间模拟真实阅读
+                if random.random() < 0.3:
+                    page.run_js("window.scrollTo(0, document.body.scrollHeight * 0.3);")
+                    time.sleep(2)
+                    
+            except Exception as e:
+                logger.debug(f"滚动异常: {e}")
+        
+        logger.debug("✅ 强制标记完成")
+
+    def prove_page_activity(self, page=None):
+        """页面活性证明 - 主动触发浏览器事件证明用户活跃"""
+        if page is None:
+            page = self.page
+            
+        try:
+            js_code = """
+            // 触发 visibilitychange 事件
+            document.dispatchEvent(new Event('visibilitychange'));
+            
+            // 触发 focus 事件
+            window.dispatchEvent(new Event('focus'));
+            
+            // 触发 scroll 事件
+            window.dispatchEvent(new Event('scroll'));
+            
+            // 触发鼠标移动事件
+            document.dispatchEvent(new MouseEvent('mousemove', {
+                bubbles: true,
+                cancelable: true,
+                clientX: 100,
+                clientY: 100
+            }));
+            """
+            page.run_js(js_code)
+            time.sleep(1)
+            logger.debug("✅ 页面活性证明完成")
+        except Exception as e:
+            logger.debug(f"页面活性证明异常: {e}")
+
+    def micro_navigation(self, page=None):
+        """微导航机制 - 15%概率点击文章内链模拟真实探索"""
+        if page is None:
+            page = self.page
+            
+        if random.random() < 0.15:
+            try:
+                # 只点击站内链接，避免外部链接
+                internal_links = page.eles('tag:a[href*="/t/"]') or page.eles('tag:a[href^="/"]')
+                if internal_links:
+                    link = random.choice(internal_links)
+                    link_text = link.text[:20] + "..." if len(link.text) > 20 else link.text
+                    logger.info(f"🔗 微导航点击: {link_text}")
+                    link.click()
+                    time.sleep(random.uniform(8, 15))
+                    return True
+            except Exception as e:
+                logger.debug(f"微导航异常: {e}")
+        
+        return False
+
+    def smart_sleep(self):
+        """智能休眠系统 - 30%概率长休眠模拟真实用户行为"""
+        if random.random() < 0.3:
+            sleep_time = random.uniform(60, 180)
+            logger.info(f"💤 智能休眠 {sleep_time:.1f} 秒")
+            time.sleep(sleep_time)
+            return True
+        return False
+
+    def early_exit(self):
+        """提前退出机制 - 5%概率模拟用户离开"""
+        if random.random() < 0.05:
+            logger.info("🚪 模拟用户提前离开")
+            return True
+        return False
+
+    def deep_scroll_browsing_enhanced(self, page=None):
+        """增强版深度滚动浏览 - 集成所有新功能"""
+        if page is None:
+            page = self.page
+        
+        # 1. 先证明页面活性
+        self.prove_page_activity(page)
+        
+        # 2. 随机滚动次数
+        scroll_count = random.randint(3, 7)
+        
+        for i in range(scroll_count):
+            scroll_distance = random.randint(300, 800)
+            page.run_js(f"window.scrollBy(0, {scroll_distance});")
+            
+            wait_time = random.uniform(2, 6)
+            time.sleep(wait_time)
+            
+            # 3. 偶尔微导航
+            if random.random() < 0.1:  # 10%概率
+                if self.micro_navigation(page):
+                    # 如果发生了导航，重新开始滚动
+                    break
+            
+            # 4. 检查是否到达底部
+            at_bottom = page.run_js(
+                "window.scrollY + window.innerHeight >= document.body.scrollHeight - 100"
+            )
+            if at_bottom:
+                bottom_wait = random.uniform(5, 8)
+                time.sleep(bottom_wait)
+                break
+            
+            # 5. 偶尔微交互
+            if random.random() < 0.3:
+                self.micro_interactions_in_page(page)
+        
+        # 6. 强制标记为已读（关键！）
+        self.force_mark_read(page)
+        
+        # 7. 智能休眠（30%概率长休眠）
+        self.smart_sleep()
+        
+        # 8. 提前退出机制（5%概率）
+        if self.early_exit():
+            return True
+        
+        return False
+
+    def browse_topic_enhanced(self, topic_url):
+        """增强版主题浏览"""
+        try:
+            logger.info(f"📖 浏览主题: {topic_url.split('/')[-1]}")
+            
+            # 访问主题
+            self.page.get(topic_url)
+            time.sleep(random.uniform(4, 8))
+            
+            # 应用规避策略
+            self.apply_evasion_strategy()
+            
+            # 增强版深度浏览
+            early_exit = self.deep_scroll_browsing_enhanced()
+            
+            # 如果提前退出，直接返回
+            if early_exit:
+                return True
+                
+            # 额外停留确保记录
+            extra_wait = random.uniform(5, 12)
+            time.sleep(extra_wait)
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ 浏览主题失败: {str(e)}")
+            return False
+
     def browse_topics_user_script_aware(self):
-        """简洁版主题浏览"""
+        """增强版主题浏览 - 集成所有新功能"""
         if not BROWSE_ENABLED:
             logger.info("⏭️ 浏览功能已禁用")
             return 0
@@ -756,7 +943,7 @@ class LinuxDoBrowser:
                 return 0
             
             # 选择要浏览的主题
-            browse_count = min(random.randint(8, 12), len(topic_urls))
+            browse_count = min(random.randint(3, 6), len(topic_urls))
             selected_urls = random.sample(topic_urls, browse_count)
             success_count = 0
             
@@ -766,18 +953,13 @@ class LinuxDoBrowser:
                 try:
                     logger.info(f"📖 浏览主题 {i+1}/{browse_count}")
                     
-                    # 直接访问主题
-                    self.page.get(topic_url)
-                    time.sleep(random.uniform(4, 8))
-                    
-                    # 深度浏览
-                    self.deep_scroll_browsing_enhanced()
+                    # 使用增强版主题浏览
+                    if self.browse_topic_enhanced(topic_url):
+                        success_count += 1
                     
                     # 返回列表页
                     self.page.get(self.site_config['unread_url'])
                     time.sleep(2)
-                    
-                    success_count += 1
                     
                     # 主题间等待
                     if i < browse_count - 1:
@@ -794,34 +976,6 @@ class LinuxDoBrowser:
             logger.error(f"❌ 主题浏览失败: {str(e)}")
             return 0
 
-    def deep_scroll_browsing_enhanced(self, page=None):
-        """优化的深度滚动浏览"""
-        if page is None:
-            page = self.page
-        
-        # 随机滚动次数
-        scroll_count = random.randint(3, 7)
-        
-        for i in range(scroll_count):
-            scroll_distance = random.randint(300, 800)
-            page.run_js(f"window.scrollBy(0, {scroll_distance});")
-            
-            wait_time = random.uniform(2, 6)
-            time.sleep(wait_time)
-            
-            # 检查是否到达底部
-            at_bottom = page.run_js(
-                "window.scrollY + window.innerHeight >= document.body.scrollHeight - 100"
-            )
-            if at_bottom:
-                bottom_wait = random.uniform(5, 8)
-                time.sleep(bottom_wait)
-                break
-            
-            # 偶尔微交互
-            if random.random() < 0.3:
-                self.micro_interactions_in_page(page)
-    
     def micro_interactions_in_page(self, page):
         """在指定页面的微交互"""
         try:
@@ -931,7 +1085,7 @@ class LinuxDoBrowser:
             if not connect_success and self.site_name != 'idcflare':
                 logger.warning(f"⚠️ {self.site_name} 连接信息获取失败")
 
-            # 3. UserScript 感知版主题浏览
+            # 3. 增强版主题浏览（集成所有新功能）
             browse_count = self.browse_topics_user_script_aware()
             
             # 4. 保存缓存
@@ -954,7 +1108,7 @@ class LinuxDoBrowser:
 
 # ======================== 主函数 ========================
 def main():
-    logger.info("🚀 Linux.Do 自动化 v3.5 启动")
+    logger.info("🚀 Linux.Do 自动化 v4.0 增强版启动")
     
     if GITHUB_ACTIONS:
         logger.info("🎯 GitHub Actions 环境")
@@ -1032,5 +1186,3 @@ if __name__ == "__main__":
         logger.warning("⚠️ 未配置OCR_API_KEY，验证码处理将不可用")
     
     main()
-
-
