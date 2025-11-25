@@ -2,14 +2,15 @@
 # -*- coding: utf-8 -*-
 
 """
-Linux.do 自动化浏览工具 - 终极集成版 v3.0
+Linux.do 自动化浏览工具 - 终极修复版 v3.1
 ====================================
-核心改进：
-1. 动态UserScript注入替代外部扩展
-2. 智能外部链接新标签页处理
-3. 分层行为模拟（JS层+Python层协同）
-4. 单标签页为主架构，自动管理新标签
-5. 增强反检测指纹与规避策略
+修复清单：
+1. ✅ 修复UserScript注入API错误（TabWaiter无load_complete方法）
+2. ✅ 增强私有主题验证逻辑（增加会话生效等待与重试）
+3. ✅ 重构find_topic_elements基于href模式精准去重提取
+4. ✅ 补充缺失的实例方法
+5. ✅ 删除废弃环境变量
+6. ✅ 优化回退策略，确保链接点击可靠性
 """
 
 import os
@@ -42,7 +43,7 @@ SITES = [
         'name': 'linux_do',
         'base_url': 'https://linux.do',
         'login_url': 'https://linux.do/login',
-        'private_topic_url': 'https://linux.do/t/topic/2362',
+        'private_topic_url': 'https://linux.do/t/topic/2362',  # 保持私有主题URL不变
         'latest_url': 'https://linux.do/latest',
         'connect_url': 'https://connect.linux.do',
         'user_url': 'https://linux.do/u',
@@ -66,7 +67,6 @@ SITES = [
 BROWSE_ENABLED = os.environ.get("BROWSE_ENABLED", "true").strip().lower() not in ["false", "0", "off"]
 HEADLESS = os.environ.get("HEADLESS", "true").strip().lower() not in ["false", "0", "off"]
 FORCE_LOGIN_EVERY_TIME = os.environ.get("FORCE_LOGIN", "false").strip().lower() in ["true", "1", "on"]
-TURNSTILE_PATCH_ENABLED = os.environ.get("TURNSTILE_PATCH_ENABLED", "true").strip().lower() not in ["false", "0", "off"]
 BEHAVIOR_INJECTION_ENABLED = os.environ.get("BEHAVIOR_INJECTION_ENABLED", "true").strip().lower() not in ["false", "0", "off"]
 EXTERNAL_LINKS_NEW_TAB = os.environ.get("EXTERNAL_LINKS_NEW_TAB", "true").strip().lower() not in ["false", "0", "off"]
 OCR_API_KEY = os.getenv("OCR_API_KEY")
@@ -84,6 +84,13 @@ class UserScriptInjector:
     def inject_external_link_handler(self):
         """注入处理外部链接的UserScript"""
         try:
+            # 修复API调用：使用doc_loaded()替代load_complete()
+            try:
+                self.page.wait.doc_loaded()
+            except:
+                # 如果等待失败，尝试直接注入
+                pass
+            
             js_code = """
             (function() {
                 'use strict';
@@ -162,15 +169,22 @@ class UserScriptInjector:
             })();
             """ % self.site_config['base_url']
             
-            self.page.wait.load_complete()
             self.page.run_js(js_code)
             self.injected = True
             logger.debug("✅ UserScript注入成功")
             return True
             
         except Exception as e:
-            logger.debug(f"UserScript注入失败: {str(e)}")
-            return False
+            logger.warning(f"⚠️ UserScript注入失败: {str(e)}，尝试回退注入")
+            try:
+                # 回退：直接注入
+                self.page.run_js(js_code)
+                self.injected = True
+                logger.debug("✅ UserScript回退注入成功")
+                return True
+            except Exception as e2:
+                logger.error(f"❌ UserScript回退注入失败: {e2}")
+                return False
     
     def inject_mouse_behavior(self):
         """补充低频率鼠标移动"""
@@ -310,7 +324,6 @@ class LinuxDoBrowser:
             co.set_argument("--disable-dev-shm-usage")
             
             # 不加载任何外部扩展，减少指纹特征
-            # 只保留核心反检测配置
             
             # 基础反检测配置
             co.set_argument("--disable-blink-features=AutomationControlled")
@@ -847,12 +860,20 @@ class LinuxDoBrowser:
                 logger.info(f"📍 访问私有主题 (尝试 {attempt+1}/{max_retries}): {private_url}")
                 
                 self.page.get(private_url)
-                time.sleep(3)
+                time.sleep(5)  # 增加等待时间，确保页面加载
                 
                 self.handle_cloudflare_check()
-                time.sleep(2)
+                time.sleep(3)  # 额外等待，确保会话生效
                 
                 self.page.wait.eles_loaded('body', timeout=10)
+                
+                # 检查是否是404页面
+                page_title = self.page.title
+                if "找不到页面" in page_title or "404" in self.page.html:
+                    logger.warning(f"⚠️ 私有主题返回404，可能是会话未生效")
+                    if attempt < max_retries - 1:
+                        time.sleep(5)
+                        continue
                 
                 # 多种验证方式
                 user_element = self.page.ele(f'text:{self.username}') or \
@@ -926,10 +947,10 @@ class LinuxDoBrowser:
                 
                 logger.info("🔑 点击登录按钮...")
                 self.page.ele("#login-button").click()
-                time.sleep(8)
+                time.sleep(12)  # 增加等待时间，确保登录完成并跳转到首页
                 
                 self.handle_cloudflare_check()
-                time.sleep(2)
+                time.sleep(3)   # 额外等待，确保会话完全生效
                 
                 if self.verify_login_status():
                     logger.success("✅ 登录成功")
@@ -958,33 +979,43 @@ class LinuxDoBrowser:
         return login_success
 
     def find_topic_elements(self):
-        """获取主题列表"""
+        """基于href模式精准去重提取"""
         logger.info("🎯 查找主题...")
         
         try:
             self.page.wait.ele_displayed('#list-area', timeout=10)
             
-            all_links = self.page.eles('tag:a')
-            topic_links = []
-            seen_urls = set()
+            # 获取所有包含/t/的链接
+            all_links = self.page.eles('a[href*="/t/"]', timeout=5)
+            
+            if not all_links:
+                logger.warning("⚠️ 未找到任何主题链接")
+                return []
+            
+            seen_topic_ids = set()
+            topic_urls = []
             
             for link in all_links:
                 href = link.attr('href')
                 if not href:
                     continue
                 
-                if '/t/' in href and not any(exclude in href for exclude in ['/tags/', '/c/', '/u/']):
-                    if not href.startswith('http'):
-                        href = self.site_config['base_url'] + href
-                    
-                    base_url = re.sub(r'/t/topic/(\d+)(/\d+)?', r'/t/topic/\1', href)
-                    
-                    if base_url not in seen_urls:
-                        seen_urls.add(base_url)
-                        topic_links.append(base_url)
+                # 排除非主题链接
+                if any(exclude in href for exclude in ['/tags/', '/c/', '/u/', '/uploads/', '.png', '.jpg', '.jpeg', '.gif']):
+                    continue
+                
+                # 精确匹配 /t/数字 模式
+                match = re.search(r'/t/(\d+)', href)
+                if match:
+                    topic_id = match.group(1)
+                    if topic_id not in seen_topic_ids:
+                        seen_topic_ids.add(topic_id)
+                        # 构建标准URL格式
+                        full_url = self.site_config['base_url'] + f'/t/topic/{topic_id}'
+                        topic_urls.append(full_url)
             
-            logger.info(f"🔗 找到 {len(topic_links)} 个主题")
-            return topic_links
+            logger.info(f"🔗 找到 {len(topic_urls)} 个主题")
+            return topic_urls
             
         except Exception as e:
             logger.error(f"❌ 查找主题失败: {str(e)}")
@@ -1027,10 +1058,11 @@ class LinuxDoBrowser:
                 try:
                     logger.info(f"📖 浏览主题 {i+1}/{browse_count}")
                     
-                    # 在主页面找到并点击链接 - UserScript 会处理新标签页
+                    # 提取topic ID用于查找链接
                     topic_id = topic_url.split('/')[-1]
+                    
+                    # 在主页面找到并点击链接 - UserScript 会处理新标签页
                     link_selectors = [
-                        f'a[href*="/t/topic/{topic_id}"]',
                         f'a[href*="/t/{topic_id}"]',
                         f'a[href*="{topic_id}"]'
                     ]
@@ -1038,10 +1070,15 @@ class LinuxDoBrowser:
                     target_link = None
                     for selector in link_selectors:
                         try:
-                            possible_links = self.page.eles(selector, timeout=2)
+                            possible_links = self.page.eles(selector, timeout=3)
                             if possible_links:
-                                target_link = possible_links[0]
-                                break
+                                # 选择第一个可见的链接
+                                for link in possible_links:
+                                    if link.states.is_visible:
+                                        target_link = link
+                                        break
+                                if target_link:
+                                    break
                         except:
                             continue
                     
@@ -1100,6 +1137,12 @@ class LinuxDoBrowser:
                         
                 except Exception as e:
                     logger.error(f"❌ 浏览主题失败: {str(e)}")
+                    # 确保返回列表页
+                    try:
+                        self.page.get(self.site_config['latest_url'])
+                        time.sleep(2)
+                    except:
+                        pass
                     continue
             
             logger.success(f"🎉 共成功浏览 {success_count} 个主题")
@@ -1390,9 +1433,27 @@ class LinuxDoBrowser:
             except:
                 pass
 
+# ======================== 补充缺失的实例方法 ========================
+def click_like_if_available(self):
+    """在当前页面点赞（如果可用）"""
+    return self.click_like_if_available_in_page(self.page)
+
+def micronavigation(self):
+    """在当前页面执行微导航"""
+    return self.micronavigation_in_page(self.page)
+
+def micro_interactions(self):
+    """在当前页面的微交互"""
+    return self.micro_interactions_in_page(self.page)
+
+# 将方法绑定到类
+LinuxDoBrowser.click_like_if_available = click_like_if_available
+LinuxDoBrowser.micronavigation = micronavigation
+LinuxDoBrowser.micro_interactions = micro_interactions
+
 # ======================== 主函数 ========================
 def main():
-    logger.info("🚀 Linux.Do 终极集成版 v3.0 启动")
+    logger.info("🚀 Linux.Do 终极修复版 v3.1 启动")
     
     if GITHUB_ACTIONS:
         logger.info("🎯 GitHub Actions 环境检测")
