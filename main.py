@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-Linux.do 自动化浏览工具 - 终极修复版 v3.1
+Linux.do 自动化浏览工具 - 终极修复版 v3.2
 ====================================
 修复清单：
 1. ✅ 修复UserScript注入API错误（TabWaiter无load_complete方法）
@@ -11,6 +11,7 @@ Linux.do 自动化浏览工具 - 终极修复版 v3.1
 4. ✅ 补充缺失的实例方法
 5. ✅ 删除废弃环境变量
 6. ✅ 优化回退策略，确保链接点击可靠性
+7. ✅ 简化主题查找和浏览逻辑，提高稳定性
 """
 
 import os
@@ -45,6 +46,7 @@ SITES = [
         'login_url': 'https://linux.do/login',
         'private_topic_url': 'https://linux.do/t/topic/870130',
         'unread_url': 'https://linux.do/unread',
+        'latest_url': 'https://linux.do/latest',
         'connect_url': 'https://connect.linux.do',
         'user_url': 'https://linux.do/u',
         'cf_cookies_file': "cf_cookies_linux_do.json",
@@ -55,7 +57,8 @@ SITES = [
         'base_url': 'https://idcflare.com',
         'login_url': 'https://idcflare.com/login',
         'private_topic_url': 'https://idcflare.com/t/topic/24',
-        'unread_url': 'https://idcflare.com/latest',
+        'unread_url': 'https://idcflare.com/unread',
+        'latest_url': 'https://idcflare.com/latest',
         'connect_url': 'https://connect.idcflare.com',
         'user_url': 'https://idcflare.com/u',
         'cf_cookies_file': "cf_cookies_idcflare.json",
@@ -979,20 +982,21 @@ class LinuxDoBrowser:
         return login_success
 
     def find_topic_elements(self):
-        """基于href模式精准去重提取"""
+        """简洁版主题查找 - 基于tag:a扫描 + 正则提取"""
         logger.info("🎯 查找主题...")
         
         try:
-            self.page.wait.ele_displayed('#list-area', timeout=10)
+            # 等待页面加载
+            self.page.wait.doc_loaded()
+            time.sleep(3)
             
-            # 获取所有包含/t/的链接
-            all_links = self.page.eles('a[href*="/t/"]', timeout=5)
-            
+            # 获取所有链接
+            all_links = self.page.eles('tag:a', timeout=10)
             if not all_links:
-                logger.warning("⚠️ 未找到任何主题链接")
+                logger.warning("⚠️ 未找到任何链接")
                 return []
             
-            seen_topic_ids = set()
+            seen_ids = set()
             topic_urls = []
             
             for link in all_links:
@@ -1001,17 +1005,16 @@ class LinuxDoBrowser:
                     continue
                 
                 # 排除非主题链接
-                if any(exclude in href for exclude in ['/tags/', '/c/', '/u/', '/uploads/', '.png', '.jpg', '.jpeg', '.gif']):
+                if any(exclude in href.lower() for exclude in ['/tags/', '/c/', '/u/', '/uploads/', '.png', '.jpg', '.gif']):
                     continue
                 
-                # 精确匹配 /t/数字 模式
-                match = re.search(r'/t/(\d+)', href)
+                # 提取主题ID
+                match = re.search(r'/t/(?:topic/)?(\d+)', href)
                 if match:
                     topic_id = match.group(1)
-                    if topic_id not in seen_topic_ids:
-                        seen_topic_ids.add(topic_id)
-                        # 构建标准URL格式
-                        full_url = self.site_config['base_url'] + f'/t/topic/{topic_id}'
+                    if topic_id not in seen_ids:
+                        seen_ids.add(topic_id)
+                        full_url = f"{self.site_config['base_url'].rstrip('/')}/t/topic/{topic_id}"
                         topic_urls.append(full_url)
             
             logger.info(f"🔗 找到 {len(topic_urls)} 个主题")
@@ -1019,28 +1022,23 @@ class LinuxDoBrowser:
             
         except Exception as e:
             logger.error(f"❌ 查找主题失败: {str(e)}")
-            if GITHUB_ACTIONS:
-                try:
-                    self.page.save_screenshot(f'topic_find_failure_{self.site_name}.png')
-                except:
-                    pass
             return []
 
     def browse_topics_user_script_aware(self):
-        """UserScript 感知版主题浏览 - 正确处理外部链接"""
+        """简洁版主题浏览"""
         if not BROWSE_ENABLED:
             logger.info("⏭️ 浏览功能已禁用")
             return 0
 
         try:
-            logger.info(f"🌐 开始 UserScript 感知浏览 {self.site_name} 主题...")
+            logger.info(f"🌐 开始浏览 {self.site_name} 主题...")
             
-            # 确保 UserScript 已注入
+            # 注入UserScript
             if BEHAVIOR_INJECTION_ENABLED and self.user_script:
                 self.user_script.inject_external_link_handler()
             
-            # 主标签页获取主题列表
-            self.page.get(self.site_config['unread_url'])
+            # 获取主题列表
+            self.page.get(self.site_config['latest_url'])
             self.apply_evasion_strategy()
             
             topic_urls = self.find_topic_elements()
@@ -1048,7 +1046,8 @@ class LinuxDoBrowser:
                 logger.warning("❌ 未找到可浏览的主题")
                 return 0
             
-            browse_count = min(random.randint(5, 8), len(topic_urls))
+            # 选择要浏览的主题
+            browse_count = min(random.randint(3, 6), len(topic_urls))
             selected_urls = random.sample(topic_urls, browse_count)
             success_count = 0
             
@@ -1058,91 +1057,25 @@ class LinuxDoBrowser:
                 try:
                     logger.info(f"📖 浏览主题 {i+1}/{browse_count}")
                     
-                    # 提取topic ID用于查找链接
-                    topic_id = topic_url.split('/')[-1]
+                    # 直接访问主题
+                    self.page.get(topic_url)
+                    time.sleep(random.uniform(4, 8))
                     
-                    # 在主页面找到并点击链接 - UserScript 会处理新标签页
-                    link_selectors = [
-                        f'a[href*="/t/{topic_id}"]',
-                        f'a[href*="{topic_id}"]'
-                    ]
-                    
-                    target_link = None
-                    for selector in link_selectors:
-                        try:
-                            possible_links = self.page.eles(selector, timeout=3)
-                            if possible_links:
-                                # 选择第一个可见的链接
-                                for link in possible_links:
-                                    if link.states.is_visible:
-                                        target_link = link
-                                        break
-                                if target_link:
-                                    break
-                        except:
-                            continue
-                    
-                    if not target_link:
-                        logger.warning(f"⚠️ 找不到主题链接: {topic_id}")
-                        continue
-                    
-                    # 滚动到可见区域
-                    target_link.scroll.to_see()
-                    time.sleep(random.uniform(0.5, 1.5))
-                    
-                    # 模拟人类行为
-                    self.human_behavior_simulation()
-                    
-                    # 点击链接 - UserScript 会在新标签页打开
-                    target_link.click()
-                    
-                    # 等待新标签页出现（最多5秒）
-                    new_tab = None
-                    start_wait = time.time()
-                    while time.time() - start_wait < 5:
-                        if len(self.browser.tabs) > 1:
-                            # 获取最新标签页
-                            new_tab = self.browser.latest_tab
-                            break
-                        time.sleep(0.5)
-                    
-                    if new_tab:
-                        logger.info("🆕 检测到新标签页打开")
-                        # 在新标签页上继续操作
-                        self.interact_in_new_tab(new_tab)
-                        
-                        # 关闭新标签页
-                        time.sleep(random.uniform(2, 4))
-                        new_tab.close()
-                        success_count += 1
-                    else:
-                        # UserScript 可能未生效，回退到直接访问
-                        logger.warning("⚠️ 未检测到新标签页，使用回退方案")
-                        self.page.get(topic_url)
-                        time.sleep(random.uniform(3, 6))
-                        self.deep_scroll_browsing_enhanced()
-                        success_count += 1
+                    # 深度浏览
+                    self.deep_scroll_browsing_enhanced()
                     
                     # 返回列表页
-                    self.page.get(self.site_config['unread_url'])
-                    time.sleep(random.uniform(2, 4))
+                    self.page.get(self.site_config['latest_url'])
+                    time.sleep(2)
+                    
+                    success_count += 1
                     
                     # 主题间等待
                     if i < browse_count - 1:
-                        wait_time = random.uniform(30, 50)
-                        logger.info(f"⏳ 主题间等待 {wait_time:.1f} 秒...")
-                        
-                        # 在等待期间进行随机活动
-                        self.random_activities_during_wait(wait_time)
+                        time.sleep(random.uniform(20, 40))
                         
                 except Exception as e:
                     logger.error(f"❌ 浏览主题失败: {str(e)}")
-                    # 确保返回列表页
-                    try:
-                        self.page.get(self.site_config['unread_url'])
-                        time.sleep(2)
-                    except:
-                        pass
                     continue
             
             logger.success(f"🎉 共成功浏览 {success_count} 个主题")
@@ -1151,12 +1084,12 @@ class LinuxDoBrowser:
         except Exception as e:
             logger.error(f"❌ 主题浏览失败: {str(e)}")
             return 0
-    
+
     def interact_in_new_tab(self, tab):
         """在新标签页中进行交互"""
         try:
             # 等待页面加载
-            tab.wait.load_complete()
+            tab.wait.doc_loaded()
             time.sleep(random.uniform(3, 6))
             
             # 深度浏览
@@ -1453,7 +1386,7 @@ LinuxDoBrowser.micro_interactions = micro_interactions
 
 # ======================== 主函数 ========================
 def main():
-    logger.info("🚀 Linux.Do 终极修复版 v3.1 启动")
+    logger.info("🚀 Linux.Do 终极修复版 v3.2 启动")
     
     if GITHUB_ACTIONS:
         logger.info("🎯 GitHub Actions 环境检测")
@@ -1534,7 +1467,3 @@ if __name__ == "__main__":
         logger.warning("⚠️ 未配置OCR_API_KEY，验证码处理将不可用")
     
     main()
-
-
-
-
