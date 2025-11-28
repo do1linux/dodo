@@ -370,7 +370,7 @@ class LinuxDoBrowser:
             base_delay *= random.uniform(1.5, 3.0)
         
         if random.random() < 0.1:
-            base_delay = random.uniform(30, 90)
+            base_delay = random.uniform(10, 30)
         
         final_delay = base_delay * random.uniform(0.8, 1.2)
         time.sleep(final_delay)
@@ -1010,10 +1010,10 @@ class LinuxDoBrowser:
             
             # 注入UserScript
             if BEHAVIOR_INJECTION_ENABLED and self.user_script:
-                self.user_script。inject_external_link_handler()
+                self.user_script.inject_external_link_handler()
             
             # 获取主题列表
-            self.page。get(self.site_config['unread_url'])
+            self.page.get(self.site_config['unread_url'])
             self.apply_evasion_strategy()
             
             topic_urls = self.find_topic_elements()
@@ -1028,7 +1028,7 @@ class LinuxDoBrowser:
             
             logger.info(f"📊 计划深度浏览 {browse_count} 个主题")
             
-            for i, topic_url 在 enumerate(selected_urls):
+            for i, topic_url in enumerate(selected_urls):
                 try:
                     logger.info(f"📖 深度浏览主题 {i+1}/{browse_count}")
                     
@@ -1045,7 +1045,7 @@ class LinuxDoBrowser:
                     
                     # 主题间等待 - 模拟真实用户间隔
                     if i < browse_count - 1:
-                        interval = random.uniform(10, 20)
+                        interval = random.uniform(10, 30)
                         logger.info(f"⏳ 主题间等待 {interval:.1f} 秒...")
                         time.sleep(interval)
                         
@@ -1148,7 +1148,7 @@ class LinuxDoBrowser:
                     time.sleep(random.uniform(5, 10))
                     
                     # 返回原主题
-                    self.page。back()
+                    self.page.back()
                     time.sleep(3)
                     return True
             except Exception as e:
@@ -1181,9 +1181,9 @@ class LinuxDoBrowser:
         self.prove_page_activity(page)
         
         # 2. 随机滚动次数
-        scroll_count = random.randint(3， 7)
+        scroll_count = random.randint(3, 7)
         
-        for i 在 range(scroll_count):
+        for i in range(scroll_count):
             scroll_distance = random.randint(300, 800)
             page.run_js(f"window.scrollBy(0, {scroll_distance});")
             
@@ -1431,4 +1431,3 @@ if __name__ == "__main__":
         logger.warning("⚠️ 未配置OCR_API_KEY，验证码处理将不可用")
     
     main()
-
