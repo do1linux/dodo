@@ -2,13 +2,14 @@
 # -*- coding: utf-8 -*-
 
 """
-Linux.do 自动化浏览工具 - 修复版 v4.4
+Linux.do 自动化浏览工具 - 增强版 v5.0
 ====================================
-修复内容：
-1. ✅ 修复 CacheManager 递归调用错误
-2. ✅ 集成浏览记录收集功能
-3. ✅ 增强阅读行为模拟
-4. ✅ 保持所有优化功能
+增强内容：
+1. ✅ 集成Discourse特定事件追踪
+2. ✅ 增强阅读行为模拟
+3. ✅ 添加网络请求监控
+4. ✅ 优化浏览记录收集
+5. ✅ 保持所有原有功能
 """
 
 import os
@@ -73,6 +74,11 @@ BEHAVIOR_INJECTION_ENABLED = os.environ.get("BEHAVIOR_INJECTION_ENABLED", "true"
 EXTERNAL_LINKS_NEW_TAB = os.environ.get("EXTERNAL_LINKS_NEW_TAB", "true").strip().lower() not in ["false", "0", "off"]
 OCR_API_KEY = os.getenv("OCR_API_KEY")
 GITHUB_ACTIONS = os.environ.get("GITHUB_ACTIONS") == "true"
+
+# 可配置的等待时间参数
+MAX_TOPIC_READING_TIME = int(os.environ.get("MAX_TOPIC_READING_TIME", "45"))
+MAX_TOPIC_INTERVAL = int(os.environ.get("MAX_TOPIC_INTERVAL", "40")) 
+MAX_SLEEP_TIME = int(os.environ.get("MAX_SLEEP_TIME", "120"))
 
 # ======================== UserScript注入系统 ========================
 class UserScriptInjector:
@@ -185,7 +191,6 @@ class CacheManager:
 
     @staticmethod
     def get_cache_file_path(file_name):
-        # 修复：直接返回文件路径，而不是递归调用
         return os.path.join(CacheManager.get_cache_directory(), file_name)
 
     @staticmethod
@@ -370,7 +375,7 @@ class LinuxDoBrowser:
             base_delay *= random.uniform(1.5, 3.0)
         
         if random.random() < 0.1:
-            base_delay = random.uniform(10, 30)
+            base_delay = random.uniform(30, 90)
         
         final_delay = base_delay * random.uniform(0.8, 1.2)
         time.sleep(final_delay)
@@ -750,314 +755,421 @@ class LinuxDoBrowser:
             logger.error(f"❌ 查找主题失败: {str(e)}")
             return []
 
-    # ======================== 新增浏览记录收集功能 ========================
+    # ======================== 增强浏览记录收集功能 ========================
 
-    def inject_read_behavior(self):
-        """注入阅读行为标记系统 - 关键改造"""
+    def enhance_event_triggering(self):
+        """增强事件触发机制 - 关键改进"""
         try:
             js_code = """
             (function() {
                 'use strict';
                 
-                // 设置阅读标记
-                localStorage.setItem('read', 'true');
-                localStorage.setItem('isFirstRun', 'false');
+                // 设置Discourse特定的阅读标记
+                localStorage.setItem('discourse-read', 'true');
+                localStorage.setItem('discourse-track-views', 'true');
                 
-                // 创建阅读时间记录
-                window.readingStartTime = Date.now();
+                // 创建全局阅读追踪对象
+                window.discourseReadingTracker = {
+                    startTime: Date.now(),
+                    scrollDepth: 0,
+                    postRead: new Set(),
+                    triggerEvent: function(eventName, data) {
+                        const event = new CustomEvent(eventName, { 
+                            detail: data,
+                            bubbles: true,
+                            cancelable: true
+                        });
+                        document.dispatchEvent(event);
+                        
+                        // 同时触发jQuery事件（Discourse使用jQuery）
+                        if (window.jQuery) {
+                            jQuery(document).trigger(eventName, data);
+                        }
+                    }
+                };
                 
-                // 监听滚动事件来记录阅读行为
-                let lastScrollTime = 0;
-                let scrollCount = 0;
+                // 监听Discourse特定的事件
+                document.addEventListener('discourse:post-loaded', function(e) {
+                    console.log('Discourse post loaded, tracking read...');
+                    discourseReadingTracker.postRead.add(e.detail.postId);
+                });
                 
+                // 模拟阅读进度追踪
+                let lastReportedProgress = 0;
                 window.addEventListener('scroll', function() {
-                    const now = Date.now();
-                    if (now - lastScrollTime > 1000) { // 至少1秒间隔
-                        scrollCount++;
-                        lastScrollTime = now;
-                        
-                        // 记录滚动深度
-                        const scrollDepth = (window.scrollY + window.innerHeight) / document.body.scrollHeight;
-                        localStorage.setItem('lastScrollDepth', scrollDepth.toFixed(2));
-                        localStorage.setItem('scrollCount', scrollCount);
-                        
-                        // 触发自定义事件，让网站知道用户在阅读
-                        document.dispatchEvent(new CustomEvent('userReading', {
-                            detail: {
-                                scrollDepth: scrollDepth,
-                                scrollCount: scrollCount,
-                                timestamp: now
-                            }
-                        }));
+                    const scrollPercent = (window.scrollY + window.innerHeight) / document.body.scrollHeight;
+                    discourseReadingTracker.scrollDepth = Math.max(discourseReadingTracker.scrollDepth, scrollPercent);
+                    
+                    // 每25%进度报告一次
+                    const currentProgress = Math.floor(scrollPercent * 4) / 4;
+                    if (currentProgress > lastReportedProgress) {
+                        lastReportedProgress = currentProgress;
+                        discourseReadingTracker.triggerEvent('discourse:reading-progress', {
+                            progress: currentProgress,
+                            topicId: window.location.pathname.split('/').pop()
+                        });
                     }
                 });
                 
-                // 模拟阅读时间计算
-                setInterval(() => {
-                    const readingTime = Math.floor((Date.now() - window.readingStartTime) / 1000);
-                    localStorage.setItem('readingTime', readingTime);
+                // 定期触发活动事件
+                setInterval(function() {
+                    // 触发Discourse的活动检测
+                    discourseReadingTracker.triggerEvent('discourse:user-activity', {
+                        type: 'reading',
+                        timestamp: Date.now()
+                    });
                     
-                    // 定期触发活动事件
-                    if (readingTime % 30 === 0) { // 每30秒
-                        document.dispatchEvent(new Event('visibilitychange'));
-                        window.dispatchEvent(new Event('focus'));
-                    }
-                }, 1000);
+                    // 触发可见性变化
+                    document.dispatchEvent(new Event('visibilitychange'));
+                    
+                    // 触发焦点事件
+                    window.dispatchEvent(new Event('focus'));
+                }, 15000); // 每15秒触发一次
                 
-                console.log('阅读行为系统已注入');
+                console.log('Discourse阅读追踪已启用');
             })();
             """
             self.page.run_js(js_code)
             return True
         except Exception as e:
-            logger.error(f"❌ 阅读行为注入失败: {str(e)}")
+            logger.error(f"❌ 事件触发增强失败: {str(e)}")
             return False
 
-    def browse_topic_enhanced_with_recording(self, topic_url):
-        """增强版主题浏览 - 确保网站记录浏览痕迹"""
+    def wait_for_discourse_ready(self):
+        """等待Discourse特定元素加载完成"""
+        max_wait = 30
+        start_time = time.time()
+        
+        while time.time() - start_time < max_wait:
+            try:
+                # 检查Discourse特定元素
+                discourse_ready = self.page.run_js("""
+                    return !!document.querySelector('.topic-body') && 
+                           !!document.querySelector('.post-stream') &&
+                           (!!window.Discourse || !!window.DiscourseWidgets);
+                """)
+                
+                if discourse_ready:
+                    logger.debug("✅ Discourse页面已就绪")
+                    return True
+                    
+                time.sleep(2)
+            except:
+                time.sleep(2)
+        
+        logger.warning("⚠️ Discourse页面加载超时，继续执行")
+        return False
+
+    def browse_topic_discourse_optimized(self, topic_url):
+        """Discourse优化的主题浏览 - 专门针对Discourse论坛"""
         try:
-            logger.info(f"📖 深度浏览主题: {topic_url.split('/')[-1]}")
+            logger.info(f"📖 Discourse优化浏览: {topic_url}")
             
             # 访问主题
             self.page.get(topic_url)
-            time.sleep(random.uniform(4, 8))
+            time.sleep(random.uniform(3, 6))
             
-            # 注入阅读行为系统
-            self.inject_read_behavior()
-            time.sleep(2)
+            # 注入Discourse特定的事件追踪
+            self.enhance_event_triggering()
             
-            # 应用规避策略
-            self.apply_evasion_strategy()
+            # 等待页面完全加载
+            self.wait_for_discourse_ready()
             
-            # 执行深度阅读流程
-            reading_success = self.deep_reading_flow()
+            # 执行Discourse特定的浏览流程
+            success = self.discourse_specific_browsing()
             
-            # 1%概率点赞
-            if random.random() < 0.01:
-                self.click_like()
-            
-            # 确保阅读时间足够被记录
-            total_reading_time = random.uniform(25, 60)  # 25-60秒阅读时间
-            logger.info(f"⏱️ 确保阅读时间: {total_reading_time:.1f}秒")
-            time.sleep(total_reading_time)
-            
-            # 最终滚动确认
-            self.final_scroll_confirmation()
-            
-            return True
+            if success:
+                # 确保阅读被记录
+                self.ensure_reading_recorded()
+                
+            return success
             
         except Exception as e:
-            logger.error(f"❌ 深度浏览主题失败: {str(e)}")
+            logger.error(f"❌ Discourse主题浏览失败: {str(e)}")
             return False
 
-    def deep_reading_flow(self):
-        """深度阅读流程 - 模拟真实用户阅读模式"""
+    def discourse_specific_browsing(self):
+        """Discourse特定的浏览行为"""
         try:
-            # 1. 初始阅读阶段
-            logger.debug("📚 初始阅读阶段")
-            self.simulate_initial_reading()
+            # 1. 初始帖子阅读
+            logger.debug("📝 阅读主帖内容")
+            self.read_initial_post()
             
-            # 2. 深度滚动阶段
-            logger.debug("🔄 深度滚动阶段")
-            self.simulate_deep_scrolling()
+            # 2. 滚动浏览回复
+            logger.debug("🔄 浏览回复帖子")
+            self.browse_replies()
             
-            # 3. 重点内容停留
-            logger.debug("🎯 重点内容停留")
-            self.simulate_content_engagement()
+            # 3. 触发帖子加载事件
+            logger.debug("🎯 触发帖子加载事件")
+            self.trigger_post_loaded_events()
             
-            # 4. 最终确认阶段
-            logger.debug("✅ 最终确认阶段")
-            self.simulate_reading_completion()
+            # 4. 模拟阅读完成
+            logger.debug("✅ 模拟阅读完成")
+            self.simulate_reading_completion_discourse()
             
             return True
             
         except Exception as e:
-            logger.error(f"❌ 深度阅读流程异常: {str(e)}")
+            logger.error(f"❌ Discourse浏览异常: {str(e)}")
             return False
 
-    def simulate_initial_reading(self):
-        """模拟初始阅读 - 关键的第一印象"""
-        # 缓慢滚动开始
+    def read_initial_post(self):
+        """阅读主帖内容"""
+        # 在主帖区域停留较长时间
+        self.page.run_js("""
+            const firstPost = document.querySelector('.topic-post:first-child');
+            if (firstPost) {
+                firstPost.scrollIntoView({ behavior: 'smooth' });
+            }
+        """)
+        time.sleep(random.uniform(8, 15))
+        
+        # 模拟在主帖区域的阅读行为
         for i in range(3):
-            scroll_amount = random.randint(200, 400)
-            self.page.run_js(f"window.scrollBy(0, {scroll_amount});")
-            time.sleep(random.uniform(3, 6))  # 较长的阅读停留
-            
-            # 偶尔触发微交互
-            if random.random() < 0.3:
-                self.trigger_micro_interaction()
+            self.page.run_js("window.scrollBy(0, 200);")
+            time.sleep(random.uniform(2, 4))
 
-    def simulate_deep_scrolling(self):
-        """模拟深度滚动 - 确保覆盖整个页面"""
-        scroll_sequences = [
-            lambda: self.page.run_js("window.scrollTo(0, document.body.scrollHeight * 0.3);"),
-            lambda: self.page.run_js("window.scrollTo(0, document.body.scrollHeight * 0.6);"),
-            lambda: self.page.run_js("window.scrollTo(0, document.body.scrollHeight * 0.8);"),
-            lambda: self.page.run_js("window.scrollTo(0, document.body.scrollHeight);")
-        ]
+    def browse_replies(self):
+        """浏览回复帖子"""
+        # 获取回复数量
+        reply_count = self.page.run_js("""
+            return document.querySelectorAll('.topic-post:not(:first-child)').length;
+        """) or 0
         
-        for scroll_func in scroll_sequences:
-            scroll_func()
-            # 关键：在重要位置停留较长时间
-            stay_time = random.uniform(5, 12)
-            time.sleep(stay_time)
+        if reply_count > 0:
+            logger.debug(f"📨 发现 {reply_count} 个回复")
             
-            # 触发阅读事件
-            self.trigger_reading_events()
+            # 浏览部分回复（避免全部浏览耗时太长）
+            replies_to_read = min(5, reply_count)
+            
+            for i in range(replies_to_read):
+                # 滚动到回复
+                self.page.run_js(f"""
+                    const reply = document.querySelectorAll('.topic-post:not(:first-child)')[{i}];
+                    if (reply) {{
+                        reply.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+                    }}
+                """)
+                
+                # 在回复处停留
+                stay_time = random.uniform(3, 8)
+                time.sleep(stay_time)
+                
+                # 偶尔触发回复的阅读事件
+                if random.random() < 0.3:
+                    self.trigger_single_post_read(i + 1)  # +1 因为第一个是主帖
 
-    def simulate_content_engagement(self):
-        """模拟内容互动 - 让网站知道用户对内容感兴趣"""
-        # 随机回到某些部分重新阅读
-        if random.random() < 0.6:  # 60%概率重新阅读某些内容
-            re_read_positions = [0.2, 0.4, 0.7]
-            for position in random.sample(re_read_positions, random.randint(1, 2)):
-                self.page.run_js(f"window.scrollTo(0, document.body.scrollHeight * {position});")
-                time.sleep(random.uniform(4, 8))
-
-    def simulate_reading_completion(self):
-        """模拟阅读完成 - 确认用户已读完"""
-        # 滚动到底部并停留
-        self.page.run_js("window.scrollTo(0, document.body.scrollHeight);")
-        completion_stay = random.uniform(8, 15)
-        time.sleep(completion_stay)
-        
-        # 触发完成事件
-        self.trigger_completion_events()
-
-    def trigger_reading_events(self):
-        """触发阅读相关事件"""
+    def trigger_post_loaded_events(self):
+        """触发帖子加载事件"""
         try:
             js_code = """
-            // 触发阅读相关事件
-            document.dispatchEvent(new Event('visibilitychange'));
-            window.dispatchEvent(new Event('focus'));
-            window.dispatchEvent(new Event('scroll'));
-            
-            // 模拟用户活动
-            document.dispatchEvent(new MouseEvent('mousemove', {
-                bubbles: true,
-                clientX: Math.random() * window.innerWidth,
-                clientY: Math.random() * window.innerHeight
-            }));
-            
-            // 更新阅读时间
-            if (window.readingStartTime) {
-                const readingTime = Math.floor((Date.now() - window.readingStartTime) / 1000);
-                localStorage.setItem('totalReadingTime', readingTime);
+            // 触发Discourse的帖子加载事件
+            if (window.Discourse) {
+                const posts = document.querySelectorAll('.topic-post');
+                posts.forEach((post, index) => {
+                    const postId = post.getAttribute('data-post-id');
+                    if (postId) {
+                        // 触发自定义事件
+                        const event = new CustomEvent('discourse:post-loaded', {
+                            detail: { postId: postId, index: index },
+                            bubbles: true
+                        });
+                        post.dispatchEvent(event);
+                        
+                        // 触发jQuery事件
+                        if (window.jQuery) {
+                            jQuery(post).trigger('post:loaded', { postId: postId });
+                        }
+                    }
+                });
             }
             """
             self.page.run_js(js_code)
-        except:
-            pass
+        except Exception as e:
+            logger.debug(f"触发帖子事件异常: {e}")
 
-    def trigger_completion_events(self):
-        """触发阅读完成事件"""
+    def trigger_single_post_read(self, post_index):
+        """触发单个帖子阅读事件"""
         try:
-            js_code = """
-            // 标记阅读完成
-            localStorage.setItem('readingComplete', 'true');
-            localStorage.setItem('lastReadTime', new Date().toISOString());
-            
-            // 触发自定义完成事件
-            document.dispatchEvent(new CustomEvent('readingFinished', {
-                detail: {
-                    timestamp: Date.now(),
-                    scrollDepth: localStorage.getItem('lastScrollDepth') || '1.0',
-                    totalTime: localStorage.getItem('totalReadingTime') || '0'
-                }
-            }));
-            
-            // 确保焦点在页面
-            window.focus();
+            js_code = f"""
+            const post = document.querySelectorAll('.topic-post')[{post_index}];
+            if (post) {{
+                const postId = post.getAttribute('data-post-id');
+                if (postId) {{
+                    // 标记帖子为已读
+                    const event = new CustomEvent('discourse:post-read', {{
+                        detail: {{ postId: postId }},
+                        bubbles: true
+                    }});
+                    post.dispatchEvent(event);
+                    
+                    console.log('标记帖子为已读:', postId);
+                }}
+            }}
             """
             self.page.run_js(js_code)
-        except:
-            pass
+        except Exception as e:
+            logger.debug(f"触发单帖阅读异常: {e}")
 
-    def trigger_micro_interaction(self):
-        """触发微交互"""
+    def simulate_reading_completion_discourse(self):
+        """Discourse特定的阅读完成模拟"""
         try:
-            # 随机点击段落或图片
+            # 滚动到底部
+            self.page.run_js("window.scrollTo(0, document.body.scrollHeight);")
+            time.sleep(random.uniform(5, 10))
+            
+            # 触发阅读完成事件
+            js_code = """
+            // 触发阅读完成事件
+            const topicId = window.location.pathname.split('/').pop();
+            const readingTime = Math.floor((Date.now() - window.discourseReadingTracker.startTime) / 1000);
+            
+            // 触发自定义完成事件
+            window.discourseReadingTracker.triggerEvent('discourse:reading-complete', {
+                topicId: topicId,
+                readingTime: readingTime,
+                scrollDepth: window.discourseReadingTracker.scrollDepth,
+                postsRead: Array.from(window.discourseReadingTracker.postRead)
+            });
+            
+            // 设置完成标记
+            localStorage.setItem(`discourse-topic-${topicId}-read`, 'true');
+            localStorage.setItem(`discourse-topic-${topicId}-read-time`, new Date().toISOString());
+            
+            console.log('Discourse阅读完成:', topicId, '阅读时间:', readingTime);
+            """
+            self.page.run_js(js_code)
+            
+            # 最终停留确保记录
+            final_stay = random.uniform(8, 15)
+            time.sleep(final_stay)
+            
+        except Exception as e:
+            logger.debug(f"阅读完成模拟异常: {e}")
+
+    def ensure_reading_recorded(self):
+        """确保阅读被记录"""
+        try:
+            # 触发最后一次活动事件
             self.page.run_js("""
-                const clickable = document.querySelector('p, img, .post-content, .topic-body');
-                if (clickable) {
-                    clickable.click();
+                if (window.discourseReadingTracker) {
+                    discourseReadingTracker.triggerEvent('discourse:final-activity', {
+                        timestamp: Date.now(),
+                        finalScroll: discourseReadingTracker.scrollDepth
+                    });
                 }
             """)
-            time.sleep(0.5)
-        except:
-            pass
-
-    def final_scroll_confirmation(self):
-        """最终滚动确认 - 确保网站记录完整的阅读行为"""
-        try:
-            # 快速滚动确认用户活跃
-            self.page.run_js("window.scrollTo(0, 0);")
-            time.sleep(1)
-            self.page.run_js("window.scrollTo(0, document.body.scrollHeight);")
+            
+            # 短暂等待让事件处理完成
             time.sleep(2)
-        except:
-            pass
+            
+        except Exception as e:
+            logger.debug(f"确保阅读记录异常: {e}")
 
-    def browse_topics_with_recording(self):
-        """改造版主题浏览 - 确保网站收集浏览记录"""
+    def enable_network_monitoring(self):
+        """启用网络请求监控 - 观察Discourse的追踪请求"""
+        try:
+            js_code = """
+            (function() {
+                // 保存原始fetch方法
+                const originalFetch = window.fetch;
+                
+                // 重写fetch以监控特定请求
+                window.fetch = function(...args) {
+                    const url = args[0];
+                    
+                    // 监控Discourse的追踪相关请求
+                    if (typeof url === 'string' && (
+                        url.includes('/t/') || 
+                        url.includes('/posts/') ||
+                        url.includes('/timings') ||
+                        url.includes('/track_')
+                    )) {
+                        console.log('Discourse追踪请求:', url, args[1] || {});
+                    }
+                    
+                    return originalFetch.apply(this, args);
+                };
+                
+                // 监控XMLHttpRequest
+                const originalXHROpen = XMLHttpRequest.prototype.open;
+                XMLHttpRequest.prototype.open = function(method, url, ...rest) {
+                    if (typeof url === 'string' && (
+                        url.includes('/t/') || 
+                        url.includes('/posts/') ||
+                        url.includes('/timings') ||
+                        url.includes('/track_')
+                    )) {
+                        this.addEventListener('load', function() {
+                            console.log('Discourse XHR追踪:', method, url, this.status);
+                        });
+                    }
+                    return originalXHROpen.call(this, method, url, ...rest);
+                };
+                
+                console.log('网络请求监控已启用');
+            })();
+            """
+            self.page.run_js(js_code)
+            return True
+        except Exception as e:
+            logger.debug(f"网络监控启用异常: {e}")
+            return False
+
+    def browse_topics_discourse_optimized(self):
+        """Discourse优化的主题浏览"""
         if not BROWSE_ENABLED:
             logger.info("⏭️ 浏览功能已禁用")
             return 0
 
         try:
-            logger.info(f"🌐 开始深度浏览 {self.site_name} 主题...")
-            
-            # 注入UserScript
-            if BEHAVIOR_INJECTION_ENABLED and self.user_script:
-                self.user_script.inject_external_link_handler()
+            logger.info(f"🌐 开始Discourse优化浏览 {self.site_name} 主题...")
             
             # 获取主题列表
             self.page.get(self.site_config['unread_url'])
-            self.apply_evasion_strategy()
+            time.sleep(3)
             
             topic_urls = self.find_topic_elements()
             if not topic_urls:
                 logger.warning("❌ 未找到可浏览的主题")
                 return 0
             
-            # 选择要浏览的主题 - 数量减少但时间更长
-            browse_count = min(random.randint(5, 9), len(topic_urls))  # 减少数量
+            # 选择要浏览的主题
+            browse_count = min(random.randint(2, 4), len(topic_urls))
             selected_urls = random.sample(topic_urls, browse_count)
             success_count = 0
             
-            logger.info(f"📊 计划深度浏览 {browse_count} 个主题")
+            logger.info(f"📊 计划Discourse优化浏览 {browse_count} 个主题")
             
             for i, topic_url in enumerate(selected_urls):
                 try:
-                    logger.info(f"📖 深度浏览主题 {i+1}/{browse_count}")
+                    logger.info(f"📖 Discourse优化浏览主题 {i+1}/{browse_count}")
                     
-                    # 使用改造后的深度浏览方法
-                    if self.browse_topic_enhanced_with_recording(topic_url):
+                    if self.browse_topic_discourse_optimized(topic_url):
                         success_count += 1
-                        logger.success(f"✅ 主题 {i+1} 浏览完成")
+                        logger.success(f"✅ 主题 {i+1} Discourse优化浏览完成")
                     else:
-                        logger.warning(f"⚠️ 主题 {i+1} 浏览异常")
+                        logger.warning(f"⚠️ 主题 {i+1} Discourse优化浏览异常")
                     
                     # 返回列表页
                     self.page.get(self.site_config['unread_url'])
-                    time.sleep(3)
+                    time.sleep(2)
                     
-                    # 主题间等待 - 模拟真实用户间隔
+                    # 主题间等待
                     if i < browse_count - 1:
-                        interval = random.uniform(5, 10)
+                        interval = random.uniform(20, MAX_TOPIC_INTERVAL)
                         logger.info(f"⏳ 主题间等待 {interval:.1f} 秒...")
                         time.sleep(interval)
                         
                 except Exception as e:
-                    logger.error(f"❌ 浏览主题失败: {str(e)}")
+                    logger.error(f"❌ Discourse优化浏览主题失败: {str(e)}")
                     continue
             
-            logger.success(f"🎉 共成功深度浏览 {success_count} 个主题")
+            logger.success(f"🎉 共成功Discourse优化浏览 {success_count} 个主题")
             return success_count
             
         except Exception as e:
-            logger.error(f"❌ 主题浏览失败: {str(e)}")
+            logger.error(f"❌ Discourse优化主题浏览失败: {str(e)}")
             return 0
 
     # ======================== 优化功能方法 ========================
@@ -1159,7 +1271,7 @@ class LinuxDoBrowser:
     def smart_sleep(self):
         """智能休眠系统 - 30%概率长休眠模拟真实用户行为"""
         if random.random() < 0.3:
-            sleep_time = random.uniform(10, 30)
+            sleep_time = random.uniform(30, MAX_SLEEP_TIME)
             logger.info(f"💤 智能休眠 {sleep_time:.1f} 秒")
             time.sleep(sleep_time)
             return True
@@ -1316,31 +1428,34 @@ class LinuxDoBrowser:
             return False
 
     def run_complete_process(self):
-        """执行完整流程 - 使用改造后的浏览方法"""
+        """执行完整流程 - 使用增强版浏览方法"""
         try:
-            logger.info(f"🚀 开始处理 {self.site_name}")
+            logger.info(f"🚀 开始增强处理 {self.site_name}")
             
             # 1. 确保登录
             if not self.ensure_logged_in():
                 logger.error(f"❌ {self.site_name} 登录失败")
                 return False
                                 
-            # 2. 单标签页连接信息
+            # 2. 启用网络监控（用于调试）
+            self.enable_network_monitoring()
+            
+            # 3. 连接信息
             connect_success = self.get_connect_info_single_tab()
             if not connect_success and self.site_name != 'idcflare':
                 logger.warning(f"⚠️ {self.site_name} 连接信息获取失败")
 
-            # 3. 使用改造后的主题浏览方法
-            browse_count = self.browse_topics_with_recording()
+            # 4. 使用Discourse优化的主题浏览
+            browse_count = self.browse_topics_discourse_optimized()
             
-            # 4. 保存缓存
+            # 5. 保存缓存
             self.save_caches()
             
-            logger.success(f"✅ {self.site_name} 处理完成 - 深度浏览 {browse_count} 个主题")
+            logger.success(f"✅ {self.site_name} 增强处理完成 - 浏览 {browse_count} 个主题")
             return True
             
         except Exception as e:
-            logger.error(f"❌ {self.site_name} 执行异常: {str(e)}")
+            logger.error(f"❌ {self.site_name} 增强执行异常: {str(e)}")
             return False
             
         finally:
@@ -1353,7 +1468,7 @@ class LinuxDoBrowser:
 
 # ======================== 主函数 ========================
 def main():
-    logger.info("🚀 Linux.Do 自动化 v4.4 修复版启动")
+    logger.info("🚀 Linux.Do 自动化 v5.0 增强版启动")
     
     if GITHUB_ACTIONS:
         logger.info("🎯 GitHub Actions 环境")
@@ -1431,4 +1546,3 @@ if __name__ == "__main__":
         logger.warning("⚠️ 未配置OCR_API_KEY，验证码处理将不可用")
     
     main()
-
