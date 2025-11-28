@@ -1045,7 +1045,7 @@ class LinuxDoBrowser:
                     
                     # 主题间等待 - 模拟真实用户间隔
                     if i < browse_count - 1:
-                        interval = random.uniform(10, 30)
+                        interval = random.uniform(5, 10)
                         logger.info(f"⏳ 主题间等待 {interval:.1f} 秒...")
                         time.sleep(interval)
                         
@@ -1431,3 +1431,4 @@ if __name__ == "__main__":
         logger.warning("⚠️ 未配置OCR_API_KEY，验证码处理将不可用")
     
     main()
+
