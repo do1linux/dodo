@@ -2,12 +2,13 @@
 # -*- coding: utf-8 -*-
 
 """
-Linux.do 自动化浏览工具 - 修复版 v4.3
+Linux.do 自动化浏览工具 - 修复版 v4.4
 ====================================
 修复内容：
 1. ✅ 修复 CacheManager 递归调用错误
-2. ✅ 保持所有优化功能
-3. ✅ 增强错误处理
+2. ✅ 集成浏览记录收集功能
+3. ✅ 增强阅读行为模拟
+4. ✅ 保持所有优化功能
 """
 
 import os
@@ -749,6 +750,316 @@ class LinuxDoBrowser:
             logger.error(f"❌ 查找主题失败: {str(e)}")
             return []
 
+    # ======================== 新增浏览记录收集功能 ========================
+
+    def inject_read_behavior(self):
+        """注入阅读行为标记系统 - 关键改造"""
+        try:
+            js_code = """
+            (function() {
+                'use strict';
+                
+                // 设置阅读标记
+                localStorage.setItem('read', 'true');
+                localStorage.setItem('isFirstRun', 'false');
+                
+                // 创建阅读时间记录
+                window.readingStartTime = Date.now();
+                
+                // 监听滚动事件来记录阅读行为
+                let lastScrollTime = 0;
+                let scrollCount = 0;
+                
+                window.addEventListener('scroll', function() {
+                    const now = Date.now();
+                    if (now - lastScrollTime > 1000) { // 至少1秒间隔
+                        scrollCount++;
+                        lastScrollTime = now;
+                        
+                        // 记录滚动深度
+                        const scrollDepth = (window.scrollY + window.innerHeight) / document.body.scrollHeight;
+                        localStorage.setItem('lastScrollDepth', scrollDepth.toFixed(2));
+                        localStorage.setItem('scrollCount', scrollCount);
+                        
+                        // 触发自定义事件，让网站知道用户在阅读
+                        document.dispatchEvent(new CustomEvent('userReading', {
+                            detail: {
+                                scrollDepth: scrollDepth,
+                                scrollCount: scrollCount,
+                                timestamp: now
+                            }
+                        }));
+                    }
+                });
+                
+                // 模拟阅读时间计算
+                setInterval(() => {
+                    const readingTime = Math.floor((Date.now() - window.readingStartTime) / 1000);
+                    localStorage.setItem('readingTime', readingTime);
+                    
+                    // 定期触发活动事件
+                    if (readingTime % 30 === 0) { // 每30秒
+                        document.dispatchEvent(new Event('visibilitychange'));
+                        window.dispatchEvent(new Event('focus'));
+                    }
+                }, 1000);
+                
+                console.log('阅读行为系统已注入');
+            })();
+            """
+            self.page.run_js(js_code)
+            return True
+        except Exception as e:
+            logger.error(f"❌ 阅读行为注入失败: {str(e)}")
+            return False
+
+    def browse_topic_enhanced_with_recording(self, topic_url):
+        """增强版主题浏览 - 确保网站记录浏览痕迹"""
+        try:
+            logger.info(f"📖 深度浏览主题: {topic_url.split('/')[-1]}")
+            
+            # 访问主题
+            self.page.get(topic_url)
+            time.sleep(random.uniform(4, 8))
+            
+            # 注入阅读行为系统
+            self.inject_read_behavior()
+            time.sleep(2)
+            
+            # 应用规避策略
+            self.apply_evasion_strategy()
+            
+            # 执行深度阅读流程
+            reading_success = self.deep_reading_flow()
+            
+            # 1%概率点赞
+            if random.random() < 0.01:
+                self.click_like()
+            
+            # 确保阅读时间足够被记录
+            total_reading_time = random.uniform(25, 60)  # 25-60秒阅读时间
+            logger.info(f"⏱️ 确保阅读时间: {total_reading_time:.1f}秒")
+            time.sleep(total_reading_time)
+            
+            # 最终滚动确认
+            self.final_scroll_confirmation()
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ 深度浏览主题失败: {str(e)}")
+            return False
+
+    def deep_reading_flow(self):
+        """深度阅读流程 - 模拟真实用户阅读模式"""
+        try:
+            # 1. 初始阅读阶段
+            logger.debug("📚 初始阅读阶段")
+            self.simulate_initial_reading()
+            
+            # 2. 深度滚动阶段
+            logger.debug("🔄 深度滚动阶段")
+            self.simulate_deep_scrolling()
+            
+            # 3. 重点内容停留
+            logger.debug("🎯 重点内容停留")
+            self.simulate_content_engagement()
+            
+            # 4. 最终确认阶段
+            logger.debug("✅ 最终确认阶段")
+            self.simulate_reading_completion()
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ 深度阅读流程异常: {str(e)}")
+            return False
+
+    def simulate_initial_reading(self):
+        """模拟初始阅读 - 关键的第一印象"""
+        # 缓慢滚动开始
+        for i in range(3):
+            scroll_amount = random.randint(200, 400)
+            self.page.run_js(f"window.scrollBy(0, {scroll_amount});")
+            time.sleep(random.uniform(3, 6))  # 较长的阅读停留
+            
+            # 偶尔触发微交互
+            if random.random() < 0.3:
+                self.trigger_micro_interaction()
+
+    def simulate_deep_scrolling(self):
+        """模拟深度滚动 - 确保覆盖整个页面"""
+        scroll_sequences = [
+            lambda: self.page.run_js("window.scrollTo(0, document.body.scrollHeight * 0.3);"),
+            lambda: self.page.run_js("window.scrollTo(0, document.body.scrollHeight * 0.6);"),
+            lambda: self.page.run_js("window.scrollTo(0, document.body.scrollHeight * 0.8);"),
+            lambda: self.page.run_js("window.scrollTo(0, document.body.scrollHeight);")
+        ]
+        
+        for scroll_func in scroll_sequences:
+            scroll_func()
+            # 关键：在重要位置停留较长时间
+            stay_time = random.uniform(5, 12)
+            time.sleep(stay_time)
+            
+            # 触发阅读事件
+            self.trigger_reading_events()
+
+    def simulate_content_engagement(self):
+        """模拟内容互动 - 让网站知道用户对内容感兴趣"""
+        # 随机回到某些部分重新阅读
+        if random.random() < 0.6:  # 60%概率重新阅读某些内容
+            re_read_positions = [0.2, 0.4, 0.7]
+            for position in random.sample(re_read_positions, random.randint(1, 2)):
+                self.page.run_js(f"window.scrollTo(0, document.body.scrollHeight * {position});")
+                time.sleep(random.uniform(4, 8))
+
+    def simulate_reading_completion(self):
+        """模拟阅读完成 - 确认用户已读完"""
+        # 滚动到底部并停留
+        self.page.run_js("window.scrollTo(0, document.body.scrollHeight);")
+        completion_stay = random.uniform(8, 15)
+        time.sleep(completion_stay)
+        
+        # 触发完成事件
+        self.trigger_completion_events()
+
+    def trigger_reading_events(self):
+        """触发阅读相关事件"""
+        try:
+            js_code = """
+            // 触发阅读相关事件
+            document.dispatchEvent(new Event('visibilitychange'));
+            window.dispatchEvent(new Event('focus'));
+            window.dispatchEvent(new Event('scroll'));
+            
+            // 模拟用户活动
+            document.dispatchEvent(new MouseEvent('mousemove', {
+                bubbles: true,
+                clientX: Math.random() * window.innerWidth,
+                clientY: Math.random() * window.innerHeight
+            }));
+            
+            // 更新阅读时间
+            if (window.readingStartTime) {
+                const readingTime = Math.floor((Date.now() - window.readingStartTime) / 1000);
+                localStorage.setItem('totalReadingTime', readingTime);
+            }
+            """
+            self.page.run_js(js_code)
+        except:
+            pass
+
+    def trigger_completion_events(self):
+        """触发阅读完成事件"""
+        try:
+            js_code = """
+            // 标记阅读完成
+            localStorage.setItem('readingComplete', 'true');
+            localStorage.setItem('lastReadTime', new Date().toISOString());
+            
+            // 触发自定义完成事件
+            document.dispatchEvent(new CustomEvent('readingFinished', {
+                detail: {
+                    timestamp: Date.now(),
+                    scrollDepth: localStorage.getItem('lastScrollDepth') || '1.0',
+                    totalTime: localStorage.getItem('totalReadingTime') || '0'
+                }
+            }));
+            
+            // 确保焦点在页面
+            window.focus();
+            """
+            self.page.run_js(js_code)
+        except:
+            pass
+
+    def trigger_micro_interaction(self):
+        """触发微交互"""
+        try:
+            # 随机点击段落或图片
+            self.page.run_js("""
+                const clickable = document.querySelector('p, img, .post-content, .topic-body');
+                if (clickable) {
+                    clickable.click();
+                }
+            """)
+            time.sleep(0.5)
+        except:
+            pass
+
+    def final_scroll_confirmation(self):
+        """最终滚动确认 - 确保网站记录完整的阅读行为"""
+        try:
+            # 快速滚动确认用户活跃
+            self.page.run_js("window.scrollTo(0, 0);")
+            time.sleep(1)
+            self.page.run_js("window.scrollTo(0, document.body.scrollHeight);")
+            time.sleep(2)
+        except:
+            pass
+
+    def browse_topics_with_recording(self):
+        """改造版主题浏览 - 确保网站收集浏览记录"""
+        if not BROWSE_ENABLED:
+            logger.info("⏭️ 浏览功能已禁用")
+            return 0
+
+        try:
+            logger.info(f"🌐 开始深度浏览 {self.site_name} 主题...")
+            
+            # 注入UserScript
+            if BEHAVIOR_INJECTION_ENABLED and self.user_script:
+                self.user_script.inject_external_link_handler()
+            
+            # 获取主题列表
+            self.page.get(self.site_config['unread_url'])
+            self.apply_evasion_strategy()
+            
+            topic_urls = self.find_topic_elements()
+            if not topic_urls:
+                logger.warning("❌ 未找到可浏览的主题")
+                return 0
+            
+            # 选择要浏览的主题 - 数量减少但时间更长
+            browse_count = min(random.randint(2, 4), len(topic_urls))  # 减少数量
+            selected_urls = random.sample(topic_urls, browse_count)
+            success_count = 0
+            
+            logger.info(f"📊 计划深度浏览 {browse_count} 个主题")
+            
+            for i, topic_url in enumerate(selected_urls):
+                try:
+                    logger.info(f"📖 深度浏览主题 {i+1}/{browse_count}")
+                    
+                    # 使用改造后的深度浏览方法
+                    if self.browse_topic_enhanced_with_recording(topic_url):
+                        success_count += 1
+                        logger.success(f"✅ 主题 {i+1} 浏览完成")
+                    else:
+                        logger.warning(f"⚠️ 主题 {i+1} 浏览异常")
+                    
+                    # 返回列表页
+                    self.page.get(self.site_config['unread_url'])
+                    time.sleep(3)
+                    
+                    # 主题间等待 - 模拟真实用户间隔
+                    if i < browse_count - 1:
+                        interval = random.uniform(30, 60)
+                        logger.info(f"⏳ 主题间等待 {interval:.1f} 秒...")
+                        time.sleep(interval)
+                        
+                except Exception as e:
+                    logger.error(f"❌ 浏览主题失败: {str(e)}")
+                    continue
+            
+            logger.success(f"🎉 共成功深度浏览 {success_count} 个主题")
+            return success_count
+            
+        except Exception as e:
+            logger.error(f"❌ 主题浏览失败: {str(e)}")
+            return 0
+
     # ======================== 优化功能方法 ========================
 
     def click_like(self):
@@ -910,39 +1221,6 @@ class LinuxDoBrowser:
         
         return False
 
-    def browse_topic_enhanced(self, topic_url):
-        """增强版主题浏览 - 集成1%概率点赞"""
-        try:
-            logger.info(f"📖 浏览主题: {topic_url.split('/')[-1]}")
-            
-            # 访问主题
-            self.page.get(topic_url)
-            time.sleep(random.uniform(4, 8))
-            
-            # 应用规避策略
-            self.apply_evasion_strategy()
-            
-            # 增强版深度浏览
-            early_exit = self.deep_scroll_browsing_enhanced()
-            
-            # 1%概率点赞
-            if random.random() < 0.01:
-                self.click_like()
-            
-            # 如果提前退出，直接返回
-            if early_exit:
-                return True
-                
-            # 额外停留确保记录
-            extra_wait = random.uniform(5, 12)
-            time.sleep(extra_wait)
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ 浏览主题失败: {str(e)}")
-            return False
-
     def micro_interactions_in_page(self, page):
         """在指定页面的微交互"""
         try:
@@ -961,62 +1239,6 @@ class LinuxDoBrowser:
             time.sleep(random.uniform(0.5, 1.5))
         except:
             pass
-
-    def browse_topics_optimized(self):
-        """优化版主题浏览 - 移除失效功能，集成点赞"""
-        if not BROWSE_ENABLED:
-            logger.info("⏭️ 浏览功能已禁用")
-            return 0
-
-        try:
-            logger.info(f"🌐 开始优化浏览 {self.site_name} 主题...")
-            
-            # 注入UserScript
-            if BEHAVIOR_INJECTION_ENABLED and self.user_script:
-                self.user_script.inject_external_link_handler()
-            
-            # 获取主题列表
-            self.page.get(self.site_config['unread_url'])
-            self.apply_evasion_strategy()
-            
-            topic_urls = self.find_topic_elements()
-            if not topic_urls:
-                logger.warning("❌ 未找到可浏览的主题")
-                return 0
-            
-            # 选择要浏览的主题
-            browse_count = min(random.randint(3, 6), len(topic_urls))
-            selected_urls = random.sample(topic_urls, browse_count)
-            success_count = 0
-            
-            logger.info(f"📊 计划浏览 {browse_count} 个主题")
-            
-            for i, topic_url in enumerate(selected_urls):
-                try:
-                    logger.info(f"📖 浏览主题 {i+1}/{browse_count}")
-                    
-                    # 使用增强版主题浏览（集成点赞）
-                    if self.browse_topic_enhanced(topic_url):
-                        success_count += 1
-                    
-                    # 返回列表页
-                    self.page.get(self.site_config['unread_url'])
-                    time.sleep(2)
-                    
-                    # 主题间等待
-                    if i < browse_count - 1:
-                        time.sleep(random.uniform(20, 40))
-                        
-                except Exception as e:
-                    logger.error(f"❌ 浏览主题失败: {str(e)}")
-                    continue
-            
-            logger.success(f"🎉 共成功浏览 {success_count} 个主题")
-            return success_count
-            
-        except Exception as e:
-            logger.error(f"❌ 主题浏览失败: {str(e)}")
-            return 0
 
     def get_connect_info_single_tab(self):
         """单标签页获取连接信息 - 恢复表格打印"""
@@ -1094,7 +1316,7 @@ class LinuxDoBrowser:
             return False
 
     def run_complete_process(self):
-        """执行完整流程"""
+        """执行完整流程 - 使用改造后的浏览方法"""
         try:
             logger.info(f"🚀 开始处理 {self.site_name}")
             
@@ -1102,19 +1324,19 @@ class LinuxDoBrowser:
             if not self.ensure_logged_in():
                 logger.error(f"❌ {self.site_name} 登录失败")
                 return False
-                                    
+                                
             # 2. 单标签页连接信息
             connect_success = self.get_connect_info_single_tab()
             if not connect_success and self.site_name != 'idcflare':
                 logger.warning(f"⚠️ {self.site_name} 连接信息获取失败")
 
-            # 3. 优化版主题浏览（移除失效功能，集成点赞）
-            browse_count = self.browse_topics_optimized()
+            # 3. 使用改造后的主题浏览方法
+            browse_count = self.browse_topics_with_recording()
             
             # 4. 保存缓存
             self.save_caches()
             
-            logger.success(f"✅ {self.site_name} 处理完成 - 浏览 {browse_count} 个主题")
+            logger.success(f"✅ {self.site_name} 处理完成 - 深度浏览 {browse_count} 个主题")
             return True
             
         except Exception as e:
@@ -1131,7 +1353,7 @@ class LinuxDoBrowser:
 
 # ======================== 主函数 ========================
 def main():
-    logger.info("🚀 Linux.Do 自动化 v4.3 修复版启动")
+    logger.info("🚀 Linux.Do 自动化 v4.4 修复版启动")
     
     if GITHUB_ACTIONS:
         logger.info("🎯 GitHub Actions 环境")
