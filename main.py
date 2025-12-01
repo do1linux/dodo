@@ -61,7 +61,7 @@ SITES = [
         'connect_url': 'https://connect.idcflare.com',
         'user_url': 'https://idcflare.com/u',
         'cf_cookies_file': "cf_cookies_idcflare.json",
-        'session_file": "session_data_idcflare.json"
+        'session_file': "session_data_idcflare.json"
     }
 ]
 
@@ -1007,3 +1007,4 @@ if __name__ == "__main__":
         logger.warning("⚠️ 未配置OCR_API_KEY，验证码处理将不可用")
     
     main()
+
