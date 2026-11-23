@@ -48,18 +48,18 @@ from DrissionPage import ChromiumPage, ChromiumOptions
 
 from tabulate import tabulate
 
-# ===== 闭环验证（浏览痕迹 Credit 真被记录铁证）=====
-def _get_username(page):
+# ===== 闭环验证（浏览痕迹 Credit 真被记录铁证，跟随当前站 base_url）=====
+def _get_username(page, base_url):
     try:
-        r = page.get("https://linux.do/session/current.json")
+        r = page.get(base_url + "/session/current.json")
         data = r.json if hasattr(r, "json") else json.loads(r.text)
         return (data.get("current_user") or {}).get("username", "")
     except Exception:
         return ""
 
-def _fetch_summary(page, username):
+def _fetch_summary(page, username, base_url):
     try:
-        r = page.get(f"https://linux.do/u/{username}/summary.json")
+        r = page.get(f"{base_url}/u/{username}/summary.json")
         data = r.json if hasattr(r, "json") else json.loads(r.text)
         us = data.get("user_summary", {})
         return {"posts_read_count": us.get("posts_read_count", 0) or 0,
@@ -68,31 +68,31 @@ def _fetch_summary(page, username):
         logger.debug(f"  [闭环] summary 获取失败: {e}")
         return {"posts_read_count": 0, "time_read": 0}
 
-def credit_before(page):
+def credit_before(page, base_url):
     """浏览前快照（posts_read_count 基线）"""
-    u = _get_username(page)
+    u = _get_username(page, base_url)
     if not u:
-        logger.debug("  [闭环] 未取到用户名，跳过 before 快照")
+        logger.debug(f"  [闭环] {base_url} 未取到用户名，跳过 before 快照")
         return {"posts_read_count": 0, "time_read": 0}
-    s = _fetch_summary(page, u)
-    logger.info(f"  [before] 已读帖={s['posts_read_count']} 阅读分钟={s['time_read']//60}（用户 {u}）")
+    s = _fetch_summary(page, u, base_url)
+    logger.info(f"  [before] {base_url} 已读帖={s['posts_read_count']} 阅读分钟={s['time_read']//60}（用户 {u}）")
     return s
 
-def credit_verify(page, snap_before, wait=15):
+def credit_verify(page, snap_before, base_url, wait=15):
     """浏览后验证：等 PostTiming 落库再拉，对比差值。N>0 = Credit 真被记录"""
     time.sleep(wait)
-    u = _get_username(page)
+    u = _get_username(page, base_url)
     if not u:
-        logger.warning("  [闭环] 验证时未取到用户名，跳过")
+        logger.warning(f"  [闭环] {base_url} 验证时未取到用户名（该站未登录或凭据缺失），跳过")
         return False, "no-username"
-    s = _fetch_summary(page, u)
+    s = _fetch_summary(page, u, base_url)
     d_posts = s["posts_read_count"] - snap_before.get("posts_read_count", 0)
     d_min = (s["time_read"] - snap_before.get("time_read", 0)) // 60
     desc = f"已读帖 +{d_posts} | 阅读分钟 +{d_min}"
     if d_posts > 0:
-        logger.success(f"  ✅ [闭环] 服务端已记录：{desc}（Credit 累计正常，用户 {u}）")
+        logger.success(f"  ✅ [闭环] {base_url} 服务端已记录：{desc}（Credit 累计正常，用户 {u}）")
         return True, desc
-    logger.warning(f"  ⚠️ [闭环] 已读帖未增长：{desc}——本次读的多为已读帖（首读才计数）或 timings 未送达，属正常波动")
+    logger.warning(f"  ⚠️ [闭环] {base_url} 已读帖未增长：{desc}——本次读的多为已读帖（首读才计数）或 timings 未送达，属正常波动")
     return False, desc
 # ===== 闭环验证 end =====
 
@@ -1862,8 +1862,9 @@ class LinuxDoBrowser:
 
 
 
-                        # 2.5 闭环验证：浏览前快照（posts_read_count 基线）
-            snap = credit_before(self.page)
+                        # 2.5 闭环验证：浏览前快照（posts_read_count 基线，跟随当前站 base_url）
+            base_url = self.site_config.get('base_url', 'https://linux.do')
+            snap = credit_before(self.page, base_url)
 
             # 3. 使用保证浏览痕迹的主题浏览方法
             browse_count = self.browse_topics_guaranteed()
@@ -1872,7 +1873,7 @@ class LinuxDoBrowser:
             self.save_caches()
 
             # 4.5 闭环验证：浏览后对比，确认阅读真被服务端记录
-            credit_verify(self.page, snap)
+            credit_verify(self.page, snap, base_url)
 
             
 
