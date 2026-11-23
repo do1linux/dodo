@@ -494,9 +494,24 @@ class LinuxDoBrowser:
 
 
 
-    def handle_cloudflare_check(self, timeout=20):
+    def is_cf_challenge(self) -> bool:
+        """当前页是否是 Cloudflare 全站 challenge 页（非内嵌 widget）。
+        判定：标题含 'Just a moment'/'Checking'，或 body 含 challenge-platform/turnstile。
+        challenge 页下登录 DOM 不会渲染，直接 wait.ele_displayed 必然超时。"""
+        try:
+            title = (self.page.title or "").lower()
+            if "just a moment" in title or "checking" in title:
+                return True
+            html = self.page.html or ""
+            if "challenge-platform" in html or "cf-chl" in html.lower() or "turnstile" in html.lower():
+                return True
+        except Exception:
+            pass
+        return False
 
-        """处理Cloudflare检查"""
+    def handle_cloudflare_check(self, timeout=60):
+
+        """处理Cloudflare检查（challenge 页需更长等待；DC IP 下 CF 解盾慢）"""
 
         start_time = time.time()
 
@@ -744,13 +759,17 @@ class LinuxDoBrowser:
 
                 time.sleep(3)
 
-                
-
-                self.page.wait.ele_displayed('#login-account-name', timeout=10)
-
-                
-
+                # 先过 CF challenge（DC IP 下 challenge 页需等解完才渲染登录 DOM）
+                if self.is_cf_challenge():
+                    logger.warning("⚠️ 检测到 CF challenge 页，等待解盾（最长 60s）...")
                 self.handle_cloudflare_check()
+
+                # CF 解完再等登录框（challenge 期间登录 DOM 不存在）
+                if self.is_cf_challenge():
+                    logger.error("❌ CF challenge 未通过，登录框不会渲染（DC IP 被 CF 重点风控）")
+                    return False
+
+                self.page.wait.ele_displayed('#login-account-name', timeout=30)
 
                 time.sleep(1)
 
