@@ -509,7 +509,7 @@ class LinuxDoBrowser:
             pass
         return False
 
-    def handle_cloudflare_check(self, timeout=60):
+    def handle_cloudflare_check(self, timeout=180):
 
         """处理Cloudflare检查（challenge 页需更长等待；DC IP 下 CF 解盾慢）"""
 
