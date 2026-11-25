@@ -22,7 +22,7 @@ env:
 jobs:
   automate-smart:
     runs-on: ubuntu-22.04
-    timeout-minutes: 35  # 增加至35分钟，新版本更耗时
+    timeout-minutes: 35
 
     steps:
     - name: Checkout repository
@@ -59,6 +59,7 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         pip install DrissionPage --upgrade
+        pip install requests
 
     - name: 恢复智能缓存
       uses: actions/cache@v3
@@ -72,34 +73,36 @@ jobs:
         restore-keys: |
           ${{ env.CACHE_PRIMARY_KEY }}-
 
+    # 方案2：cf_bridge 预解 hCaptcha（agnes-3.0-flash vision 解拖拽拼图 → 存 cf_clearance 到 cache，main.py cache login 复用）
+    - name: Solve hCaptcha via cf_bridge (agnes vision)
+      env:
+        AGNES_API_KEY: ${{ secrets.AGNES_API_KEY }}
+        LINUXDO_USERNAME: ${{ secrets.LINUXDO_USERNAME }}
+        LINUXDO_PASSWORD: ${{ secrets.LINUXDO_PASSWORD }}
+        LINUXDO_CF_COOKIES: ${{ secrets.LINUXDO_CF_COOKIES }}
+      run: |
+        echo "🧩 cf_bridge: 用 agnes-3.0-flash vision 解 hCaptcha 拖拽拼图（DC IP 可能被风控，失败不阻断主流程）"
+        python cf_bridge.py || echo "⚠️ cf_bridge 未通过，主流程仍走 cache login"
+
     - name: Run smart automation for tracking
       env:
-        # 凭证配置
         LINUXDO_USERNAME: ${{ secrets.LINUXDO_USERNAME }}
         LINUXDO_CF_COOKIES: ${{ secrets.LINUXDO_CF_COOKIES }}
         LINUXDO_PASSWORD: ${{ secrets.LINUXDO_PASSWORD }}
         IDCFLARE_USERNAME: ${{ secrets.IDCFLARE_USERNAME }}
         IDCFLARE_PASSWORD: ${{ secrets.IDCFLARE_PASSWORD }}
         OCR_API_KEY: ${{ secrets.OCR_API_KEY }}
-        
-        # 运行配置
         SITE_SELECTOR: ${{ github.event.inputs.site_selector || 'all' }}
         HEADLESS: 'true'
         BROWSE_ENABLED: 'true'
         FORCE_LOGIN: 'false'
-        
-        # 新脚本环境变量
         TURNSTILE_PATCH_ENABLED: 'true'
         BEHAVIOR_INJECTION_ENABLED: 'true'
         EXTERNAL_LINKS_NEW_TAB: 'true'
-        
       run: |
         echo "🎯 开始执行智能自动化脚本 v3.1"
         echo "站点选择: $SITE_SELECTOR"
         echo "缓存恢复: ${{ steps.cache-restore.outputs.cache-hit == 'true' && '✅' || '❌' }}"
-        echo "行为注入系统: ✅ (UserScript + 智能模拟)"
-        echo "外部链接处理: ✅ (新标签页打开)"
-        echo "智能缓存管理: ✅"
         echo "主要目的: 浏览记录收集 ✅"
         python main.py
         echo "✅ 智能脚本执行完成"
@@ -121,7 +124,4 @@ jobs:
         name: linuxdo-tracking-data-${{ github.run_id }}
         path: |
           session_data_*.json
-          # 失败调试图
-          # login_failure_*.png
-          # topic_find_failure_*.png
         retention-days: 14
