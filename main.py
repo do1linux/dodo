@@ -200,6 +200,21 @@ GITHUB_ACTIONS = os.environ.get("GITHUB_ACTIONS") == "true"
 
 # ======================== 缓存管理器 ========================
 
+
+def parse_cookie_string(cookie_str: str) -> list:
+    """把 'k1=v1; k2=v2' 形式的 cookie 字符串解析成 DrissionPage 的 set.cookies 入参。
+    域名固定为 linux.do（cf_clearance 绑定该站）。返回 [{'name','value','domain','path','secure'}]"""
+    out = []
+    for part in cookie_str.strip().split("; "):
+        if "=" not in part:
+            continue
+        k, v = part.split("=", 1)
+        k, v = k.strip(), v.strip()
+        if not k:
+            continue
+        out.append({"name": k, "value": v, "domain": ".linux.do", "path": "/", "secure": True})
+    return out
+
 class CacheManager:
 
     @staticmethod
@@ -754,6 +769,16 @@ class LinuxDoBrowser:
                 logger.info(f"🔐 执行登录 (尝试 {attempt+1}/{max_retries})")
 
                 
+
+                # 注入本机过盾的 cf_clearance cookie（缓存复用，绕过 DC IP 全新挑战）
+                cf_cookie_str = os.getenv("LINUXDO_CF_COOKIES", "")
+                if self.site_config.get('name') == 'linux_do' and cf_cookie_str:
+                    try:
+                        cf_cookies = parse_cookie_string(cf_cookie_str)
+                        self.page.set.cookies(cf_cookies)
+                        logger.info(f"🔑 已注入 {len(cf_cookies)} 个 cf cookie（linux.do 缓存复用）")
+                    except Exception as e:
+                        logger.warning(f"cf cookie 注入失败（回退全新登录）: {e}")
 
                 self.page.get(self.site_config['login_url'])
 
