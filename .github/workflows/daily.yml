@@ -76,6 +76,7 @@ jobs:
       env:
         # 凭证配置
         LINUXDO_USERNAME: ${{ secrets.LINUXDO_USERNAME }}
+        LINUXDO_CF_COOKIES: ${{ secrets.LINUXDO_CF_COOKIES }}
         LINUXDO_PASSWORD: ${{ secrets.LINUXDO_PASSWORD }}
         IDCFLARE_USERNAME: ${{ secrets.IDCFLARE_USERNAME }}
         IDCFLARE_PASSWORD: ${{ secrets.IDCFLARE_PASSWORD }}
