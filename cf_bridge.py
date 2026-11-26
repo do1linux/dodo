@@ -109,9 +109,23 @@ def run_browser_flow(cached_cookies=None):
         log(f"flow err: {e}"); return None
 
 # ---------- 3) 主流程（GitHub Actions 调） ----------
+def parse_cookie_string(s):
+    """LINUXDO_CF_COOKIES 是 cookie 字符串（a=1; b=2）非 JSON → 解析为 list[dict]。"""
+    out = []
+    if not s:
+        return out
+    for part in s.split(";"):
+        part = part.strip()
+        if "=" in part:
+            k, v = part.split("=", 1)
+            out.append({"name": k.strip(), "value": v.strip(), "domain": "linux.do",
+                        "path": "/", "secure": True, "httpOnly": False, "sameSite": "Lax"})
+    return out
+
 def main():
     cached = os.environ.get("LINUXDO_CF_COOKIES")
-    cached_cookies = json.loads(cached) if cached else None
+    # LINUXDO_CF_COOKIES 是 cookie 字符串（v5 注入），非 JSON——旧代码 json.loads 会崩
+    cached_cookies = parse_cookie_string(cached) if cached else None
     log(f"start, cached_cookies={bool(cached_cookies)}")
     # EzSolver 拿 cf_clearance（若未缓存）——外部调 ezsolver 服务或本地 solver.py
     page = run_browser_flow(cached_cookies)
