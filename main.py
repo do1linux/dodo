@@ -461,32 +461,46 @@ class LinuxDoBrowser:
 
     def enhance_browser_fingerprint(self):
 
-        """浏览器指纹优化"""
+        """浏览器指纹优化（含 Canvas 噪声注入 + navigator.webdriver/platform/hardwareConcurrency 伪装）"""
 
         try:
 
             js_code = """
 
+            // 1) 基础 navigator 伪装（防自动化特征）
             Object.defineProperties(navigator, {
-
                 webdriver: { get: () => undefined },
-
                 platform: { get: () => 'Win32' },
-
                 hardwareConcurrency: { get: () => 8 },
-
                 deviceMemory: { get: () => 8 },
-
                 maxTouchPoints: { get: () => 0 }
-
             });
 
 
-
             Object.defineProperty(screen, 'width', {get: () => 1920});
-
             Object.defineProperty(screen, 'height', {get: () => 1080});
 
+
+            // 2) Canvas 指纹噪声注入：让每次 canvas 渲染输出有微小差异，避免被 Canvas 指纹库识别
+            (function() {
+                if (window.__canvasNoiseInjected) return;
+                window.__canvasNoiseInjected = true;
+                const seed = Math.floor(Math.random() * 0xFFFF);
+                const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
+                HTMLCanvasElement.prototype.toDataURL = function(type) {
+                    try {
+                        const ctx = this.getContext('2d');
+                        if (ctx) {
+                            // 在右下角 2x2 像素叠加基于 seed 的微小噪声（不影响肉眼观察）
+                            const w = this.width, h = this.height;
+                            const noise = ((seed ^ Math.imul(seed + 1, 0x27d4eb2f)) >>> 0);
+                            ctx.fillStyle = 'rgba(' + (noise % 16) + ',' + ((noise >> 4) % 16) + ',' + ((noise >> 8) % 16) + ',0.01)';
+                            ctx.fillRect(w - 2, h - 2, 2, 2);
+                        }
+                    } catch (e) {}
+                    return originalToDataURL.apply(this, arguments);
+                };
+            })();
             """
 
             self.page.run_js(js_code)
@@ -630,7 +644,12 @@ class LinuxDoBrowser:
 
     def try_cache_login(self):
 
-        """尝试缓存登录"""
+        """尝试缓存登录（读缓存文件 cache/cf_cookies_<site>.json，含 cf_clearance）
+
+        设计：cf_bridge 解盾后把 cf_clearance/_forum_session 写进缓存文件（覆盖旧文件），
+        main.py 读文件注入 → CF 盾过 → 登录成功。
+        LINUXDO_CF_COOKIES 环境变量仅作首跑 seed（cache 未建时由 login() 注入一次），
+        此后缓存文件是 cf_clearance 的单源（actions/cache 在 daily.yml 里把 cache/ 存回）。"""
 
         if FORCE_LOGIN_EVERY_TIME:
 
@@ -694,9 +713,12 @@ class LinuxDoBrowser:
 
     def verify_login_status(self, max_retries=3):
 
-        """验证登录状态"""
+        """双重验证登录状态（仿参考 v5/v6）：
+        1) 访问 private_topic_url（仅登录用户可见的主题，linux.do 为 /t/topic/870130）
+        2) 同时要求页面 HTML 包含 username
+        双条件都满足才算登录成功（单条件易被 CF 中间页/匿名页误判）。"""
 
-        logger.info("🔍 验证登录状态...")
+        logger.info("🔍 验证登录状态（双重：私有主题 + username）...")
 
         
 
@@ -724,13 +746,21 @@ class LinuxDoBrowser:
 
                 # 检查是否成功访问私有主题
 
-                content = self.page.html
-
-                if "topic" in content.lower() or len(content) > 500000:
-
-                    logger.success("🎉 登录验证通过")
-
+                # 双重判活（P0-2/P0-4 修复：去掉 len>500000 恒真 + 补 username 命中）
+                content = self.page.html or ""
+                content_lower = content.lower()
+                redirected_login = ("登录" in content and ("账号" in content or "password" in content_lower)) and len(content) < 200000
+                cf_challenge = ("请稍候" in content) or ("just a moment" in content_lower) or ("checking your browser" in content_lower)
+                username_hit = (self.username and self.username in content
+                    and ('data-user-card' in content or 'current-user' in content or f"users/{self.username}" in content_lower))
+                topic_ok = (not redirected_login and not cf_challenge and len(content) > 100000)
+                if topic_ok and username_hit:
+                    logger.success(f"🎉 登录验证通过（私有主题可访问 + 页面含 {self.username}）")
                     return True
+                if topic_ok and not username_hit:
+                    logger.info(f"私有主题可访问但页面未含 {self.username}（可能读的是公开页）")
+                else:
+                    logger.info(f"私有主题未真访问（redirect={redirected_login} cf={cf_challenge} len={len(content)}）")
 
                 
 
